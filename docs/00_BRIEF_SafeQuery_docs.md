@@ -47,10 +47,10 @@ The following stack decisions are already fixed and must be reflected consistent
 - **TypeScript**
 
 ### Authentication
-- **Okta SAML**
+- **SAML 2.0-compatible enterprise identity provider**
 - SAML must be abstracted through a **bridge layer**
 - Prefer architecture phrasing such as:
-  - Okta SAML → SAML bridge → application
+  - SAML 2.0-compatible identity provider → SAML bridge → application
 - Do not assume direct raw SAML implementation inside the core application unless explicitly discussing rejected alternatives
 
 ### Backend
@@ -228,7 +228,7 @@ Examples:
 ### 3. ADR set
 Examples:
 - `docs/adr/ADR-0001-frontend-backend-split.md`
-- `docs/adr/ADR-0002-auth-bridge-with-okta-saml.md`
+- `docs/adr/ADR-0002-auth-bridge-with-saml-2-0.md`
 - `docs/adr/ADR-0003-sql-server-driver-strategy.md`
 - `docs/adr/ADR-0004-postgresql-as-app-system-of-record.md`
 - `docs/adr/ADR-0005-pluggable-sql-generation-engine.md`
@@ -292,6 +292,8 @@ Use the following terminology consistently.
 - **preview-before-execute**
 - **system of record**
 - **replaceable adapter boundary**
+- **SAML 2.0-compatible identity provider**
+- **SAML bridge**
 
 ### Avoid or limit
 - “AI agent” as the primary framing
@@ -321,8 +323,8 @@ This point is important and should be reflected clearly in requirements, ADRs, a
 
 Codex Supervisor must preserve the following interpretation:
 
-- enterprise identity source: **Okta**
-- federation protocol source: **SAML**
+- enterprise identity source: **a SAML 2.0-compatible identity provider**
+- federation protocol source: **SAML 2.0**
 - application-facing integration should be expressed through a **bridge layer**
 - the application should not be documented as deeply SAML-centric unless discussing protocol boundaries or rejected alternatives
 - authorization is not delegated to the auth bridge
