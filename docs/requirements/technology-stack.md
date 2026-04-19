@@ -36,7 +36,7 @@ The current implementation assumptions are:
 
 - the user-facing product is a **custom web application**
 - enterprise authentication is required
-- **Okta SAML** is the enterprise identity source
+- authentication must support a **SAML 2.0-compatible enterprise identity provider**
 - SAML complexity should be abstracted through a **bridge layer**
 - the backend is the trusted control plane of the system
 - the application, not the SQL generation engine, owns governance and safety
@@ -165,7 +165,7 @@ The frontend is fully **application-owned** and does not depend on UI components
 
 ## Authentication and Identity
 
-Enterprise authentication is handled through **Okta SAML**, bridged by an intermediate **SAML-to-OAuth/OIDC-compatible layer**.
+Enterprise authentication is handled through a **SAML 2.0-compatible identity provider**, bridged by an intermediate **SAML-to-OAuth/OIDC-compatible layer**.
 
 This architecture intentionally avoids embedding full SAML protocol complexity directly into the application core.
 
