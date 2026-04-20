@@ -132,7 +132,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def read_health() -> JSONResponse:
-        database = check_database_health(str(settings.database_url))
+        database = check_database_health(str(settings.app_postgres_url))
         healthy = database["status"] == "ok"
 
         return JSONResponse(
