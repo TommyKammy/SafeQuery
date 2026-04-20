@@ -17,7 +17,7 @@ required_compose_patterns=(
   "app-postgres:"
   "business-postgres-source:"
   "business-mssql-source:"
-  "SAFEQUERY_APP_POSTGRES_URL: postgresql://safequery:safequery@app-postgres:5432/safequery"
+  "SAFEQUERY_APP_POSTGRES_URL: postgresql://safequery:change-me-for-shared-environments@app-postgres:5432/safequery"
   "MSSQL_SA_PASSWORD: ChangeMeDevOnly_123"
   "app_postgres_data:"
   "business_postgres_source_data:"
@@ -46,7 +46,7 @@ if grep -Fq "@postgres:5432" <<<"$rendered_compose"; then
 fi
 
 required_env_patterns=(
-  "SAFEQUERY_APP_POSTGRES_URL=postgresql://safequery:safequery@app-postgres:5432/safequery"
+  "SAFEQUERY_APP_POSTGRES_URL=postgresql://safequery:change-me-for-shared-environments@app-postgres:5432/safequery"
   "# SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL=postgresql://source_reader:change-me-for-local-source-topology@business-postgres-source:5432/business"
   "# SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING=Driver={ODBC Driver 18 for SQL Server};Server=tcp:business-mssql-source,1433;Database=business;Uid=sa;Pwd=ChangeMeDevOnly_123;Encrypt=no;TrustServerCertificate=yes"
 )

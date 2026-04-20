@@ -57,8 +57,8 @@ database that is explicitly reachable from your shell before running Alembic:
 ```bash
 python3 -m pip install -e backend
 cd backend
-SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic upgrade head
-SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic current
+SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic upgrade head
+SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic current
 ```
 
 The backend treats those names as separate identities:
