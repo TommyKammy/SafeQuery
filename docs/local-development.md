@@ -188,6 +188,14 @@ such file or directory`, rerun the startup command with BuildKit disabled for
 that invocation:
 
 ```bash
+DOCKER_BUILDKIT=0 \
+  docker-compose --env-file .env -f infra/docker-compose.yml up --build -d
+```
+
+If you also need to point the command at an active Colima socket, add the
+override separately for that invocation:
+
+```bash
 DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" \
 DOCKER_BUILDKIT=0 \
   docker-compose --env-file .env -f infra/docker-compose.yml up --build -d

@@ -37,15 +37,15 @@ The required startup values are:
 - `SAFEQUERY_DATABASE_URL`
 - `API_INTERNAL_BASE_URL`
 - `NEXT_PUBLIC_API_BASE_URL`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
 
 Optional values with reviewed defaults in code or compose:
 
 - `SAFEQUERY_APP_NAME`
 - `SAFEQUERY_ENVIRONMENT`
 - `SAFEQUERY_CORS_ORIGINS`
-- `POSTGRES_DB`
-- `POSTGRES_USER`
-- `POSTGRES_PASSWORD`
 
 2. Start the local stack:
 
