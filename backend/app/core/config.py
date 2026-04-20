@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, PostgresDsn, field_validator
+from pydantic import BaseModel, Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -45,6 +45,17 @@ class Settings(BaseSettings):
 
         return value
 
+    @model_validator(mode="after")
+    def _validate_distinct_postgres_roles(self) -> "Settings":
+        source_url = self.business_postgres_source_url
+        if source_url is not None and str(source_url) == str(self.app_postgres_url):
+            raise ValueError(
+                "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse "
+                "SAFEQUERY_APP_POSTGRES_URL."
+            )
+
+        return self
+
     @property
     def app_postgres_identity(self) -> Literal["application_postgres_persistence"]:
         return "application_postgres_persistence"
@@ -55,12 +66,6 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must be configured before "
                 "the business PostgreSQL generation source can be used."
-            )
-
-        if str(source_url) == str(self.app_postgres_url):
-            raise RuntimeError(
-                "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse "
-                "SAFEQUERY_APP_POSTGRES_URL."
             )
 
         return BusinessPostgresSourceSettings(url=source_url)
