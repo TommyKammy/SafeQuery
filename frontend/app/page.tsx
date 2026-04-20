@@ -1,9 +1,15 @@
-import { HealthCard } from "../components/health-card";
+import { QueryWorkflowShell, resolveWorkflowState } from "../components/query-workflow-shell";
 import { getAppConfig } from "../lib/config";
 
 type HealthSnapshot = {
   detail: string;
   status: "ok" | "degraded" | "unreachable";
+};
+
+type SearchParamValue = string | string[] | undefined;
+
+type HomePageProps = {
+  searchParams?: Promise<Record<string, SearchParamValue>> | Record<string, SearchParamValue>;
 };
 
 async function getHealthSnapshot(internalApiUrl: string): Promise<HealthSnapshot> {
@@ -46,60 +52,27 @@ async function getHealthSnapshot(internalApiUrl: string): Promise<HealthSnapshot
   }
 }
 
-const seams = [
-  {
-    name: "Auth boundary",
-    description: "Reserved for session establishment, CSRF, and role-aware route protection."
-  },
-  {
-    name: "Guard boundary",
-    description: "Reserved for SQL validation, deny rules, and approval gating."
-  },
-  {
-    name: "Execution boundary",
-    description: "Reserved for approved query dispatch, result limits, and kill-switch behavior."
-  },
-  {
-    name: "Audit boundary",
-    description: "Reserved for lifecycle events, approvals, denials, and runtime traces."
+function readParam(value: SearchParamValue): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
   }
-];
 
-export default async function HomePage() {
+  return value;
+}
+
+export default async function HomePage({ searchParams }: HomePageProps) {
+  const params = searchParams ? await searchParams : {};
   const config = getAppConfig();
   const health = await getHealthSnapshot(config.apiInternalBaseUrl);
+  const question = readParam(params.question)?.trim() || "List the top 10 approved vendors by quarterly spend.";
+  const state = resolveWorkflowState(readParam(params.state));
 
   return (
-    <main className="shell">
-      <section className="hero panel">
-        <p className="eyebrow">SafeQuery</p>
-        <h1>Minimum application baseline</h1>
-        <p className="lede">
-          This checkpoint establishes the local repository shape for the Next.js UI, FastAPI
-          control plane, and PostgreSQL system of record. The implementation is intentionally
-          limited to placeholder surfaces and stack health.
-        </p>
-      </section>
-
-      <HealthCard apiUrl={config.publicApiBaseUrl} detail={health.detail} status={health.status} />
-
-      <section className="panel">
-        <div className="section-heading">
-          <p className="eyebrow">Planned seams</p>
-          <p className="section-copy">
-            These boundaries stay explicit so later work can add capability without moving the
-            trusted backend edge.
-          </p>
-        </div>
-        <div className="seam-grid">
-          {seams.map((seam) => (
-            <article className="seam-card" key={seam.name}>
-              <h2>{seam.name}</h2>
-              <p>{seam.description}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-    </main>
+    <QueryWorkflowShell
+      apiUrl={config.publicApiBaseUrl}
+      health={health}
+      question={question}
+      state={state}
+    />
   );
 }

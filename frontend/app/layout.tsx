@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SafeQuery Baseline",
-  description: "Minimum Next.js / FastAPI / PostgreSQL baseline for SafeQuery."
+  title: "SafeQuery Query Workflow",
+  description: "Custom review-first query workflow shell for SafeQuery."
 };
 
 export default function RootLayout({
