@@ -65,10 +65,14 @@ readme_hardening_patterns=(
   "business PostgreSQL source"
   "business MSSQL source"
   "does not make the application database a business target"
+  "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL"
+  "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used."
   "test_application_postgres_guard.py"
   "test_source_foundation_smoke.py"
   "tests/smoke/test-local-topology-roles.sh"
   "source_posture"
+  "configured_source_count"
+  "source_roles"
 )
 
 for pattern in "${readme_hardening_patterns[@]}"; do
