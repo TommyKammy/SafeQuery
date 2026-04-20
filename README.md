@@ -43,7 +43,7 @@ PostgreSQL stays on the compose network only for this baseline. The app stack re
 If your Docker shell is pointed at a stale Colima socket, scope the command to the active profile instead of changing global settings:
 
 ```bash
-DOCKER_HOST=unix:///Users/$USER/.colima/default/docker.sock docker-compose -f infra/docker-compose.yml up --build -d
+DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" docker-compose -f infra/docker-compose.yml up --build -d
 ```
 
 4. Stop the stack when finished:
