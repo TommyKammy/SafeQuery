@@ -10,11 +10,8 @@ if [[ ! -f "DESIGN.md" ]]; then
   exit 1
 fi
 
-required_patterns=(
+required_regex_patterns=(
   "^# SafeQuery Design Contract$"
-  "Source inspiration: https://getdesign.md/playstation/design-md"
-  "inspired by the PlayStation direction and is not an official PlayStation design system"
-  "Vanna-provided UI surfaces are out of scope"
   "^## Color System$"
   "^## Typography$"
   "^## Spacing and Rhythm$"
@@ -23,9 +20,22 @@ required_patterns=(
   "^## Responsive Behavior$"
 )
 
-for pattern in "${required_patterns[@]}"; do
+required_literal_patterns=(
+  "Source inspiration: https://getdesign.md/playstation/design-md"
+  "inspired by the PlayStation direction and is not an official PlayStation design system"
+  "Vanna-provided UI surfaces are out of scope"
+)
+
+for pattern in "${required_regex_patterns[@]}"; do
   if ! grep -Eq "$pattern" "DESIGN.md"; then
     echo "DESIGN.md missing required pattern: $pattern" >&2
+    exit 1
+  fi
+done
+
+for pattern in "${required_literal_patterns[@]}"; do
+  if ! grep -Fq "$pattern" "DESIGN.md"; then
+    echo "DESIGN.md missing required text: $pattern" >&2
     exit 1
   fi
 done
