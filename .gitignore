@@ -17,9 +17,11 @@ frontend/node_modules/
 frontend/.next/
 
 # Python
+.venv/
 backend/.venv/
 backend/.pytest_cache/
 backend/**/__pycache__/
+backend/*.egg-info/
 
 # Local environment files
 .env
