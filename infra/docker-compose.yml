@@ -1,24 +1,45 @@
 services:
-  postgres:
+  app-postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:?Missing POSTGRES_DB. Copy .env.example to .env.}
-      POSTGRES_USER: ${POSTGRES_USER:?Missing POSTGRES_USER. Copy .env.example to .env.}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Missing POSTGRES_PASSWORD. Copy .env.example to .env.}
+      POSTGRES_DB: ${APP_POSTGRES_DB:?Missing APP_POSTGRES_DB. Copy .env.example to .env.}
+      POSTGRES_USER: ${APP_POSTGRES_USER:?Missing APP_POSTGRES_USER. Copy .env.example to .env.}
+      POSTGRES_PASSWORD: ${APP_POSTGRES_PASSWORD:?Missing APP_POSTGRES_PASSWORD. Copy .env.example to .env.}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 12
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - app_postgres_data:/var/lib/postgresql/data
+
+  business-postgres-source:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${BUSINESS_POSTGRES_SOURCE_DB:?Missing BUSINESS_POSTGRES_SOURCE_DB. Copy .env.example to .env.}
+      POSTGRES_USER: ${BUSINESS_POSTGRES_SOURCE_USER:?Missing BUSINESS_POSTGRES_SOURCE_USER. Copy .env.example to .env.}
+      POSTGRES_PASSWORD: ${BUSINESS_POSTGRES_SOURCE_PASSWORD:?Missing BUSINESS_POSTGRES_SOURCE_PASSWORD. Copy .env.example to .env.}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - business_postgres_source_data:/var/lib/postgresql/data
+
+  business-mssql-source:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${BUSINESS_MSSQL_SOURCE_SA_PASSWORD:?Missing BUSINESS_MSSQL_SOURCE_SA_PASSWORD. Copy .env.example to .env.}
 
   backend:
     build:
       context: ..
       dockerfile: backend/Dockerfile
     depends_on:
-      postgres:
+      app-postgres:
         condition: service_healthy
     environment:
       SAFEQUERY_APP_NAME: ${SAFEQUERY_APP_NAME:-SafeQuery API}
@@ -54,4 +75,5 @@ services:
       - "3000:3000"
 
 volumes:
-  postgres_data:
+  app_postgres_data:
+  business_postgres_source_data:
