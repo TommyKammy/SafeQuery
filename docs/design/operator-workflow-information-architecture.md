@@ -8,7 +8,7 @@ demo shell with a product-facing application contract.
 
 The operator shell is workflow-first, not transcript-first.
 
-This issue defines the product shell and screen contract only. It does not introduce backend
+This document defines the product shell and screen contract only. It does not introduce backend
 integration, real execution behavior, or production-complete interaction details.
 
 ## Workflow Principles
