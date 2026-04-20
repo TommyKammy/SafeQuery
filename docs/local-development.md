@@ -70,6 +70,21 @@ so later feature work cannot blur them with the application database secret:
 - `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL`
 - `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING`
 
+Treat those as three different local roles:
+
+- application PostgreSQL is SafeQuery-owned persistence and stays bound to
+  `SAFEQUERY_APP_POSTGRES_URL`
+- business PostgreSQL source is a separate read-oriented source role reserved
+  for later generation-context work through
+  `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL`
+- business MSSQL source is a separate execution-oriented source role reserved
+  for later execution-path work through
+  `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING`
+
+The hardened local foundation keeps those roles explicit before any source-aware
+core path exists, so operators can inspect the topology without guessing and
+without treating application PostgreSQL as a business target.
+
 The checked-in baseline values are already wired to the compose network:
 
 - application database hostname: `app-postgres`
@@ -135,7 +150,43 @@ curl http://localhost:8000/health
 The backend `/health` endpoint is the baseline health check for the app and the
 database connection.
 
-## 4. Run Migrations
+## 4. Validate the Hardened Foundation
+
+Run the focused smoke checks that prove the local role split and fail-closed
+startup behavior before moving on to deeper source-aware work:
+
+```bash
+bash tests/smoke/test-local-topology-roles.sh
+cd backend
+python3 -m pytest tests/test_application_postgres_guard.py
+python3 -m pytest tests/test_source_foundation_smoke.py
+```
+
+Those checks cover different enforcement boundaries:
+
+- `tests/smoke/test-local-topology-roles.sh` proves the compose topology and
+  checked-in env examples keep `app-postgres`, `business-postgres-source`, and
+  `business-mssql-source` distinct
+- `tests/test_application_postgres_guard.py` proves startup validation fails
+  closed if `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` tries to reuse
+  `SAFEQUERY_APP_POSTGRES_URL`
+- `tests/test_source_foundation_smoke.py` proves the backend still reports a
+  coherent source posture when optional business sources are unset or configured
+
+When the startup guards fire, expect explicit messages instead of implicit
+fallbacks:
+
+- `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL`
+- `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used.`
+
+On successful startup, inspect backend logs for the source-role telemetry fields
+that summarize the hardened foundation without inferring from service names:
+
+- `source_posture`
+- `configured_source_count`
+- `source_roles`
+
+## 5. Run Migrations
 
 The current baseline keeps PostgreSQL on the compose network only, so the
 compose-backed Alembic path is the default migration workflow:
@@ -162,7 +213,7 @@ SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environm
 SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic current
 ```
 
-## 5. Optional Host-Shell Component Checks
+## 6. Optional Host-Shell Component Checks
 
 Frontend build check:
 
@@ -183,7 +234,7 @@ python3 -m pip install -e backend
 The backend settings loader accepts `.env` and `../.env`, which keeps the repo
 root and `backend/` command paths aligned.
 
-## 6. Stop the Stack
+## 7. Stop the Stack
 
 Stop the running stack:
 
