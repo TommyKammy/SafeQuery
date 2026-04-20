@@ -43,6 +43,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 - [design/system-context.md](./design/system-context.md): high-level system boundary and actors
 - [design/container-view.md](./design/container-view.md): major runtime containers and responsibilities
 - [design/runtime-flow.md](./design/runtime-flow.md): end-to-end request, guard, preview, and execution flow
+- [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md): operator-facing shell regions, workflow states, and screen-model contract
 - [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md): governed semantic retrieval and analyst-style orchestration
 - [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md): candidate state transitions and approval TTL
 - [design/sql-guard-spec.md](./design/sql-guard-spec.md): baseline SQL Guard behavior and deny rules
