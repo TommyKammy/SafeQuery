@@ -41,6 +41,9 @@ services:
     build:
       context: ..
       dockerfile: frontend/Dockerfile
+      args:
+        API_INTERNAL_BASE_URL: ${API_INTERNAL_BASE_URL:?Missing API_INTERNAL_BASE_URL. Copy .env.example to .env.}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?Missing NEXT_PUBLIC_API_BASE_URL. Copy .env.example to .env.}
     depends_on:
       backend:
         condition: service_healthy

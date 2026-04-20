@@ -25,6 +25,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 
 ## Documentation Structure
 
+- [local-development.md](./local-development.md): contributor startup path for env setup, compose startup, migrations, and baseline troubleshooting
 - [00_BRIEF_SafeQuery_docs.md](./00_BRIEF_SafeQuery_docs.md): founding brief and initial architecture input retained as a repo document
 - [01_READING_ORDER.md](./01_READING_ORDER.md): recommended reading sequence for engineers and reviewers
 - [requirements/requirements-baseline.md](./requirements/requirements-baseline.md): product and architectural requirements baseline
