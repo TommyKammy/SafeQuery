@@ -17,6 +17,26 @@ Not implemented yet:
 - SQL execution
 - audit persistence
 
+## Configuration
+
+The backend loads typed application settings through `app.core.config.Settings`.
+
+Required:
+
+- `SAFEQUERY_DATABASE_URL`
+
+Optional:
+
+- `SAFEQUERY_APP_NAME` defaults to `SafeQuery API`
+- `SAFEQUERY_ENVIRONMENT` defaults to `development`
+- `SAFEQUERY_CORS_ORIGINS` defaults to `http://localhost:3000`
+
+Settings load from `.env` or `../.env`, which keeps the repository-level local
+startup path and direct backend commands aligned.
+
+For standalone backend commands, copy `backend/.env.example` to `backend/.env`
+or export the variables in your shell before starting the app or Alembic.
+
 ## Migration Commands
 
 The compose-backed command path is the baseline workflow because the repository's

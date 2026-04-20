@@ -20,19 +20,43 @@ docs/      Architecture and requirements source material
 
 ## Local Startup
 
-1. Start the local stack:
+1. Create a local environment file from the checked-in example:
 
 ```bash
-docker-compose -f infra/docker-compose.yml up --build -d
+cp .env.example .env
 ```
 
-2. Confirm the UI is reachable:
+Required settings:
+
+- `SAFEQUERY_DATABASE_URL`
+- `API_INTERNAL_BASE_URL`
+- `NEXT_PUBLIC_API_BASE_URL`
+
+Optional settings with reviewed defaults in code or compose:
+
+- `SAFEQUERY_APP_NAME`
+- `SAFEQUERY_ENVIRONMENT`
+- `SAFEQUERY_CORS_ORIGINS`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+
+2. Start the local stack:
+
+```bash
+docker-compose --env-file .env -f infra/docker-compose.yml up --build -d
+```
+
+If `.env` is missing or a required value is blank, Docker Compose will stop with
+an explicit missing-variable error instead of silently using local defaults.
+
+3. Confirm the UI is reachable:
 
 ```bash
 curl -I http://localhost:3000
 ```
 
-3. Confirm the API health endpoint is reachable and healthy:
+4. Confirm the API health endpoint is reachable and healthy:
 
 ```bash
 curl http://localhost:8000/health
@@ -43,19 +67,20 @@ PostgreSQL stays on the compose network only for this baseline. The app stack re
 If your Docker shell is pointed at a stale Colima socket, scope the command to the active profile instead of changing global settings:
 
 ```bash
-DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" docker-compose -f infra/docker-compose.yml up --build -d
+DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" \
+  docker-compose --env-file .env -f infra/docker-compose.yml up --build -d
 ```
 
-4. Stop the stack when finished:
+5. Stop the stack when finished:
 
 ```bash
-docker-compose -f infra/docker-compose.yml down
+docker-compose --env-file .env -f infra/docker-compose.yml down
 ```
 
 To remove the PostgreSQL volume as well:
 
 ```bash
-docker-compose -f infra/docker-compose.yml down -v
+docker-compose --env-file .env -f infra/docker-compose.yml down -v
 ```
 
 ## Extension Seams
@@ -80,15 +105,18 @@ tests/smoke/test-baseline.sh
 Optional local component checks:
 
 ```bash
-cd frontend && npm install && npm run build
-cd ../backend && python3 -m pip install -e .
+cd frontend && cp .env.local.example .env.local && npm install && npm run build
+cd ../backend && cp .env.example .env && python3 -m pip install -e .
 ```
+
+Backend settings can also load from `.env` or `../.env`, so running from the
+repo root or from `backend/` uses the same configuration path.
 
 Backend migration scaffold verification:
 
 ```bash
-docker-compose -f infra/docker-compose.yml run --rm backend alembic upgrade head
-docker-compose -f infra/docker-compose.yml run --rm backend alembic current
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alembic upgrade head
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alembic current
 ```
 
 If you need to run Alembic from the host shell instead, provide an explicitly
