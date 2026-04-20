@@ -150,6 +150,13 @@ SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environm
 SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic current
 ```
 
+Source-foundation smoke verification:
+
+```bash
+cd backend
+python3 -m pytest tests/test_source_foundation_smoke.py
+```
+
 Application persistence and business-source access now use separate reviewed
 names:
 
@@ -170,6 +177,10 @@ The compose topology mirrors those roles explicitly:
 
 The backend baseline still depends only on `app-postgres`; the source services
 exist to keep the local topology and credentials explicit for later work.
+
+On startup, the backend logs `source_posture`, `configured_source_count`, and a
+`source_roles` map so local diagnosis can confirm which source role is
+configured or intentionally left unset without inferring from service names.
 
 The dedicated local startup guide remains the source of truth for contributor
 setup and troubleshooting.
