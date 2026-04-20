@@ -20,26 +20,32 @@ docs/      Architecture and requirements source material
 
 ## Local Startup
 
+For the full baseline startup workflow, including env setup, compose startup,
+migrations, and troubleshooting, use
+[docs/local-development.md](./docs/local-development.md).
+
+Quick start:
+
 1. Create a local environment file from the checked-in example:
 
 ```bash
 cp .env.example .env
 ```
 
-Required settings:
+The required startup values are:
 
 - `SAFEQUERY_DATABASE_URL`
 - `API_INTERNAL_BASE_URL`
 - `NEXT_PUBLIC_API_BASE_URL`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
 
-Optional settings with reviewed defaults in code or compose:
+Optional values with reviewed defaults in code or compose:
 
 - `SAFEQUERY_APP_NAME`
 - `SAFEQUERY_ENVIRONMENT`
 - `SAFEQUERY_CORS_ORIGINS`
-- `POSTGRES_DB`
-- `POSTGRES_USER`
-- `POSTGRES_PASSWORD`
 
 2. Start the local stack:
 
@@ -62,7 +68,9 @@ curl -I http://localhost:3000
 curl http://localhost:8000/health
 ```
 
-PostgreSQL stays on the compose network only for this baseline. The app stack reaches it internally, which avoids common host-port conflicts during local startup.
+PostgreSQL stays on the compose network only for this baseline. The app stack
+reaches it internally, which avoids common host-port conflicts during local
+startup.
 
 If your Docker shell is pointed at a stale Colima socket, scope the command to the active profile instead of changing global settings:
 
@@ -129,3 +137,6 @@ cd backend
 SAFEQUERY_DATABASE_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic upgrade head
 SAFEQUERY_DATABASE_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic current
 ```
+
+The dedicated local startup guide remains the source of truth for contributor
+setup and troubleshooting.
