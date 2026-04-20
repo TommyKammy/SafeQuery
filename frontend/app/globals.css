@@ -1,0 +1,158 @@
+:root {
+  color-scheme: dark;
+  --bg: #08111b;
+  --bg-accent: #0f1f2d;
+  --panel: rgba(8, 17, 27, 0.78);
+  --panel-border: rgba(145, 176, 204, 0.18);
+  --text: #f4efe6;
+  --muted: #b7c8d8;
+  --accent: #f5b85a;
+  --accent-soft: rgba(245, 184, 90, 0.12);
+  --ok: #57c58f;
+  --degraded: #f5b85a;
+  --unreachable: #f27059;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(245, 184, 90, 0.16), transparent 28%),
+    radial-gradient(circle at top right, rgba(87, 197, 143, 0.12), transparent 22%),
+    linear-gradient(180deg, #0c1926 0%, #08111b 100%);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+.shell {
+  width: min(1080px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 4rem 0 5rem;
+  display: grid;
+  gap: 1.5rem;
+}
+
+.panel {
+  backdrop-filter: blur(16px);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 28px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  padding: 1.75rem;
+}
+
+.hero h1 {
+  margin: 0.35rem 0 0.75rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: clamp(2.4rem, 5vw, 4.75rem);
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.lede,
+.panel-copy,
+.section-copy,
+.seam-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.status-badge {
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.status-ok {
+  background: rgba(87, 197, 143, 0.16);
+  color: var(--ok);
+}
+
+.status-degraded {
+  background: rgba(245, 184, 90, 0.16);
+  color: var(--degraded);
+}
+
+.status-unreachable {
+  background: rgba(242, 112, 89, 0.18);
+  color: var(--unreachable);
+}
+
+.health-link {
+  display: inline-flex;
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.seam-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1rem;
+}
+
+.seam-card {
+  border-radius: 22px;
+  padding: 1.2rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(145, 176, 204, 0.16);
+}
+
+.seam-card h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1.1rem;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: min(100% - 1rem, 100%);
+    padding-top: 1rem;
+  }
+
+  .panel {
+    border-radius: 22px;
+    padding: 1.25rem;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

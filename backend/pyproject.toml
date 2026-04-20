@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safequery-backend"
+version = "0.1.0"
+description = "Minimum FastAPI baseline for SafeQuery."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "psycopg[binary]>=3.2,<4.0",
+  "pydantic-settings>=2.8,<3.0",
+  "uvicorn[standard]>=0.34,<1.0"
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

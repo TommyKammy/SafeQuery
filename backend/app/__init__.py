@@ -1,0 +1,1 @@
+"""SafeQuery backend application package."""
