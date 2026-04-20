@@ -1,14 +1,30 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import BaseModel, Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+class BusinessPostgresSourceSettings(BaseModel):
+    identity: Literal["business_postgres_source_generation"] = (
+        "business_postgres_source_generation"
+    )
+    url: PostgresDsn
+
+
+class BusinessMssqlSourceSettings(BaseModel):
+    identity: Literal["business_mssql_source_execution"] = (
+        "business_mssql_source_execution"
+    )
+    connection_string: str
 
 
 class Settings(BaseSettings):
     app_name: str = "SafeQuery API"
     environment: Literal["development", "test", "staging", "production"] = "development"
-    database_url: PostgresDsn
+    app_postgres_url: PostgresDsn
+    business_postgres_source_url: PostgresDsn | None = None
+    business_mssql_source_connection_string: str | None = None
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
@@ -28,6 +44,29 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
 
         return value
+
+    @property
+    def app_postgres_identity(self) -> Literal["application_postgres_persistence"]:
+        return "application_postgres_persistence"
+
+    def require_business_postgres_source(self) -> BusinessPostgresSourceSettings:
+        if self.business_postgres_source_url is None:
+            raise RuntimeError(
+                "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must be configured before "
+                "the business PostgreSQL generation source can be used."
+            )
+
+        return BusinessPostgresSourceSettings(url=self.business_postgres_source_url)
+
+    def require_business_mssql_source(self) -> BusinessMssqlSourceSettings:
+        connection_string = self.business_mssql_source_connection_string
+        if not connection_string:
+            raise RuntimeError(
+                "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be "
+                "configured before the business MSSQL execution source can be used."
+            )
+
+        return BusinessMssqlSourceSettings(connection_string=connection_string)
 
     @property
     def cors_origins_list(self) -> list[str]:

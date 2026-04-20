@@ -23,7 +23,7 @@ def _sqlalchemy_database_url(database_url: str) -> str:
     return database_url
 
 
-sqlalchemy_database_url = _sqlalchemy_database_url(str(settings.database_url))
+sqlalchemy_database_url = _sqlalchemy_database_url(str(settings.app_postgres_url))
 config.set_main_option("sqlalchemy.url", sqlalchemy_database_url)
 
 

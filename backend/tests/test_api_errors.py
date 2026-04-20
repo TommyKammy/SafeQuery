@@ -13,7 +13,7 @@ from app.core.logging import JsonLogFormatter, get_logger
 
 class ApiErrorHandlingTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        os.environ["SAFEQUERY_DATABASE_URL"] = (
+        os.environ["SAFEQUERY_APP_POSTGRES_URL"] = (
             "postgresql://safequery:safequery@db:5432/safequery"
         )
         get_settings.cache_clear()
@@ -22,7 +22,7 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
         self.client = TestClient(self.app)
 
     def tearDown(self) -> None:
-        os.environ.pop("SAFEQUERY_DATABASE_URL", None)
+        os.environ.pop("SAFEQUERY_APP_POSTGRES_URL", None)
         get_settings.cache_clear()
 
     def test_method_not_allowed_uses_common_error_shape(self) -> None:

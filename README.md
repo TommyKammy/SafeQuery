@@ -34,7 +34,7 @@ cp .env.example .env
 
 The required startup values are:
 
-- `SAFEQUERY_DATABASE_URL`
+- `SAFEQUERY_APP_POSTGRES_URL`
 - `API_INTERNAL_BASE_URL`
 - `NEXT_PUBLIC_API_BASE_URL`
 - `POSTGRES_DB`
@@ -46,6 +46,8 @@ Optional values with reviewed defaults in code or compose:
 - `SAFEQUERY_APP_NAME`
 - `SAFEQUERY_ENVIRONMENT`
 - `SAFEQUERY_CORS_ORIGINS`
+- `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL`
+- `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING`
 
 2. Start the local stack:
 
@@ -134,9 +136,21 @@ hostname:
 ```bash
 python3 -m pip install -e backend
 cd backend
-SAFEQUERY_DATABASE_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic upgrade head
-SAFEQUERY_DATABASE_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic current
+SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic upgrade head
+SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic current
 ```
+
+Application persistence and business-source access now use separate reviewed
+names:
+
+- `SAFEQUERY_APP_POSTGRES_URL` for the application-owned PostgreSQL system of
+  record
+- `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` for a business PostgreSQL source used
+  to curate generation context later
+- `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING` for the dedicated MSSQL
+  execution source path
+
+Do not reuse the application PostgreSQL credential as a business-source secret.
 
 The dedicated local startup guide remains the source of truth for contributor
 setup and troubleshooting.

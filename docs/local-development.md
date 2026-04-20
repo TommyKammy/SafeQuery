@@ -48,8 +48,14 @@ That file provides the baseline values for:
 
 - PostgreSQL startup: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 - backend startup: `SAFEQUERY_APP_NAME`, `SAFEQUERY_ENVIRONMENT`,
-  `SAFEQUERY_DATABASE_URL`, `SAFEQUERY_CORS_ORIGINS`
+  `SAFEQUERY_APP_POSTGRES_URL`, `SAFEQUERY_CORS_ORIGINS`
 - frontend startup: `API_INTERNAL_BASE_URL`, `NEXT_PUBLIC_API_BASE_URL`
+
+Optional reviewed-but-unset source credentials are also reserved there so later
+feature work cannot blur them with the application database secret:
+
+- `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL`
+- `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING`
 
 The checked-in baseline values are already wired to the compose network:
 
@@ -119,7 +125,7 @@ Use the first command to apply the scaffolded baseline migration and the second
 to confirm the active revision.
 
 If you need to run Alembic from the host shell instead, use `backend/.env` or
-an explicit `SAFEQUERY_DATABASE_URL` that points at a database reachable from
+an explicit `SAFEQUERY_APP_POSTGRES_URL` that points at a database reachable from
 your shell. Do not reuse the compose-only `postgres` hostname from `.env` in a
 host-shell command.
 
@@ -128,8 +134,8 @@ Example host-shell path:
 ```bash
 python3 -m pip install -e backend
 cd backend
-SAFEQUERY_DATABASE_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic upgrade head
-SAFEQUERY_DATABASE_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic current
+SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic upgrade head
+SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic current
 ```
 
 ## 5. Optional Host-Shell Component Checks
@@ -173,7 +179,7 @@ docker-compose --env-file .env -f infra/docker-compose.yml down -v
 
 Copy `.env.example` to `.env` again and confirm the required keys are present:
 
-- `SAFEQUERY_DATABASE_URL`
+- `SAFEQUERY_APP_POSTGRES_URL`
 - `API_INTERNAL_BASE_URL`
 - `NEXT_PUBLIC_API_BASE_URL`
 - `POSTGRES_DB`
@@ -217,4 +223,4 @@ If that succeeds, re-check the frontend env values in `.env` or
 
 This is expected if you try to use the compose-only hostname `postgres` from a
 host shell. Use the compose-backed migration commands instead, or point
-`SAFEQUERY_DATABASE_URL` at a host-reachable database endpoint.
+`SAFEQUERY_APP_POSTGRES_URL` at a host-reachable database endpoint.
