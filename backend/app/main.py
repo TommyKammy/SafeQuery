@@ -2,8 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.core.config import settings
+from app.core.config import get_settings
 from app.services.health import check_database_health
+
+settings = get_settings()
 
 app = FastAPI(
     title=settings.app_name,
@@ -37,7 +39,7 @@ def read_root() -> dict[str, object]:
 
 @app.get("/health")
 def read_health() -> JSONResponse:
-    database = check_database_health(settings.database_url)
+    database = check_database_health(str(settings.database_url))
     healthy = database["status"] == "ok"
 
     return JSONResponse(

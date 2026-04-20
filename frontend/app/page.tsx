@@ -1,14 +1,12 @@
 import { HealthCard } from "../components/health-card";
+import { getAppConfig } from "../lib/config";
 
 type HealthSnapshot = {
   detail: string;
   status: "ok" | "degraded" | "unreachable";
 };
 
-const publicApiUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-const internalApiUrl = process.env.API_INTERNAL_BASE_URL ?? publicApiUrl;
-
-async function getHealthSnapshot(): Promise<HealthSnapshot> {
+async function getHealthSnapshot(internalApiUrl: string): Promise<HealthSnapshot> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
@@ -68,7 +66,8 @@ const seams = [
 ];
 
 export default async function HomePage() {
-  const health = await getHealthSnapshot();
+  const config = getAppConfig();
+  const health = await getHealthSnapshot(config.apiInternalBaseUrl);
 
   return (
     <main className="shell">
@@ -82,7 +81,7 @@ export default async function HomePage() {
         </p>
       </section>
 
-      <HealthCard apiUrl={publicApiUrl} detail={health.detail} status={health.status} />
+      <HealthCard apiUrl={config.publicApiBaseUrl} detail={health.detail} status={health.status} />
 
       <section className="panel">
         <div className="section-heading">
