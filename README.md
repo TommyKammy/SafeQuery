@@ -83,3 +83,21 @@ Optional local component checks:
 cd frontend && npm install && npm run build
 cd ../backend && python3 -m pip install -e .
 ```
+
+Backend migration scaffold verification:
+
+```bash
+docker-compose -f infra/docker-compose.yml run --rm backend alembic upgrade head
+docker-compose -f infra/docker-compose.yml run --rm backend alembic current
+```
+
+If you need to run Alembic from the host shell instead, provide an explicitly
+reachable database URL rather than relying on the compose-only `postgres`
+hostname:
+
+```bash
+python3 -m pip install -e backend
+cd backend
+SAFEQUERY_DATABASE_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic upgrade head
+SAFEQUERY_DATABASE_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic current
+```
