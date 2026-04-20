@@ -91,21 +91,19 @@ class SettingsTestCase(unittest.TestCase):
             settings.require_business_mssql_source()
 
     def test_business_postgres_source_must_not_reuse_app_postgres_url(self) -> None:
-        settings = Settings(
-            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
-            business_postgres_source_url=(
-                "postgresql://safequery:safequery@db:5432/safequery"
-            ),
-            _env_file=None,
-            _env_prefix="SAFEQUERY_",
-        )
-
         with self.assertRaisesRegex(
-            RuntimeError,
+            ValidationError,
             "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse "
             "SAFEQUERY_APP_POSTGRES_URL",
         ):
-            settings.require_business_postgres_source()
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                business_postgres_source_url=(
+                    "postgresql://safequery:safequery@db:5432/safequery"
+                ),
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
 
     def test_business_mssql_source_whitespace_only_fails_closed(self) -> None:
         settings = Settings(
