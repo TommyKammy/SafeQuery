@@ -154,6 +154,10 @@ textarea {
   color: var(--success);
 }
 
+.status-loading {
+  color: var(--accent);
+}
+
 .status-degraded {
   color: var(--warning);
 }

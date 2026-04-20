@@ -5,7 +5,9 @@ import {
   DEFAULT_HEALTH_SNAPSHOT,
   getDegradedHealthSnapshot,
   getHealthSnapshotFromPayload,
+  getMalformedHealthSnapshot,
   getUnreachableHealthSnapshot,
+  isHealthPayload,
   type HealthSnapshot
 } from "../lib/health";
 
@@ -41,17 +43,29 @@ export function HealthStatusCard({
           return;
         }
 
-        const payload = (await response.json()) as {
-          database?: { status?: string };
-          status?: string;
-        };
+        const payload = (await response.json()) as unknown;
+
+        if (!isHealthPayload(payload)) {
+          setHealth(getMalformedHealthSnapshot());
+          return;
+        }
 
         if (!cancelled) {
           setHealth(getHealthSnapshotFromPayload(payload));
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          setHealth(getUnreachableHealthSnapshot());
+          if (error instanceof DOMException && error.name === "AbortError") {
+            setHealth(getUnreachableHealthSnapshot());
+            return;
+          }
+
+          if (error instanceof TypeError) {
+            setHealth(getUnreachableHealthSnapshot());
+            return;
+          }
+
+          setHealth(getMalformedHealthSnapshot());
         }
       } finally {
         window.clearTimeout(timeoutId);
