@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -19,12 +19,24 @@ class BusinessMssqlSourceSettings(BaseModel):
     connection_string: str
 
 
+class SourceRoleTelemetry(BaseModel):
+    application_postgres_persistence: Literal["configured"] = "configured"
+    business_postgres_source_generation: Literal["configured", "unconfigured"]
+    business_mssql_source_execution: Literal["configured", "unconfigured"]
+
+
+class SourcePostureTelemetry(BaseModel):
+    source_posture: Literal["coherent"] = "coherent"
+    configured_source_count: int
+    source_roles: SourceRoleTelemetry
+
+
 class Settings(BaseSettings):
     app_name: str = "SafeQuery API"
     environment: Literal["development", "test", "staging", "production"] = "development"
     app_postgres_url: PostgresDsn
-    business_postgres_source_url: PostgresDsn | None = None
-    business_mssql_source_connection_string: str | None = None
+    business_postgres_source_url: Optional[PostgresDsn] = None
+    business_mssql_source_connection_string: Optional[str] = None
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
@@ -85,6 +97,37 @@ class Settings(BaseSettings):
 
         return BusinessMssqlSourceSettings(
             connection_string=normalized_connection_string
+        )
+
+    def source_posture_telemetry(self) -> SourcePostureTelemetry:
+        business_postgres_role = (
+            "configured"
+            if self.business_postgres_source_url is not None
+            else "unconfigured"
+        )
+
+        connection_string = self.business_mssql_source_connection_string
+        if connection_string is None:
+            business_mssql_role = "unconfigured"
+        elif connection_string.strip():
+            business_mssql_role = "configured"
+        else:
+            raise RuntimeError(
+                "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must not be "
+                "whitespace-only when source posture smoke checks run."
+            )
+
+        source_roles = SourceRoleTelemetry(
+            business_postgres_source_generation=business_postgres_role,
+            business_mssql_source_execution=business_mssql_role,
+        )
+
+        return SourcePostureTelemetry(
+            configured_source_count=sum(
+                role == "configured"
+                for role in source_roles.model_dump().values()
+            ),
+            source_roles=source_roles,
         )
 
     @property

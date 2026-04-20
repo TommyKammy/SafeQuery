@@ -71,3 +71,16 @@ The backend treats those names as separate identities:
 If later code asks for either business-source configuration before the matching
 source-specific variable is set, settings access fails closed with an explicit
 runtime error instead of guessing or reusing the application database secret.
+
+The startup log now also emits:
+
+- `source_posture` to confirm the source baseline is coherent
+- `configured_source_count` to show how many reviewed source roles are active
+- `source_roles` to distinguish application persistence from each reserved
+  business-source role
+
+Focused source-foundation smoke verification:
+
+```bash
+PYTHONPATH=backend python3 -m pytest backend/tests/test_source_foundation_smoke.py
+```

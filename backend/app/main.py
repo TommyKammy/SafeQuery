@@ -26,7 +26,8 @@ def create_app() -> FastAPI:
     logger = get_logger()
     try:
         settings = get_settings()
-    except ValidationError as exc:
+        source_posture = settings.source_posture_telemetry()
+    except (RuntimeError, ValidationError) as exc:
         log_startup_configuration_error(exc)
         raise
 
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
                     "environment": settings.environment,
                     "cors_origin_count": len(settings.cors_origins_list),
                     "database_configured": True,
+                    **source_posture.model_dump(),
                 }
             },
         )
