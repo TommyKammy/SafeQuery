@@ -28,11 +28,7 @@ def build_local_path_patterns() -> tuple[re.Pattern[str], ...]:
         for root in UNIX_HOME_ROOTS
     )
     windows_pattern = re.compile(
-        r"[A-Za-z]:\\\\"
-        + "Users"
-        + r"\\\\"
-        + USER_DIRECTORY_FRAGMENT
-        + r"\\\\"
+        r"[A-Za-z]:\\+Users\\+" + USER_DIRECTORY_FRAGMENT + r"\\+"
     )
     return unix_patterns + (windows_pattern,)
 
