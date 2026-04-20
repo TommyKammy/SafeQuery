@@ -9,8 +9,16 @@ const publicApiUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8
 const internalApiUrl = process.env.API_INTERNAL_BASE_URL ?? publicApiUrl;
 
 async function getHealthSnapshot(): Promise<HealthSnapshot> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
   try {
-    const response = await fetch(`${internalApiUrl}/health`, { cache: "no-store" });
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    const response = await fetch(`${internalApiUrl}/health`, {
+      cache: "no-store",
+      signal: controller.signal
+    });
 
     if (!response.ok) {
       return {
@@ -33,6 +41,10 @@ async function getHealthSnapshot(): Promise<HealthSnapshot> {
       detail: "Backend health check is not reachable from the frontend yet.",
       status: "unreachable"
     };
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 

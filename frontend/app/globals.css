@@ -55,7 +55,7 @@ a {
 
 .hero h1 {
   margin: 0.35rem 0 0.75rem;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: "IBM Plex Mono", SFMono-Regular, monospace;
   font-size: clamp(2.4rem, 5vw, 4.75rem);
   line-height: 0.95;
   letter-spacing: -0.06em;
