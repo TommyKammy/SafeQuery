@@ -44,7 +44,7 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
         self.assertEqual(_http_error_message(599), "HTTP error.")
 
     def test_unhandled_errors_and_logs_do_not_leak_secrets(self) -> None:
-        secret = "super-secret-password"
+        test_token = "test-token-1234"
         stream = StringIO()
         handler = get_logger().handlers[0].__class__(stream)
         handler.setFormatter(JsonLogFormatter())
@@ -52,7 +52,7 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
 
         @self.app.get("/_test/error")
         def raise_secret_error() -> None:
-            raise RuntimeError(f"database password={secret}")
+            raise RuntimeError(f"database credential={test_token}")
 
         try:
             with TestClient(self.app, raise_server_exceptions=False) as client:
@@ -70,7 +70,7 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
                 }
             },
         )
-        self.assertNotIn(secret, response.text)
+        self.assertNotIn(test_token, response.text)
 
         lines = [line for line in stream.getvalue().splitlines() if line.strip()]
         events = [json.loads(line) for line in lines]
@@ -88,7 +88,7 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
         self.assertEqual(completed_events[-1]["status_code"], 500)
 
         for line in lines:
-            self.assertNotIn(secret, line)
+            self.assertNotIn(test_token, line)
 
 
 if __name__ == "__main__":
