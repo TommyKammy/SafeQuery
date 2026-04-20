@@ -53,6 +53,17 @@ Optional values with reviewed defaults in code or compose:
 - `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL`
 - `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING`
 
+Keep the local roles distinct from the start:
+
+- application PostgreSQL uses `SAFEQUERY_APP_POSTGRES_URL` and the
+  `app-postgres` service for SafeQuery-owned state
+- business PostgreSQL source uses
+  `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` and the
+  `business-postgres-source` service for later generation-context work
+- business MSSQL source uses
+  `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING` and the
+  `business-mssql-source` service for later execution-path work
+
 2. Start the local stack:
 
 ```bash
@@ -65,8 +76,7 @@ an explicit missing-variable error instead of silently using local defaults.
 The baseline startup path still uses the same compose entrypoint, but the local
 topology now declares a separate application PostgreSQL service, a separate
 business PostgreSQL source, and a separate business MSSQL source so later
-source-aware work has explicit local anchors without implying that the
-application database is a business target.
+source-aware work has explicit local anchors. This role split does not make the application database a business target.
 
 3. Confirm the UI is reachable:
 
@@ -157,6 +167,19 @@ cd backend
 python3 -m pytest tests/test_source_foundation_smoke.py
 ```
 
+Startup-guard verification:
+
+```bash
+cd backend
+python3 -m pytest tests/test_application_postgres_guard.py
+```
+
+Local topology smoke verification:
+
+```bash
+bash tests/smoke/test-local-topology-roles.sh
+```
+
 Application persistence and business-source access now use separate reviewed
 names:
 
@@ -168,6 +191,11 @@ names:
   execution source path
 
 Do not reuse the application PostgreSQL credential as a business-source secret.
+
+The fail-closed startup guards are intentional:
+
+- `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL`
+- `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used.`
 
 The compose topology mirrors those roles explicitly:
 
