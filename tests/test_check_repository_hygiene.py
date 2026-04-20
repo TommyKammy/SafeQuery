@@ -1,32 +1,52 @@
 import unittest
 
-from scripts.ci.check_repository_hygiene import LOCAL_PATH_PATTERNS
+from scripts.ci.check_repository_hygiene import find_local_path_match
 
 
-def find_matches(line: str) -> list[str]:
-    return [
-        match.group(0)
-        for pattern in LOCAL_PATH_PATTERNS
-        for match in [pattern.search(line)]
-        if match is not None
-    ]
+def build_unix_home_path(user: str, tail: str) -> str:
+    return "workspace=" + "/" + "Users" + "/" + user + "/" + tail
+
+
+def build_linux_home_path(user: str, tail: str) -> str:
+    return "workspace=" + "/" + "home" + "/" + user + "/" + tail
+
+
+def build_windows_home_path(user: str, tail: str, *, doubled: bool = False) -> str:
+    slash = "\\\\" if doubled else "\\"
+    return "C:" + slash + "Users" + slash + user + slash + tail
 
 
 class RepositoryHygienePatternTestCase(unittest.TestCase):
     def test_matches_real_workstation_local_paths(self) -> None:
-        self.assertEqual(find_matches("/Users/alice/project/"), ["/Users/alice/"])
-        self.assertEqual(find_matches("/home/alice/project/"), ["/home/alice/"])
+        match = find_local_path_match(build_unix_home_path("alice", "project"))
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(0), "/" + "Users" + "/" + "alice" + "/")
+
+        match = find_local_path_match(build_linux_home_path("alice", "project"))
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(0), "/" + "home" + "/" + "alice" + "/")
+
+        match = find_local_path_match(build_windows_home_path("alice", "project"))
+        self.assertIsNotNone(match)
         self.assertEqual(
-            find_matches(r"C:\\Users\\alice\\project\\"),
-            [r"C:\\Users\\alice\\"],
+            match.group(0),
+            build_windows_home_path("alice", ""),
+        )
+
+        match = find_local_path_match(
+            build_windows_home_path("alice", "project", doubled=True)
+        )
+        self.assertIsNotNone(match)
+        self.assertEqual(
+            match.group(0),
+            build_windows_home_path("alice", "", doubled=True),
         )
 
     def test_avoids_url_and_embedded_path_false_positives(self) -> None:
-        self.assertEqual(
-            find_matches("https://example.com/Users/alice/project/"),
-            [],
+        self.assertIsNone(
+            find_local_path_match("https://example.com/Users/alice/project/")
         )
-        self.assertEqual(find_matches("/usr/home/alice/project/"), [])
+        self.assertIsNone(find_local_path_match("/usr/home/alice/project/"))
 
 
 if __name__ == "__main__":
