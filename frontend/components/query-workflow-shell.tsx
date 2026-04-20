@@ -1,9 +1,7 @@
-type WorkflowState = "signin" | "query" | "preview" | "results" | "empty" | "error";
+import { HealthStatusCard } from "./health-status-card";
+import type { HealthSnapshot } from "../lib/health";
 
-type HealthSnapshot = {
-  detail: string;
-  status: "ok" | "degraded" | "unreachable";
-};
+type WorkflowState = "signin" | "query" | "preview" | "results" | "empty" | "error";
 
 type QueryWorkflowShellProps = {
   apiUrl: string;
@@ -45,7 +43,7 @@ const workflowStates: Record<WorkflowState, StateDefinition> = {
 };
 
 export function resolveWorkflowState(value?: string): WorkflowState {
-  if (value && value in workflowStates) {
+  if (value && Object.prototype.hasOwnProperty.call(workflowStates, value)) {
     return value as WorkflowState;
   }
 
@@ -343,11 +341,7 @@ export function QueryWorkflowShell({
             <strong>{activeState.label}</strong>
             <span className="meta-copy">{activeState.description}</span>
           </div>
-          <div className="meta-card">
-            <span className="meta-label">Stack status</span>
-            <strong className={`status-text status-${health.status}`}>{health.status}</strong>
-            <span className="meta-copy">{health.detail}</span>
-          </div>
+          <HealthStatusCard apiUrl={apiUrl} initialHealth={health} />
           <div className="meta-card">
             <span className="meta-label">Boundary mode</span>
             <strong>Fail closed</strong>
