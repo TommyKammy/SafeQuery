@@ -23,12 +23,18 @@ UNIX_HOME_ROOTS = (
 
 
 def build_local_path_patterns() -> tuple[re.Pattern[str], ...]:
+    unix_prefix = r"(?<![A-Za-z0-9./_-])"
     unix_patterns = tuple(
-        re.compile("/" + root + "/" + USER_DIRECTORY_FRAGMENT + "/")
+        re.compile(
+            unix_prefix + "/" + root + "/" + USER_DIRECTORY_FRAGMENT + "/"
+        )
         for root in UNIX_HOME_ROOTS
     )
     windows_pattern = re.compile(
-        r"[A-Za-z]:\\+Users\\+" + USER_DIRECTORY_FRAGMENT + r"\\+"
+        r"(?<![A-Za-z0-9])"
+        + r"[A-Za-z]:\\+Users\\+"
+        + USER_DIRECTORY_FRAGMENT
+        + r"\\+"
     )
     return unix_patterns + (windows_pattern,)
 
