@@ -90,6 +90,51 @@ class SettingsTestCase(unittest.TestCase):
         ):
             settings.require_business_mssql_source()
 
+    def test_business_postgres_source_must_not_reuse_app_postgres_url(self) -> None:
+        settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            business_postgres_source_url=(
+                "postgresql://safequery:safequery@db:5432/safequery"
+            ),
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse "
+            "SAFEQUERY_APP_POSTGRES_URL",
+        ):
+            settings.require_business_postgres_source()
+
+    def test_business_mssql_source_whitespace_only_fails_closed(self) -> None:
+        settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            business_mssql_source_connection_string="   \t  ",
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError, "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING"
+        ):
+            settings.require_business_mssql_source()
+
+    def test_business_mssql_source_trims_outer_whitespace(self) -> None:
+        settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            business_mssql_source_connection_string=(
+                "  Driver={ODBC Driver 18 for SQL Server};Server=tcp:mssql,1433  "
+            ),
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+
+        self.assertEqual(
+            settings.require_business_mssql_source().connection_string,
+            "Driver={ODBC Driver 18 for SQL Server};Server=tcp:mssql,1433",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

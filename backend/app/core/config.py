@@ -50,23 +50,37 @@ class Settings(BaseSettings):
         return "application_postgres_persistence"
 
     def require_business_postgres_source(self) -> BusinessPostgresSourceSettings:
-        if self.business_postgres_source_url is None:
+        source_url = self.business_postgres_source_url
+        if source_url is None:
             raise RuntimeError(
                 "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must be configured before "
                 "the business PostgreSQL generation source can be used."
             )
 
-        return BusinessPostgresSourceSettings(url=self.business_postgres_source_url)
+        if str(source_url) == str(self.app_postgres_url):
+            raise RuntimeError(
+                "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse "
+                "SAFEQUERY_APP_POSTGRES_URL."
+            )
+
+        return BusinessPostgresSourceSettings(url=source_url)
 
     def require_business_mssql_source(self) -> BusinessMssqlSourceSettings:
         connection_string = self.business_mssql_source_connection_string
-        if not connection_string:
+        if connection_string is None:
+            normalized_connection_string = ""
+        else:
+            normalized_connection_string = connection_string.strip()
+
+        if not normalized_connection_string:
             raise RuntimeError(
                 "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be "
                 "configured before the business MSSQL execution source can be used."
             )
 
-        return BusinessMssqlSourceSettings(connection_string=connection_string)
+        return BusinessMssqlSourceSettings(
+            connection_string=normalized_connection_string
+        )
 
     @property
     def cors_origins_list(self) -> list[str]:
