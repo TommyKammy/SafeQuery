@@ -28,12 +28,16 @@ jobs:
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('frontend/package.json') != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Skip frontend build when frontend is absent
+        if: ${{ hashFiles('frontend/package.json') == '' }}
+        run: echo "No frontend/package.json found; skipping frontend build."
+
       - name: Set up Node.js
+        if: ${{ hashFiles('frontend/package.json') != '' }}
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -41,22 +45,28 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
+        if: ${{ hashFiles('frontend/package.json') != '' }}
         working-directory: frontend
         run: npm ci
 
       - name: Build frontend
+        if: ${{ hashFiles('frontend/package.json') != '' }}
         working-directory: frontend
         run: npm run build
 
   backend:
     name: Backend package verification
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('backend/pyproject.toml') != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Skip backend verification when backend is absent
+        if: ${{ hashFiles('backend/pyproject.toml') == '' }}
+        run: echo "No backend/pyproject.toml found; skipping backend verification."
+
       - name: Set up Python
+        if: ${{ hashFiles('backend/pyproject.toml') != '' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -64,33 +74,43 @@ jobs:
           cache-dependency-path: backend/pyproject.toml
 
       - name: Install backend package
+        if: ${{ hashFiles('backend/pyproject.toml') != '' }}
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
           python -m pip install .
 
       - name: Import backend application
+        if: ${{ hashFiles('backend/pyproject.toml') != '' }}
         working-directory: backend
         run: python -c "from app.main import app; print(app.title)"
 
   smoke:
     name: Baseline smoke checks
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('tests/smoke/test-baseline.sh') != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Skip smoke checks when script is absent
+        if: ${{ hashFiles('tests/smoke/test-baseline.sh') == '' }}
+        run: echo "No tests/smoke/test-baseline.sh found; skipping smoke checks."
+
       - name: Run smoke checks
+        if: ${{ hashFiles('tests/smoke/test-baseline.sh') != '' }}
         run: bash tests/smoke/test-baseline.sh
 
   compose:
     name: Compose config validation
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('infra/docker-compose.yml') != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Skip compose validation when config is absent
+        if: ${{ hashFiles('infra/docker-compose.yml') == '' }}
+        run: echo "No infra/docker-compose.yml found; skipping compose validation."
+
       - name: Validate compose configuration
+        if: ${{ hashFiles('infra/docker-compose.yml') != '' }}
         run: docker compose -f infra/docker-compose.yml config >/tmp/compose-config.txt
