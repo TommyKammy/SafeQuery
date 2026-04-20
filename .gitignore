@@ -11,3 +11,16 @@
 *.log
 *.tmp
 *.swp
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+
+# Python
+backend/.venv/
+backend/.pytest_cache/
+backend/**/__pycache__/
+
+# Local environment files
+.env
+.env.local
