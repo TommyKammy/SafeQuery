@@ -15,3 +15,6 @@ class Base(DeclarativeBase):
 
 
 target_metadata = Base.metadata
+
+# Import model modules so metadata is populated for Alembic and tests.
+import app.db.models  # noqa: F401,E402
