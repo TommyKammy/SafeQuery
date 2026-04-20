@@ -1,3 +1,5 @@
+from sqlalchemy import UniqueConstraint
+
 from app.db.models.source_registry import RegisteredSource
 
 
@@ -28,11 +30,13 @@ def test_registered_source_scaffold_matches_minimum_shape() -> None:
     assert table.c.dialect_profile_id.nullable is True
     assert table.c.dataset_contract_id.nullable is True
     assert table.c.schema_snapshot_id.nullable is True
+    assert table.c.created_at.onupdate is None
+    assert table.c.updated_at.onupdate is not None
 
     unique_constraints = {
         tuple(column.name for column in constraint.columns)
         for constraint in table.constraints
-        if constraint.__class__.__name__ == "UniqueConstraint"
+        if isinstance(constraint, UniqueConstraint)
     }
 
     assert ("source_identity",) in unique_constraints
