@@ -32,20 +32,24 @@ Quick start:
 cp .env.example .env
 ```
 
-The required startup values are:
+The required baseline startup values are:
 
 - `SAFEQUERY_APP_POSTGRES_URL`
 - `API_INTERNAL_BASE_URL`
 - `NEXT_PUBLIC_API_BASE_URL`
-- `POSTGRES_DB`
-- `POSTGRES_USER`
-- `POSTGRES_PASSWORD`
+- `APP_POSTGRES_DB`
+- `APP_POSTGRES_USER`
+- `APP_POSTGRES_PASSWORD`
 
 Optional values with reviewed defaults in code or compose:
 
 - `SAFEQUERY_APP_NAME`
 - `SAFEQUERY_ENVIRONMENT`
 - `SAFEQUERY_CORS_ORIGINS`
+- `BUSINESS_POSTGRES_SOURCE_DB`
+- `BUSINESS_POSTGRES_SOURCE_USER`
+- `BUSINESS_POSTGRES_SOURCE_PASSWORD`
+- `BUSINESS_MSSQL_SOURCE_SA_PASSWORD`
 - `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL`
 - `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING`
 
@@ -57,6 +61,12 @@ docker-compose --env-file .env -f infra/docker-compose.yml up --build -d
 
 If `.env` is missing or a required value is blank, Docker Compose will stop with
 an explicit missing-variable error instead of silently using local defaults.
+
+The baseline startup path still uses the same compose entrypoint, but the local
+topology now declares a separate application PostgreSQL service, a separate
+business PostgreSQL source, and a separate business MSSQL source so later
+source-aware work has explicit local anchors without implying that the
+application database is a business target.
 
 3. Confirm the UI is reachable:
 
@@ -130,14 +140,14 @@ docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alem
 ```
 
 If you need to run Alembic from the host shell instead, provide an explicitly
-reachable database URL rather than relying on the compose-only `postgres`
+reachable database URL rather than relying on the compose-only `app-postgres`
 hostname:
 
 ```bash
 python3 -m pip install -e backend
 cd backend
-SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic upgrade head
-SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:safequery@127.0.0.1:5432/safequery" alembic current
+SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic upgrade head
+SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic current
 ```
 
 Application persistence and business-source access now use separate reviewed
@@ -151,6 +161,15 @@ names:
   execution source path
 
 Do not reuse the application PostgreSQL credential as a business-source secret.
+
+The compose topology mirrors those roles explicitly:
+
+- `app-postgres` for application PostgreSQL persistence
+- `business-postgres-source` for the optional local business PostgreSQL source
+- `business-mssql-source` for the optional local business MSSQL source
+
+The backend baseline still depends only on `app-postgres`; the source services
+exist to keep the local topology and credentials explicit for later work.
 
 The dedicated local startup guide remains the source of truth for contributor
 setup and troubleshooting.
