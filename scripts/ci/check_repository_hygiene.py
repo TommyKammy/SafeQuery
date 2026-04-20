@@ -20,15 +20,22 @@ UNIX_HOME_ROOTS = (
     "Users",
     "home",
 )
+PATH_BOUNDARY_PREFIX = r"(?<![A-Za-z0-9._:-])"
 
 
 def build_local_path_patterns() -> tuple[re.Pattern[str], ...]:
     unix_patterns = tuple(
-        re.compile("/" + root + "/" + USER_DIRECTORY_FRAGMENT + "/")
+        re.compile(PATH_BOUNDARY_PREFIX + "/" + root + "/" + USER_DIRECTORY_FRAGMENT + "/")
         for root in UNIX_HOME_ROOTS
     )
     windows_pattern = re.compile(
-        r"[A-Za-z]:\\+Users\\+" + USER_DIRECTORY_FRAGMENT + r"\\+"
+        PATH_BOUNDARY_PREFIX
+        + r"[A-Za-z]:"
+        + r"[\\]+"
+        + "Users"
+        + r"[\\]+"
+        + USER_DIRECTORY_FRAGMENT
+        + r"[\\]+"
     )
     return unix_patterns + (windows_pattern,)
 
@@ -56,6 +63,14 @@ def is_binary(path: Path) -> bool:
     return b"\0" in data
 
 
+def find_local_path_match(line: str) -> re.Match[str] | None:
+    for pattern in LOCAL_PATH_PATTERNS:
+        match = pattern.search(line)
+        if match:
+            return match
+    return None
+
+
 def main() -> int:
     tracked_files = git_ls_files()
     violations: list[str] = []
@@ -81,10 +96,8 @@ def main() -> int:
             continue
 
         for line_number, line in enumerate(content.splitlines(), start=1):
-            for pattern in LOCAL_PATH_PATTERNS:
-                match = pattern.search(line)
-                if not match:
-                    continue
+            match = find_local_path_match(line)
+            if match:
                 violations.append(
                     f"{relative_path}:{line_number}: contains workstation-local path '{match.group(0)}'"
                 )
