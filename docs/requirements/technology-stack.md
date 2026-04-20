@@ -20,6 +20,7 @@ This document covers the baseline stack for:
 - application-owned persistence
 - Microsoft SQL Server connectivity
 - SQL generation engine integration
+- governed semantic retrieval and analyst-style orchestration
 - SQL Guard and execution safety
 - audit logging
 - evaluation harness
@@ -45,10 +46,18 @@ The current implementation assumptions are:
 - the initial SQL connectivity path uses **pyodbc**
 - **mssql-python** may be evaluated later as a separate investigation track
 - application-owned records such as audit logs must be stored in **PostgreSQL**
+- **MLflow** may be used as an engineering plane for tracing, evaluation, and model lifecycle management
 - the SQL generation engine must be **replaceable**
 - the initial SQL generation implementation uses a **Vanna-based adapter**
 - the initial scope is a **single SQL Server database** with a constrained allow-listed dataset
 - generated SQL must be reviewed and validated before execution
+
+The initial phase posture is:
+
+- the core NL2SQL control path is required
+- governed search and analyst-style capabilities are optional feature-flagged extension tracks in Phase 1
+- MLflow integration is an optional feature-flagged engineering-plane integration in Phase 1
+- if an optional track is enabled, its governance, audit, and evaluation requirements become mandatory for that deployment
 
 ---
 
@@ -63,6 +72,7 @@ The application is responsible for:
 - authentication integration
 - session handling
 - authorization
+- governed retrieval over approved semantic assets
 - dataset exposure policy
 - SQL validation
 - execution approval
@@ -135,6 +145,7 @@ The baseline stack does **not** aim to provide the following in the first phase:
 - production-grade HA or scaling architecture in this phase
 - charting and advanced BI features in the first implementation
 - tightly coupling core application behavior to a single SQL generation vendor or project
+- requiring search, analyst orchestration, or MLflow integration for the first safe vertical slice of the core NL2SQL control path
 
 ---
 
@@ -176,6 +187,13 @@ The application consumes authenticated identity from the bridge layer and establ
 
 Authentication confirms identity, while authorization remains an **application-owned concern**.
 
+The baseline trusted-backend posture is:
+
+- FastAPI is the authoritative trusted backend for execution-sensitive decisions
+- Next.js is the application UI layer and must not expose an alternate raw-SQL execution path
+- session and CSRF enforcement are application responsibilities, not bridge-only responsibilities
+- claim-to-role mapping is default-deny and application-owned
+
 ### Why this choice
 - reduces direct SAML protocol complexity inside the application
 - preserves compatibility with enterprise identity requirements
@@ -199,6 +217,15 @@ FastAPI is used as the primary API and control-plane implementation for:
 - evaluation harness support
 
 The backend owns all trusted control boundaries of the system.
+
+The backend is also the only component permitted to:
+
+- hold SQL Server execution credentials
+- mint `query_candidate_id` records and approval TTLs
+- bind previewed SQL to executable canonical SQL
+- enforce kill switch, timeout, and result limits
+- enforce candidate ownership and replay limits
+- atomically claim single-use execution rights
 
 ### Why this choice
 - strong fit for Python-based orchestration and validation logic
@@ -227,6 +254,15 @@ Critical settings such as:
 
 must be defined through application configuration rather than inferred from external engine behavior.
 
+Retrieval-specific settings such as:
+
+- indexed semantic asset sources
+- retrieval authorization scope
+- analyst explanation features
+- citation rendering policy
+
+must also be application-defined and reviewable.
+
 ### Why this choice
 - explicit typing and validation improve maintainability
 - reduces configuration ambiguity
@@ -242,6 +278,7 @@ PostgreSQL stores application-owned data such as:
 - audit records
 - evaluation cases
 - internal metadata
+- retrieval corpus metadata and indexing state if the application stores them locally
 - configuration-related persistence if needed
 - future operational state required by the control plane
 
@@ -252,6 +289,27 @@ PostgreSQL is the system of record for application-owned persistence.
 - better long-term fit than lightweight local-only storage
 - suitable for future admin screens, search, and analytics needs
 - independent from both the SQL generation engine and the target MSSQL business data source
+
+---
+
+## ML and LLM Lifecycle Plane
+
+The recommended engineering plane for ML, LLM, retrieval, and analyst-style lifecycle workflows is **MLflow**.
+
+MLflow is used here for:
+
+- tracing and observability of LLM and retrieval workflows
+- evaluation run management
+- prompt and model lineage tracking
+- optional model registry support for auxiliary ML components such as rerankers or classifiers
+
+MLflow is not the SafeQuery trusted control plane. It is an engineering support plane around experimentation, debugging, regression management, and lifecycle visibility.
+
+### Why this choice
+- strong fit for experiment tracking, evaluation comparison, and GenAI tracing
+- useful for retrieval and analyst-style quality improvement loops
+- keeps lifecycle tooling separate from execution governance
+- remains compatible with vendor-neutral and self-hosted operation
 
 ---
 
@@ -326,6 +384,8 @@ The initial implementation is an **adapter backed by Vanna and a local LLM runti
 
 Vanna is used strictly as a **SQL generation component** and is not part of the system’s trusted control boundary.
 
+The adapter must not hold production SQL Server credentials or direct execution authority. It should receive only curated schema context and policy-approved metadata supplied by the application.
+
 The application remains the **system of record** for:
 - authentication
 - authorization
@@ -338,6 +398,8 @@ The application remains the **system of record** for:
 Vanna-specific UI, audit, filtering, and authorization features are explicitly **out of scope** for the core architecture.
 
 Any future migration from Vanna to another SQL generation engine must be achievable through the internal adapter boundary with minimal impact on the surrounding application layers.
+
+The same replaceability expectation should apply to analyst-style orchestration components. Search and explanation features may help users understand data and results, but they do not become the trusted control plane.
 
 ### Why this choice
 - enables practical delivery with an initial engine
@@ -358,10 +420,30 @@ This supports:
 
 The local LLM runtime is an implementation detail of the SQL generation adapter layer and does not receive any control-plane authority.
 
+If the analyst experience uses local LLM inference for explanation, summarization, or retrieval-grounded answer composition, that logic remains advisory and application-governed rather than independently trusted.
+
 ### Why this choice
 - supports enterprise-sensitive use cases
 - fits self-hosted and controllable architecture goals
 - reduces exposure of prompts and metadata to external services
+
+## Governed Semantic Retrieval and Analyst Experience
+
+SafeQuery may include features analogous to Snowflake Cortex Search and Analyst, but implemented within the SafeQuery trust model.
+
+The baseline posture is:
+
+- semantic retrieval is application-owned and limited to approved knowledge assets
+- analyst-style answer composition is grounded in retrieved assets and approved SQL execution results
+- retrieval and explanation layers do not bypass guard, execution integrity, dataset governance, or auditing
+- citations should distinguish retrieved knowledge from executed result-backed evidence
+
+Exact retrieval substrate is intentionally left open for later implementation choice. It may be backed by application-owned indexing in PostgreSQL or another approved retrieval component, but the trust boundary remains in the application.
+
+### Why this choice
+- gives users search-first and analyst-style experiences without moving governance into external tools
+- improves discoverability of schema, metrics, and analytic guidance
+- keeps trust, audit, and execution controls inside SafeQuery
 
 ---
 
@@ -375,12 +457,20 @@ SQL Guard enforces strict read-only behavior, including:
 - statement-type restrictions
 - object allow-list enforcement
 - multi-statement rejection
+- cross-database and linked-server denial
+- temp object and side-effecting syntax denial
 - execution limit policies
 - structured allow/deny decisions
 
 Approved SQL is executed only through an **application-owned execution path** using least-privilege SQL Server credentials.
 
 Execution authority is never delegated to the SQL generation engine.
+
+In the first-phase execution path, the system should execute only canonical SQL stored against an approved `query_candidate_id` rather than accepting raw SQL text from the frontend at execution time.
+
+The Phase 1 execution contract is that the previewed SQL is the executable bounded canonical SQL. If row-limiting rewrites are needed, they occur before preview and become part of the canonical SQL. Byte and timeout enforcement remain runtime delivery controls and must not silently rewrite SQL after approval.
+
+Canonicalization and any required row-bounding rewrite must therefore complete before SQL Guard evaluation so that guard decision, SQL hash, preview text, and execute-time SQL all refer to the same canonical SQL.
 
 ### Why this choice
 - preserves hard separation between generation and execution
@@ -402,6 +492,14 @@ Every significant step in the request lifecycle must be recorded, including:
 - execution decision
 - execution result metadata
 - errors and denials
+
+The audit record should also preserve reconstruction metadata such as adapter version, guard version, schema snapshot version, and prompt or model version where applicable.
+
+If search and analyst capabilities are enabled, the audit record should also preserve retrieval corpus version, retrieved asset identifiers, and analyst or explanation mode version where applicable.
+
+The audit store should be treated as a sensitive store because natural-language inputs, role context, and execution metadata may contain sensitive business information. Retention, redaction, and access controls are part of the baseline posture.
+
+If MLflow is enabled, it may receive mirrored engineering traces or evaluation outputs, but PostgreSQL remains the authoritative audit system of record.
 
 The application audit store is the authoritative system of record.
 
@@ -428,6 +526,12 @@ are application-owned and must remain reusable even if the SQL generation engine
 
 The initial implementation may run evaluations against the Vanna adapter, but the evaluation framework itself must not be tightly coupled to Vanna-specific internals.
 
+The evaluation baseline should include a deny corpus, expected deny codes, and pilot entry thresholds rather than relying only on qualitative review.
+
+If governed retrieval and analyst-style answers are enabled, the evaluation baseline should also measure retrieval relevance, citation correctness, and explanation groundedness.
+
+If MLflow is enabled, it should be the default place to compare those evaluation runs across prompt, retrieval, and model variants.
+
 ### Why this choice
 - enables repeatable quality measurement
 - supports regression testing
@@ -446,6 +550,12 @@ The application includes **application-owned observability** for core request fl
 - audit persistence
 
 Tracing, structured logging, and operational metrics should be implemented at the application layer so that end-to-end behavior remains visible even if internal engine components are replaced later.
+
+MLflow is the recommended backend for engineering-facing GenAI tracing and evaluation workflows, provided that trace export is configured so that sensitive data handling remains consistent with SafeQuery policy.
+
+Pilot-safe execution controls such as kill switch state, timeouts, row limits, and cancellation outcomes should also be observable at the application layer.
+
+Rate-limit rejections, concurrency rejections, candidate invalidation, and replay denials should also be observable at the application layer.
 
 ### Why this choice
 - supports debugging and operational review
@@ -498,11 +608,11 @@ This separation is a core design principle and must be preserved throughout impl
 The following items are intentionally left for later design documents and ADRs:
 
 - exact authentication bridge product configuration
-- exact session and token handling model
-- exact frontend-to-backend boundary and BFF responsibilities
 - exact PostgreSQL schema design for audit and evaluation storage
-- SQL Guard rule specification in full detail
-- exact MSSQL dataset exposure model
+- exact parser and AST implementation choice for SQL Guard
+- numeric defaults for rate limits, TTLs, and result bounds
+- exact admin and audit UI result re-exposure design
+- exact MLflow deployment topology, retention, and redaction posture
 - mssql-python evaluation criteria and migration decision gate
 - deployment topology and runtime hardening details
 
