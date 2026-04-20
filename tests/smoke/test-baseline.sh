@@ -6,6 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 required_paths=(
+  "DESIGN.md"
   "frontend/package.json"
   "frontend/app/page.tsx"
   "backend/pyproject.toml"
