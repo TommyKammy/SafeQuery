@@ -15,11 +15,25 @@ DISALLOWED_TRACKED_PATHS = (
 DISALLOWED_TRACKED_SEGMENTS = (
     ".codex-supervisor/",
 )
-LOCAL_PATH_PATTERNS = (
-    re.compile(r"/Users/[A-Za-z0-9._-]+/"),
-    re.compile(r"/home/[A-Za-z0-9._-]+/"),
-    re.compile(r"[A-Za-z]:\\\\Users\\\\[A-Za-z0-9._-]+\\\\"),
+USER_DIRECTORY_FRAGMENT = r"[A-Za-z0-9._-]+"
+UNIX_HOME_ROOTS = (
+    "Users",
+    "home",
 )
+
+
+def build_local_path_patterns() -> tuple[re.Pattern[str], ...]:
+    unix_patterns = tuple(
+        re.compile("/" + root + "/" + USER_DIRECTORY_FRAGMENT + "/")
+        for root in UNIX_HOME_ROOTS
+    )
+    windows_pattern = re.compile(
+        r"[A-Za-z]:\\+Users\\+" + USER_DIRECTORY_FRAGMENT + r"\\+"
+    )
+    return unix_patterns + (windows_pattern,)
+
+
+LOCAL_PATH_PATTERNS = build_local_path_patterns()
 
 
 def git_ls_files() -> list[str]:

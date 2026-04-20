@@ -7,6 +7,8 @@ WORKDIR /app
 
 COPY backend/pyproject.toml ./pyproject.toml
 COPY backend/README.md ./README.md
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/alembic ./alembic
 COPY backend/app ./app
 RUN pip install --no-cache-dir . \
     && useradd --create-home --uid 10001 appuser \
