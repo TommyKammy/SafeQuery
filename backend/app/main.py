@@ -89,25 +89,28 @@ def create_app() -> FastAPI:
             },
         )
 
-        response = await call_next(request)
-        duration_ms = round((perf_counter() - started_at) * 1000, 3)
-        response.headers["X-Request-ID"] = request_id
+        response = None
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            return response
+        finally:
+            duration_ms = round((perf_counter() - started_at) * 1000, 3)
+            status_code = response.status_code if response is not None else 500
 
-        logger.info(
-            "request.completed",
-            extra={
-                "event_data": {
-                    "event": "request.completed",
-                    "request_id": request_id,
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status_code": response.status_code,
-                    "duration_ms": duration_ms,
-                }
-            },
-        )
-
-        return response
+            logger.info(
+                "request.completed",
+                extra={
+                    "event_data": {
+                        "event": "request.completed",
+                        "request_id": request_id,
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status_code": status_code,
+                        "duration_ms": duration_ms,
+                    }
+                },
+            )
 
     app.add_exception_handler(StarletteHTTPException, handle_http_exception)
     app.add_exception_handler(RequestValidationError, handle_validation_exception)

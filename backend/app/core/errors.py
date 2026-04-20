@@ -43,7 +43,13 @@ def _http_error_message(status_code: int) -> str:
         405: "Method not allowed.",
         422: "Request validation failed.",
     }
-    return mapping.get(status_code, HTTPStatus(status_code).phrase)
+    if status_code in mapping:
+        return mapping[status_code]
+
+    try:
+        return HTTPStatus(status_code).phrase
+    except ValueError:
+        return "HTTP error."
 
 
 async def handle_http_exception(
