@@ -21,9 +21,32 @@ class PreviewSubmissionRequest(BaseModel):
     source_id: NonEmptyTrimmedString
 
 
+class RequestRecord(BaseModel):
+    question: str
+    source_id: str
+    state: str
+
+
+class CandidateRecord(BaseModel):
+    source_id: str
+    state: str
+
+
+class AuditRecord(BaseModel):
+    source_id: str
+    state: str
+
+
+class EvaluationRecord(BaseModel):
+    source_id: str
+    state: str
+
+
 class PreviewSubmissionResponse(BaseModel):
-    request: dict[str, str]
-    candidate: dict[str, str]
+    request: RequestRecord
+    candidate: CandidateRecord
+    audit: AuditRecord
+    evaluation: EvaluationRecord
 
 
 def _phase1_registered_source(
@@ -89,13 +112,21 @@ def submit_preview_request(
         ) from exc
 
     return PreviewSubmissionResponse(
-        request={
-            "question": payload.question,
-            "source_id": resolved_source.source_id,
-            "state": "submitted",
-        },
-        candidate={
-            "source_id": resolved_source.source_id,
-            "state": "preview_ready",
-        },
+        request=RequestRecord(
+            question=payload.question,
+            source_id=resolved_source.source_id,
+            state="submitted",
+        ),
+        candidate=CandidateRecord(
+            source_id=resolved_source.source_id,
+            state="preview_ready",
+        ),
+        audit=AuditRecord(
+            source_id=resolved_source.source_id,
+            state="recorded",
+        ),
+        evaluation=EvaluationRecord(
+            source_id=resolved_source.source_id,
+            state="pending",
+        ),
     )

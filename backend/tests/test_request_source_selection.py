@@ -138,6 +138,14 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
                     "source_id": "sap-approved-spend",
                     "state": "preview_ready",
                 },
+                "audit": {
+                    "source_id": "sap-approved-spend",
+                    "state": "recorded",
+                },
+                "evaluation": {
+                    "source_id": "sap-approved-spend",
+                    "state": "pending",
+                },
             },
         )
 
