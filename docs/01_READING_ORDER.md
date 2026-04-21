@@ -66,11 +66,28 @@ This reading order is intended to help new contributors understand SafeQuery fro
 25. [design/evaluation-harness.md](./design/evaluation-harness.md)
     Use this to understand how NL2SQL quality should be measured safely in the current source-aware baseline.
 
-### 5. Local Setup and Threat Review
+### 5. Approved Follow-on Direction
 
-26. [local-development.md](./local-development.md)
+26. [adr/ADR-0011-target-source-registry-and-single-source-execution-model.md](./adr/ADR-0011-target-source-registry-and-single-source-execution-model.md)
+    Read first in this section to understand how SafeQuery expands beyond one hard-coded business source while keeping request, candidate, and execution paths single-source.
+27. [adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md](./adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md)
+    Review how source families, flavors, connector profiles, and guard profiles are separated so future onboarding does not redesign the control plane.
+28. [design/target-source-registry.md](./design/target-source-registry.md)
+    Use this to understand the concrete registry model, source lifecycle expectations, and application PostgreSQL separation guardrails.
+29. [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md)
+    Review the family and flavor rollout matrix before planning connector, guard, or evaluation work for additional sources.
+30. [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md)
+    Read this to understand why the product shell is workflow-first and why the Epic A shell remains a developer state demo.
+31. [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md)
+    Review how SafeQuery may borrow OSS ergonomics without turning the product into a generic chat shell or moving trust boundaries.
+32. [implementation-roadmap.md](./implementation-roadmap.md)
+    Finish this section with the current implementation sequence so roadmap work stays aligned with the reviewed docs direction.
+
+### 6. Local Setup and Threat Review
+
+33. [local-development.md](./local-development.md)
     Use this once the document set is clear so local startup follows the reviewed topology and role split.
-27. [security/threat-model.md](./security/threat-model.md)
+34. [security/threat-model.md](./security/threat-model.md)
     Finish with the threat model and residual risks for the current source-aware and UX-foundation baseline before pilot readiness review.
 
 ## Source Hierarchy

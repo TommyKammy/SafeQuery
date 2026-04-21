@@ -70,6 +70,16 @@ If documents drift, do not silently let lower-level docs override upstream inten
 - [design/evaluation-harness.md](./design/evaluation-harness.md): evaluation goals, datasets, and scoring for the current baseline
 - [security/threat-model.md](./security/threat-model.md): threat model and residual risk summary for the current source-aware and UX-foundation baseline
 
+### Approved Follow-on Direction
+
+- [adr/ADR-0011-target-source-registry-and-single-source-execution-model.md](./adr/ADR-0011-target-source-registry-and-single-source-execution-model.md): approved registry and single-source execution direction for multi-source expansion
+- [adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md](./adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md): approved source-family, flavor, and profile strategy for follow-on dialect support
+- [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md): approved product-shell direction that reclassifies Epic A as a state demo and the workflow shell as the product contract
+- [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md): UI stack and OSS adoption boundaries for the SafeQuery-owned operator shell
+- [design/target-source-registry.md](./design/target-source-registry.md): backend-owned registry model, activation semantics, and secret indirection expectations
+- [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md): compact family and flavor rollout matrix for connector, guard, and evaluation planning
+- [implementation-roadmap.md](./implementation-roadmap.md): current implementation sequence after Epic A, Epic A follow-up, and UX-1
+
 ## Documentation Intent
 
 These docs should be used as the current baseline for SafeQuery contributors:
@@ -81,3 +91,5 @@ These docs should be used as the current baseline for SafeQuery contributors:
 - implementation planning
 
 They should not be interpreted as final production deployment guidance. The current set is intentionally optimized for a safe first-phase PoC while still defining the current source-aware and UX-foundation baseline.
+
+The approved follow-on ADRs, design notes, and implementation roadmap extend that baseline direction without moving trust, execution, or audit authority outside the application.
