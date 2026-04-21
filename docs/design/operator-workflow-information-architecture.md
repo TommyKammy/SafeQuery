@@ -207,12 +207,13 @@ to preview or results.
 
 ### Source selector lifecycle semantics
 
-The source selector is editable only while the operator is in an active draft with no bound preview candidate yet.
+The source selector is interactive only while the operator is in an active draft with no bound preview candidate yet. In that state, it is used to choose the draft's initial source; changing to a different source must use an explicit draft-fork action rather than replacing the bound source in place.
 
 State contract:
 
-- draft with no preview yet: the operator may choose or replace the source before submitting into
-  preview
+- draft with no preview yet: the operator may choose the draft's initial source before submitting
+  into preview; switching to a different source must use an explicit draft-fork action that creates
+  a new draft context
 - previewed, approved, executing, and executed states: the selected source is displayed as bound
   identity, not as an editable control
 - historical rows opened for review: the row shows the source that was bound to that request,
@@ -222,7 +223,7 @@ State contract:
 
 After preview is created, the selected source becomes read-only bound identity for that draft, its candidate records, and any later execution or history surfaces derived from it.
 
-Changing source from an unpreviewed draft must be an explicit draft-fork action that creates a new draft context.
+Changing source from an unpreviewed draft must always be an explicit draft-fork action that creates a new draft context.
 
 That explicit source-change action may carry forward the natural-language question only if the UI
 states that choice clearly, but it must not carry forward the prior candidate, guard posture,
