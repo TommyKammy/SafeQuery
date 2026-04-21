@@ -21,7 +21,8 @@ describe("HomePage", () => {
 
     expect(screen.getByRole("heading", { name: /query workflow/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /sign in/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /generate preview/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /submit for preview/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /source/i })).toBeInTheDocument();
     expect(screen.getByText("Generated SQL")).toBeInTheDocument();
     expect(screen.getByText("Guard status")).toBeInTheDocument();
     expect(screen.getByText("Results")).toBeInTheDocument();
@@ -54,7 +55,8 @@ describe("HomePage", () => {
       await HomePage({
         searchParams: {
           question: "Show approved vendors by quarterly spend",
-          state: "preview"
+          source_id: "sap-approved-spend",
+          state: "preview",
         }
       })
     );
@@ -64,11 +66,44 @@ describe("HomePage", () => {
     expect(screen.getAllByText(/sql preview placeholder/i)).not.toHaveLength(0);
   });
 
+  it("requires an explicit source selection before preview state can be entered", async () => {
+    render(
+      await HomePage({
+        searchParams: {
+          question: "Show approved vendors by quarterly spend",
+          state: "preview"
+        }
+      })
+    );
+
+    expect(screen.getByRole("heading", { name: /query input state/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /source/i })).toHaveValue("");
+    expect(
+      screen.getByText(/select an executable source before preview can be requested/i)
+    ).toBeInTheDocument();
+  });
+
+  it("keeps source selection read-only after a preview-bound source is chosen", async () => {
+    render(
+      await HomePage({
+        searchParams: {
+          question: "Show approved vendors by quarterly spend",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    expect(screen.queryByRole("combobox", { name: /source/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/sap spend cube \/ approved_vendor_spend/i)).not.toHaveLength(0);
+  });
+
   it("renders explicit empty and review-denied placeholder states", async () => {
     const { rerender } = render(
       await HomePage({
         searchParams: {
           question: "Show approved vendors by quarterly spend",
+          source_id: "sap-approved-spend",
           state: "empty"
         }
       })
@@ -80,6 +115,7 @@ describe("HomePage", () => {
       await HomePage({
         searchParams: {
           question: "Show approved vendors by quarterly spend",
+          source_id: "sap-approved-spend",
           state: "error"
         }
       })
@@ -134,10 +170,11 @@ describe("HomePage", () => {
       render(
         await HomePage({
           searchParams: {
-            question,
-            state: terminalState.state
-          }
-        })
+          question,
+          source_id: "sap-approved-spend",
+          state: terminalState.state
+        }
+      })
       );
 
       expect(screen.getByRole("heading", { name: terminalState.heading })).toBeInTheDocument();
