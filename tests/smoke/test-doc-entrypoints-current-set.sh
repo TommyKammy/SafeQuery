@@ -20,6 +20,7 @@ docs_index_required_patterns=(
   "^### Normative Baseline$"
   "^### UX Foundation$"
   "^### Source-Aware and Evaluation Baseline$"
+  "^### Approved Follow-on Direction$"
   "current source-aware and UX-foundation baseline"
   "current baseline for SafeQuery contributors"
 )
@@ -29,7 +30,8 @@ reading_order_required_patterns=(
   "^### 2\\. Architecture and Trust Decisions$"
   "^### 3\\. UX Foundation$"
   "^### 4\\. Source-Aware and Evaluation Baseline$"
-  "^### 5\\. Local Setup and Threat Review$"
+  "^### 5\\. Approved Follow-on Direction$"
+  "^### 6\\. Local Setup and Threat Review$"
   "current source-aware and UX-foundation baseline"
 )
 
@@ -63,6 +65,13 @@ docs_index_required_links=(
   "design/search-and-analyst-capabilities.md"
   "design/evaluation-harness.md"
   "security/threat-model.md"
+  "adr/ADR-0011-target-source-registry-and-single-source-execution-model.md"
+  "adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md"
+  "adr/ADR-0013-operator-workflow-and-ui-foundation.md"
+  "adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md"
+  "design/target-source-registry.md"
+  "design/dialect-capability-matrix.md"
+  "implementation-roadmap.md"
 )
 
 reading_order_required_links=(
@@ -91,6 +100,13 @@ reading_order_required_links=(
   "adr/ADR-0010-mlflow-observability-and-evaluation-plane.md"
   "design/search-and-analyst-capabilities.md"
   "design/evaluation-harness.md"
+  "adr/ADR-0011-target-source-registry-and-single-source-execution-model.md"
+  "adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md"
+  "design/target-source-registry.md"
+  "design/dialect-capability-matrix.md"
+  "adr/ADR-0013-operator-workflow-and-ui-foundation.md"
+  "adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md"
+  "implementation-roadmap.md"
   "local-development.md"
   "security/threat-model.md"
 )
