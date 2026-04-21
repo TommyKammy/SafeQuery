@@ -59,6 +59,8 @@ The registry is the authoritative place where the trusted backend resolves sourc
 - schema snapshot linkage
 - source activation state
 
+In this ADR, `source_id` means the stable backend-owned registry key for a registered source, not a display label, transient status field, or other derived identifier.
+
 SafeQuery will use a single-source execution model.
 
 In that model:

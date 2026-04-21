@@ -14,7 +14,7 @@ It exists to answer these questions safely:
 - which source family and optional source flavor each source uses
 - which connector profile and dialect profile apply
 - which dataset contract and schema snapshot are active
-- whether the source is healthy, paused, or blocked for execution
+- whether the source is active, paused, or blocked for execution
 
 The registry does not give the adapter direct execution authority.
 
@@ -94,4 +94,4 @@ If business PostgreSQL support is added, it must appear as an explicit business 
 - separate connector profile
 - separate policy and dataset contract
 
-This prevents the application system of record from becoming a default execution target by accident.
+This prevents the application system of record from becoming a default execution target inadvertently.

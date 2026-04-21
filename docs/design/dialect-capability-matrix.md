@@ -21,5 +21,5 @@ It is a planning and review aid for connector, guard, and evaluation work.
 ## Usage Notes
 
 - A family or flavor does not become implementation-ready just because it appears in this matrix.
-- Every new family or flavor still requires approved connector, guard, governance, and evaluation work.
+- Every new family or flavor still requires approval of connector, guard, governance, and evaluation work.
 - The matrix complements the target source registry. It does not replace per-source registry records.
