@@ -2,6 +2,7 @@ import importlib
 import os
 import unittest
 from datetime import datetime, timezone
+from typing import Optional
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -57,6 +58,9 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         source_id: str,
         source_posture: SourceActivationPosture,
         snapshot_status: SchemaSnapshotReviewStatus = SchemaSnapshotReviewStatus.APPROVED,
+        owner_binding: str = "group:finance-analysts",
+        security_review_binding: Optional[str] = None,
+        exception_policy_binding: Optional[str] = None,
     ) -> None:
         source = RegisteredSource(
             id=uuid4(),
@@ -91,9 +95,9 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             schema_snapshot_id=snapshot.id,
             contract_version=1,
             display_name=f"{source_id} contract",
-            owner_binding="group:finance-analysts",
-            security_review_binding=None,
-            exception_policy_binding=None,
+            owner_binding=owner_binding,
+            security_review_binding=security_review_binding,
+            exception_policy_binding=exception_policy_binding,
         )
         self.session.add(contract)
         self.session.flush()
@@ -276,6 +280,68 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
                     "source_id": "sap-approved-spend",
                     "state": "pending",
                 },
+            },
+        )
+
+    def test_preview_submission_rejects_subject_matching_only_security_review_binding(self) -> None:
+        self.app.dependency_overrides[require_authenticated_subject] = lambda: AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:security-reviewers"}),
+        )
+        self._seed_authoritative_source_governance(
+            source_id="sap-approved-spend",
+            source_posture=SourceActivationPosture.ACTIVE,
+            owner_binding="group:finance-analysts",
+            security_review_binding="group:security-reviewers",
+        )
+
+        response = self.client.post(
+            "/requests/preview",
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "Request validation failed.",
+                }
+            },
+        )
+
+    def test_preview_submission_rejects_subject_matching_only_exception_policy_binding(self) -> None:
+        self.app.dependency_overrides[require_authenticated_subject] = lambda: AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:exception-approvers"}),
+        )
+        self._seed_authoritative_source_governance(
+            source_id="sap-approved-spend",
+            source_posture=SourceActivationPosture.ACTIVE,
+            owner_binding="group:finance-analysts",
+            exception_policy_binding="group:exception-approvers",
+        )
+
+        response = self.client.post(
+            "/requests/preview",
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "Request validation failed.",
+                }
             },
         )
 

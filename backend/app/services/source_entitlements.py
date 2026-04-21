@@ -13,15 +13,21 @@ class SourceEntitlementError(PermissionError):
     """Raised when a subject is not entitled to use a selected registered source."""
 
 
-def _contract_governance_bindings(contract: DatasetContract) -> frozenset[str]:
+def _normalized_binding(binding: str | None) -> str | None:
+    if binding is None:
+        return None
+    normalized = binding.strip()
+    if not normalized:
+        return None
+    return normalized
+
+
+def _contract_execution_entitlement_bindings(contract: DatasetContract) -> frozenset[str]:
+    # Execution entitlement is currently limited to source operators.
+    # Review and exception bindings remain available for future role-aware policies
+    # but must not implicitly grant execution eligibility.
     bindings = {
-        normalized
-        for binding in (
-            contract.owner_binding,
-            contract.security_review_binding,
-            contract.exception_policy_binding,
-        )
-        if binding is not None and (normalized := binding.strip())
+        normalized for binding in (contract.owner_binding,) if (normalized := _normalized_binding(binding))
     }
     return frozenset(bindings)
 
@@ -42,11 +48,11 @@ def ensure_subject_is_entitled_for_source(
             "authoritative source-scoped governance artifacts."
         )
 
-    source_bindings = _contract_governance_bindings(dataset_contract)
+    source_bindings = _contract_execution_entitlement_bindings(dataset_contract)
     if not source_bindings:
         raise SourceEntitlementError(
             f"Registered source '{resolved_source.source_id}' has no "
-            "source-scoped governance bindings."
+            "execution-eligible source-scoped governance bindings."
         )
 
     subject_bindings = subject.normalized_governance_bindings()
