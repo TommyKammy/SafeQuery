@@ -20,7 +20,7 @@ docs_index_required_patterns=(
   "^### Normative Baseline$"
   "^### UX Foundation$"
   "^### Source-Aware and Evaluation Extensions$"
-  "docs/design/operator-workflow-information-architecture.md"
+  "design/operator-workflow-information-architecture.md"
   "../DESIGN.md"
   "adr/ADR-0010-mlflow-observability-and-evaluation-plane.md"
   "design/search-and-analyst-capabilities.md"
