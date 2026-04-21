@@ -132,9 +132,15 @@ being held and what must be fixed before preview can be requested.
 
 ### Attachment posture
 
-Attachment support is not implemented in this issue.
+Attachments are out of scope for the UX-1 MVP.
 
-If attachments are shown at all, they must appear only as a disabled or omitted affordance with explicit out-of-scope copy.
+Do not ship live attachment upload, drag-and-drop intake, or an implied attachment-processing pipeline as part of UX-1.
+
+If attachments are shown at all during UX-1, they must appear only as a disabled or omitted affordance with explicit out-of-scope copy.
+
+Any governed attachment flow remains future work for a later epic or dedicated issue set.
+
+Keeping attachments out of the UX-1 MVP protects the operator workflow redesign from premature scope creep while the governed request, preview, guard, and result path is still being established.
 
 ## History Information Model
 

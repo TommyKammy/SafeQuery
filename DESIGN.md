@@ -32,6 +32,7 @@ SafeQuery is an operator shell, not a chat transcript.
 - Support surfaces should keep reviewed context visible, including source status, guard posture, candidate metadata, and audit anchors.
 - Results must not replace review context. When results appear, the operator should still be able to verify what was reviewed and why execution was allowed or blocked.
 - If source binding, candidate identity, guard posture, or execution eligibility signals are missing, the shell should stay visually fail-closed instead of implying that execution can proceed.
+- Attachments are out of scope for the UX-1 MVP. Do not present live upload, drag-and-drop intake, or an implied attachment pipeline in the shell until a later governed issue set defines that workflow.
 
 ## Color System
 
