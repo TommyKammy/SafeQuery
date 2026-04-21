@@ -10,7 +10,8 @@ def test_registered_source_scaffold_matches_minimum_shape() -> None:
 
     assert set(table.columns.keys()) == {
         "id",
-        "source_identity",
+        "source_id",
+        "display_label",
         "source_family",
         "source_flavor",
         "activation_posture",
@@ -18,11 +19,14 @@ def test_registered_source_scaffold_matches_minimum_shape() -> None:
         "dialect_profile_id",
         "dataset_contract_id",
         "schema_snapshot_id",
+        "execution_policy_id",
+        "connection_reference",
         "created_at",
         "updated_at",
     }
 
-    assert table.c.source_identity.nullable is False
+    assert table.c.source_id.nullable is False
+    assert table.c.display_label.nullable is False
     assert table.c.source_family.nullable is False
     assert table.c.source_flavor.nullable is True
     assert table.c.activation_posture.nullable is False
@@ -30,6 +34,8 @@ def test_registered_source_scaffold_matches_minimum_shape() -> None:
     assert table.c.dialect_profile_id.nullable is True
     assert table.c.dataset_contract_id.nullable is True
     assert table.c.schema_snapshot_id.nullable is True
+    assert table.c.execution_policy_id.nullable is True
+    assert table.c.connection_reference.nullable is False
     assert table.c.created_at.onupdate is None
     assert table.c.updated_at.onupdate is not None
 
@@ -39,4 +45,4 @@ def test_registered_source_scaffold_matches_minimum_shape() -> None:
         if isinstance(constraint, UniqueConstraint)
     }
 
-    assert ("source_identity",) in unique_constraints
+    assert ("source_id",) in unique_constraints

@@ -21,7 +21,8 @@ def upgrade() -> None:
     op.create_table(
         "registered_sources",
         sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("source_identity", sa.String(length=255), nullable=False),
+        sa.Column("source_id", sa.String(length=255), nullable=False),
+        sa.Column("display_label", sa.String(length=255), nullable=False),
         sa.Column("source_family", sa.String(length=64), nullable=False),
         sa.Column("source_flavor", sa.String(length=64), nullable=True),
         sa.Column("activation_posture", sa.String(length=32), nullable=False),
@@ -29,6 +30,8 @@ def upgrade() -> None:
         sa.Column("dialect_profile_id", sa.Uuid(), nullable=True),
         sa.Column("dataset_contract_id", sa.Uuid(), nullable=True),
         sa.Column("schema_snapshot_id", sa.Uuid(), nullable=True),
+        sa.Column("execution_policy_id", sa.Uuid(), nullable=True),
+        sa.Column("connection_reference", sa.String(length=255), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -43,8 +46,8 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_registered_sources")),
         sa.UniqueConstraint(
-            "source_identity",
-            name=op.f("uq_registered_sources_source_identity"),
+            "source_id",
+            name=op.f("uq_registered_sources_source_id"),
         ),
     )
 
