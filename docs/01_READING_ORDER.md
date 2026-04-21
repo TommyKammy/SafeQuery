@@ -38,21 +38,23 @@ This reading order is intended to help new contributors understand SafeQuery fro
     Finish with the end-to-end request lifecycle and execution control flow.
 17. [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md)
     Read the operator shell contract before changing navigation, composition, preview, or result surfaces.
-18. [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md)
+18. [../DESIGN.md](../DESIGN.md)
+    Read the visual design contract before changing shell hierarchy, typography, spacing, or interaction posture.
+19. [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md)
     Review how SafeQuery can add Cortex Search and Analyst-like capabilities without moving trust boundaries out of the application.
-19. [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md)
+20. [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md)
     Read the explicit lifecycle states before implementing generation, approval, or execution APIs.
-20. [design/sql-guard-spec.md](./design/sql-guard-spec.md)
+21. [design/sql-guard-spec.md](./design/sql-guard-spec.md)
     Use this as the baseline spec for T-SQL validation and deny behavior.
-21. [design/sql-guard-deny-catalog.md](./design/sql-guard-deny-catalog.md)
+22. [design/sql-guard-deny-catalog.md](./design/sql-guard-deny-catalog.md)
     Review the deny code taxonomy before implementing guard outcomes or audit mappings.
-22. [design/sql-guard-deny-corpus.md](./design/sql-guard-deny-corpus.md)
+23. [design/sql-guard-deny-corpus.md](./design/sql-guard-deny-corpus.md)
     Use this to understand the minimum deny scenarios the pilot must continue to block.
-23. [design/audit-event-model.md](./design/audit-event-model.md)
+24. [design/audit-event-model.md](./design/audit-event-model.md)
     Read this before implementing persistence, replay, or operational diagnostics.
-24. [design/evaluation-harness.md](./design/evaluation-harness.md)
+25. [design/evaluation-harness.md](./design/evaluation-harness.md)
     Use this to understand how NL2SQL quality should be measured safely.
-25. [security/threat-model.md](./security/threat-model.md)
+26. [security/threat-model.md](./security/threat-model.md)
     Finish with the threat model and residual risks before pilot readiness review.
 
 ## Source Hierarchy
