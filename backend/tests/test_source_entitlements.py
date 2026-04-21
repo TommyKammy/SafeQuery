@@ -60,6 +60,21 @@ class SourceEntitlementTestCase(unittest.TestCase):
 
         self.assertIs(resolved_source, source)
 
+    def test_subject_with_matching_binding_after_contract_whitespace_normalization_is_allowed(self) -> None:
+        source = _registered_source(source_id="sap-approved-spend")
+        contract = _dataset_contract(
+            registered_source_id=source.id,
+            owner_binding=" group:finance-analysts ",
+        )
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+
+        resolved_source = ensure_subject_is_entitled_for_source(subject, source, contract)
+
+        self.assertIs(resolved_source, source)
+
     def test_subject_without_matching_source_binding_is_denied(self) -> None:
         source = _registered_source(source_id="sap-approved-spend")
         contract = _dataset_contract(

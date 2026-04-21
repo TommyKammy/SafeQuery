@@ -15,13 +15,13 @@ class SourceEntitlementError(PermissionError):
 
 def _contract_governance_bindings(contract: DatasetContract) -> frozenset[str]:
     bindings = {
-        binding
+        normalized
         for binding in (
             contract.owner_binding,
             contract.security_review_binding,
             contract.exception_policy_binding,
         )
-        if binding is not None and binding.strip()
+        if binding is not None and (normalized := binding.strip())
     }
     return frozenset(bindings)
 
