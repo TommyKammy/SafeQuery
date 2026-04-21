@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.errors import (
@@ -17,6 +18,7 @@ from app.core.errors import (
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.db.session import require_preview_submission_session
 from app.features.auth.context import (
     AuthenticatedSubject,
     require_authenticated_subject,
@@ -162,9 +164,10 @@ def create_app() -> FastAPI:
         authenticated_subject: AuthenticatedSubject = Depends(
             require_authenticated_subject
         ),
+        session: Session = Depends(require_preview_submission_session),
     ) -> PreviewSubmissionResponse:
         try:
-            return submit_preview_request(payload, authenticated_subject)
+            return submit_preview_request(payload, authenticated_subject, session)
         except PreviewSubmissionContractError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
