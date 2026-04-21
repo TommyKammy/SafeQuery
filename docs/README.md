@@ -1,16 +1,16 @@
 # SafeQuery Documentation
 
-This directory contains the initial documentation baseline for SafeQuery, a secure enterprise NL2SQL proof of concept.
+This directory contains the current baseline documentation set for SafeQuery, a secure enterprise NL2SQL proof of concept.
 
-The current Epic A repository shell should be read as a developer state demo, not the production information architecture. It helps contributors inspect baseline UI states and backend posture while the product-facing shell contract is still being established.
+The current Epic A repository shell should be read as a developer state demo, not the production information architecture. It helps contributors inspect baseline UI states and backend posture while the product-facing shell contract is being implemented against the reviewed docs baseline.
 
-For future frontend structure and navigation work, the UX-1 workflow-first operator shell contract in `docs/design/operator-workflow-information-architecture.md` is the next authoritative UI direction. Do not treat the current top-level prototype shell as the production information architecture.
+The UX-1 workflow-first operator shell contract in `docs/design/operator-workflow-information-architecture.md` and the accompanying visual contract in `../DESIGN.md` are part of the current source-aware and UX-foundation baseline. Do not treat the current top-level prototype shell as the production information architecture.
 
-The docs are organized to make three things clear from the start:
+The docs are organized to make three things clear from the start for current baseline contributors:
 
 - which architectural decisions are already fixed
 - where the trusted control boundary lives
-- which parts of the system are application-owned versus replaceable
+- which parts of the system are application-owned versus replaceable across the current source-aware and UX-foundation baseline
 
 ## Source of Truth Hierarchy
 
@@ -33,6 +33,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 
 - [00_BRIEF_SafeQuery_docs.md](./00_BRIEF_SafeQuery_docs.md): founding brief and initial architecture input retained as a repo document
 - [01_READING_ORDER.md](./01_READING_ORDER.md): recommended reading sequence for engineers and reviewers
+- [README.md](../README.md): repository-level startup and baseline orientation that points contributors back to the reviewed docs set
 - [local-development.md](./local-development.md): contributor startup path for env setup, compose startup, migrations, and baseline troubleshooting
 
 ### Normative Baseline
@@ -58,20 +59,20 @@ If documents drift, do not silently let lower-level docs override upstream inten
 
 ### UX Foundation
 
-- [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md): operator-facing shell regions, workflow states, and screen-model contract
+- [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md): operator-facing shell regions, workflow states, and screen-model contract for the current baseline
 - [../DESIGN.md](../DESIGN.md): repo-root visual contract for the SafeQuery-owned operator shell, including surface hierarchy, spacing, typography, and interaction tone
-- [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md): candidate state transitions and approval TTL that UI and backend surfaces must share
+- [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md): candidate state transitions and approval TTL that UI and backend surfaces must share as the current authoritative lifecycle vocabulary
 
-### Source-Aware and Evaluation Extensions
+### Source-Aware and Evaluation Baseline
 
-- [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md): MLflow as observability, evaluation, and model-lifecycle plane
-- [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md): governed semantic retrieval and analyst-style orchestration
-- [design/evaluation-harness.md](./design/evaluation-harness.md): evaluation goals, datasets, and scoring
-- [security/threat-model.md](./security/threat-model.md): threat model and residual risk summary for the current baseline and later extensions
+- [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md): MLflow as observability, evaluation, and model-lifecycle plane within the current baseline
+- [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md): governed semantic retrieval and analyst-style orchestration in the current source-aware baseline
+- [design/evaluation-harness.md](./design/evaluation-harness.md): evaluation goals, datasets, and scoring for the current baseline
+- [security/threat-model.md](./security/threat-model.md): threat model and residual risk summary for the current source-aware and UX-foundation baseline
 
 ## Documentation Intent
 
-These docs should be used as the baseline for:
+These docs should be used as the current baseline for SafeQuery contributors:
 
 - later requirements refinement
 - architecture review
@@ -79,4 +80,4 @@ These docs should be used as the baseline for:
 - GitHub issue decomposition
 - implementation planning
 
-They should not be interpreted as final production deployment guidance. The current set is intentionally optimized for a safe, narrow first-phase PoC.
+They should not be interpreted as final production deployment guidance. The current set is intentionally optimized for a safe first-phase PoC while still defining the current source-aware and UX-foundation baseline.

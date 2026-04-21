@@ -1,6 +1,6 @@
 # SafeQuery Reading Order
 
-This reading order is intended to help new contributors understand SafeQuery from first principles without losing the trust boundary or replaceability model.
+This reading order is intended to help new contributors understand SafeQuery from first principles without losing the trust boundary or replaceability model that anchor the current source-aware and UX-foundation baseline.
 
 ## Recommended Sequence
 
@@ -51,27 +51,27 @@ This reading order is intended to help new contributors understand SafeQuery fro
 ### 3. UX Foundation
 
 20. [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md)
-    Read the operator shell contract before changing navigation, composition, preview, or result surfaces.
+    Read the operator shell contract before changing navigation, composition, preview, or result surfaces in the current baseline.
 21. [../DESIGN.md](../DESIGN.md)
     Read the visual design contract after the workflow contract so shell hierarchy, typography, spacing, and interaction posture stay aligned.
 22. [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md)
     Read the lifecycle state model before implementing UI states or backend transitions that must share the same authoritative vocabulary.
 
-### 4. Source-Aware and Evaluation Extensions
+### 4. Source-Aware and Evaluation Baseline
 
 23. [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md)
-    Review why MLflow is used for tracing, evaluation, and model-lifecycle support without becoming the trusted control plane.
+    Review why MLflow is used for tracing, evaluation, and model-lifecycle support without becoming the trusted control plane in the current baseline.
 24. [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md)
-    Review how SafeQuery can add source-aware search and analyst-style capabilities without moving trust boundaries out of the application.
+    Review how the current source-aware baseline adds governed search and analyst-style capabilities without moving trust boundaries out of the application.
 25. [design/evaluation-harness.md](./design/evaluation-harness.md)
-    Use this to understand how NL2SQL quality should be measured safely as the source-aware surface area expands.
+    Use this to understand how NL2SQL quality should be measured safely in the current source-aware baseline.
 
 ### 5. Local Setup and Threat Review
 
 26. [local-development.md](./local-development.md)
     Use this once the document set is clear so local startup follows the reviewed topology and role split.
 27. [security/threat-model.md](./security/threat-model.md)
-    Finish with the threat model and residual risks before pilot readiness review.
+    Finish with the threat model and residual risks for the current source-aware and UX-foundation baseline before pilot readiness review.
 
 ## Source Hierarchy
 
