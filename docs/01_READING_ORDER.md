@@ -4,12 +4,17 @@ This reading order is intended to help new contributors understand SafeQuery fro
 
 ## Recommended Sequence
 
+### 1. Baseline Orientation
+
 1. [00_BRIEF_SafeQuery_docs.md](./00_BRIEF_SafeQuery_docs.md)
    Read the founding brief first to understand scope, non-goals, and fixed stack decisions.
 2. [requirements/requirements-baseline.md](./requirements/requirements-baseline.md)
    Read next to understand the product and control-plane requirements the implementation must satisfy.
 3. [requirements/technology-stack.md](./requirements/technology-stack.md)
    Use this to understand the current baseline stack and the constraints on implementation choices.
+
+### 2. Architecture and Trust Decisions
+
 4. [adr/ADR-0001-frontend-backend-split.md](./adr/ADR-0001-frontend-backend-split.md)
    Start the ADR set with the application shape and trust boundary split.
 5. [adr/ADR-0002-auth-bridge-with-saml-2-0.md](./adr/ADR-0002-auth-bridge-with-saml-2-0.md)
@@ -28,33 +33,44 @@ This reading order is intended to help new contributors understand SafeQuery fro
     Review how session handling, CSRF, and default-deny authorization are assigned to the trusted backend.
 12. [adr/ADR-0009-dataset-exposure-and-governance.md](./adr/ADR-0009-dataset-exposure-and-governance.md)
     Review how allow-listed data exposure, approved views, and schema governance work in the pilot.
-13. [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md)
-    Review why MLflow is used for tracing, evaluation, and model-lifecycle support without becoming the trusted control plane.
-14. [design/system-context.md](./design/system-context.md)
-   Move from decisions to architecture views.
-15. [design/container-view.md](./design/container-view.md)
+13. [design/system-context.md](./design/system-context.md)
+    Move from decisions to architecture views.
+14. [design/container-view.md](./design/container-view.md)
     Review how the major runtime parts collaborate.
-16. [design/runtime-flow.md](./design/runtime-flow.md)
-    Finish with the end-to-end request lifecycle and execution control flow.
-17. [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md)
-    Read the operator shell contract before changing navigation, composition, preview, or result surfaces.
-18. [../DESIGN.md](../DESIGN.md)
-    Read the visual design contract before changing shell hierarchy, typography, spacing, or interaction posture.
-19. [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md)
-    Review how SafeQuery can add Cortex Search and Analyst-like capabilities without moving trust boundaries out of the application.
-20. [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md)
-    Read the explicit lifecycle states before implementing generation, approval, or execution APIs.
-21. [design/sql-guard-spec.md](./design/sql-guard-spec.md)
+15. [design/runtime-flow.md](./design/runtime-flow.md)
+    Finish the baseline architecture pass with the end-to-end request lifecycle and execution control flow.
+16. [design/sql-guard-spec.md](./design/sql-guard-spec.md)
     Use this as the baseline spec for T-SQL validation and deny behavior.
-22. [design/sql-guard-deny-catalog.md](./design/sql-guard-deny-catalog.md)
+17. [design/sql-guard-deny-catalog.md](./design/sql-guard-deny-catalog.md)
     Review the deny code taxonomy before implementing guard outcomes or audit mappings.
-23. [design/sql-guard-deny-corpus.md](./design/sql-guard-deny-corpus.md)
+18. [design/sql-guard-deny-corpus.md](./design/sql-guard-deny-corpus.md)
     Use this to understand the minimum deny scenarios the pilot must continue to block.
-24. [design/audit-event-model.md](./design/audit-event-model.md)
+19. [design/audit-event-model.md](./design/audit-event-model.md)
     Read this before implementing persistence, replay, or operational diagnostics.
+
+### 3. UX Foundation
+
+20. [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md)
+    Read the operator shell contract before changing navigation, composition, preview, or result surfaces.
+21. [../DESIGN.md](../DESIGN.md)
+    Read the visual design contract after the workflow contract so shell hierarchy, typography, spacing, and interaction posture stay aligned.
+22. [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md)
+    Read the lifecycle state model before implementing UI states or backend transitions that must share the same authoritative vocabulary.
+
+### 4. Source-Aware and Evaluation Extensions
+
+23. [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md)
+    Review why MLflow is used for tracing, evaluation, and model-lifecycle support without becoming the trusted control plane.
+24. [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md)
+    Review how SafeQuery can add source-aware search and analyst-style capabilities without moving trust boundaries out of the application.
 25. [design/evaluation-harness.md](./design/evaluation-harness.md)
-    Use this to understand how NL2SQL quality should be measured safely.
-26. [security/threat-model.md](./security/threat-model.md)
+    Use this to understand how NL2SQL quality should be measured safely as the source-aware surface area expands.
+
+### 5. Local Setup and Threat Review
+
+26. [local-development.md](./local-development.md)
+    Use this once the document set is clear so local startup follows the reviewed topology and role split.
+27. [security/threat-model.md](./security/threat-model.md)
     Finish with the threat model and residual risks before pilot readiness review.
 
 ## Source Hierarchy
