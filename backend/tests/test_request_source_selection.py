@@ -6,6 +6,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
+from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 from app.services.request_preview import (
     PHASE1_REGISTERED_SOURCES,
     _phase1_registered_source,
@@ -20,11 +21,38 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         get_settings.cache_clear()
         main_module = importlib.import_module("app.main")
         self.app = main_module.create_app()
+        self.app.dependency_overrides[require_authenticated_subject] = lambda: AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
         self.client = TestClient(self.app)
 
     def tearDown(self) -> None:
         os.environ.pop("SAFEQUERY_APP_POSTGRES_URL", None)
         get_settings.cache_clear()
+        self.app.dependency_overrides.clear()
+
+    def test_preview_submission_rejects_missing_authenticated_subject_context(self) -> None:
+        self.app.dependency_overrides.clear()
+
+        response = self.client.post(
+            "/requests/preview",
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "http_error",
+                    "message": "Forbidden",
+                }
+            },
+        )
 
     def test_preview_submission_requires_explicit_source_id(self) -> None:
         response = self.client.post(

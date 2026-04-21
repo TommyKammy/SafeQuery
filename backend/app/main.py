@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from time import perf_counter
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -17,6 +17,10 @@ from app.core.errors import (
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.features.auth.context import (
+    AuthenticatedSubject,
+    require_authenticated_subject,
+)
 from app.services.health import check_database_health
 from app.services.request_preview import (
     PreviewSubmissionContractError,
@@ -155,9 +159,12 @@ def create_app() -> FastAPI:
     @app.post("/requests/preview", response_model=PreviewSubmissionResponse)
     def create_request_preview(
         payload: PreviewSubmissionRequest,
+        authenticated_subject: AuthenticatedSubject = Depends(
+            require_authenticated_subject
+        ),
     ) -> PreviewSubmissionResponse:
         try:
-            return submit_preview_request(payload)
+            return submit_preview_request(payload, authenticated_subject)
         except PreviewSubmissionContractError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
