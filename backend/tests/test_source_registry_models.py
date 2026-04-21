@@ -1,6 +1,6 @@
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Enum as SqlEnum, UniqueConstraint
 
-from app.db.models.source_registry import RegisteredSource
+from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 
 
 def test_registered_source_scaffold_matches_minimum_shape() -> None:
@@ -30,6 +30,14 @@ def test_registered_source_scaffold_matches_minimum_shape() -> None:
     assert table.c.source_family.nullable is False
     assert table.c.source_flavor.nullable is True
     assert table.c.activation_posture.nullable is False
+    assert isinstance(table.c.activation_posture.type, SqlEnum)
+    assert table.c.activation_posture.type.native_enum is False
+    assert tuple(table.c.activation_posture.type.enums) == (
+        SourceActivationPosture.ACTIVE.value,
+        SourceActivationPosture.PAUSED.value,
+        SourceActivationPosture.BLOCKED.value,
+        SourceActivationPosture.RETIRED.value,
+    )
     assert table.c.connector_profile_id.nullable is True
     assert table.c.dialect_profile_id.nullable is True
     assert table.c.dataset_contract_id.nullable is True
