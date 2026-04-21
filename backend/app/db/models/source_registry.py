@@ -5,7 +5,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum as SqlEnum, String, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    Enum as SqlEnum,
+    ForeignKeyConstraint,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy import Uuid as SqlAlchemyUuid
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +34,14 @@ class RegisteredSource(Base):
     __tablename__ = "registered_sources"
     __table_args__ = (
         UniqueConstraint("source_id"),
+        ForeignKeyConstraint(
+            ["id", "dataset_contract_id"],
+            ["dataset_contracts.registered_source_id", "dataset_contracts.id"],
+        ),
+        ForeignKeyConstraint(
+            ["id", "schema_snapshot_id"],
+            ["schema_snapshots.registered_source_id", "schema_snapshots.id"],
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

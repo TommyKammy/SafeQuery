@@ -10,6 +10,7 @@ def test_dataset_contracts_are_scoped_to_one_registered_source() -> None:
     assert set(table.columns.keys()) == {
         "id",
         "registered_source_id",
+        "schema_snapshot_id",
         "contract_version",
         "display_name",
         "owner_binding",
@@ -20,6 +21,7 @@ def test_dataset_contracts_are_scoped_to_one_registered_source() -> None:
     }
 
     assert table.c.registered_source_id.nullable is False
+    assert table.c.schema_snapshot_id.nullable is False
     assert table.c.contract_version.nullable is False
     assert table.c.display_name.nullable is False
     assert table.c.owner_binding.nullable is True
@@ -35,6 +37,7 @@ def test_dataset_contracts_are_scoped_to_one_registered_source() -> None:
     }
 
     assert ("registered_source_id", "contract_version") in unique_constraints
+    assert ("registered_source_id", "id") in unique_constraints
 
     foreign_keys = {
         (
@@ -47,7 +50,24 @@ def test_dataset_contracts_are_scoped_to_one_registered_source() -> None:
 
     assert foreign_keys == {
         ("registered_source_id", "registered_sources", "id"),
+        ("registered_source_id", "schema_snapshots", "registered_source_id"),
+        ("schema_snapshot_id", "schema_snapshots", "id"),
     }
+
+    composite_foreign_keys = {
+        (
+            tuple(element.parent.name for element in constraint.elements),
+            tuple(element.column.table.name for element in constraint.elements),
+            tuple(element.column.name for element in constraint.elements),
+        )
+        for constraint in table.foreign_key_constraints
+    }
+
+    assert (
+        ("registered_source_id", "schema_snapshot_id"),
+        ("schema_snapshots", "schema_snapshots"),
+        ("registered_source_id", "id"),
+    ) in composite_foreign_keys
 
 
 def test_allowlisted_datasets_are_bound_to_one_contract_version() -> None:
