@@ -23,6 +23,7 @@ source_activation_posture = sa.Enum(
     "retired",
     name="source_activation_posture",
     native_enum=False,
+    create_constraint=True,
 )
 
 

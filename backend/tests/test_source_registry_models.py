@@ -32,6 +32,7 @@ def test_registered_source_scaffold_matches_minimum_shape() -> None:
     assert table.c.activation_posture.nullable is False
     assert isinstance(table.c.activation_posture.type, SqlEnum)
     assert table.c.activation_posture.type.native_enum is False
+    assert table.c.activation_posture.type.create_constraint is True
     assert tuple(table.c.activation_posture.type.enums) == (
         SourceActivationPosture.ACTIVE.value,
         SourceActivationPosture.PAUSED.value,

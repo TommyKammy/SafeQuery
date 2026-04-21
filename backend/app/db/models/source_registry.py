@@ -43,6 +43,7 @@ class RegisteredSource(Base):
             SourceActivationPosture,
             name="source_activation_posture",
             native_enum=False,
+            create_constraint=True,
             validate_strings=True,
             values_callable=lambda enum_cls: [member.value for member in enum_cls],
         ),
