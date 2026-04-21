@@ -69,10 +69,22 @@ def _seed_authoritative_source_governance(
     session.add(snapshot)
     session.flush()
 
+    drift_snapshot = None
+    if not link_contract_snapshot:
+        drift_snapshot = SchemaSnapshot(
+            id=uuid4(),
+            registered_source_id=source.id,
+            snapshot_version=2,
+            review_status=SchemaSnapshotReviewStatus.APPROVED,
+            reviewed_at=datetime.now(timezone.utc),
+        )
+        session.add(drift_snapshot)
+        session.flush()
+
     contract = DatasetContract(
         id=uuid4(),
         registered_source_id=source.id,
-        schema_snapshot_id=snapshot.id if link_contract_snapshot else uuid4(),
+        schema_snapshot_id=snapshot.id if link_contract_snapshot else drift_snapshot.id,
         contract_version=1,
         display_name="Persisted approved spend contract",
         owner_binding="group:finance-analysts",

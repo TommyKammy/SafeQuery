@@ -60,13 +60,24 @@ def _resolve_authoritative_source_governance(
     *,
     source_id: str,
 ) -> tuple[RegisteredSource, DatasetContract]:
-    source = session.scalar(
-        select(RegisteredSource).where(RegisteredSource.source_id == source_id)
-    )
-    if source is None:
+    governance_row = session.execute(
+        select(RegisteredSource, DatasetContract, SchemaSnapshot)
+        .outerjoin(
+            DatasetContract,
+            DatasetContract.id == RegisteredSource.dataset_contract_id,
+        )
+        .outerjoin(
+            SchemaSnapshot,
+            SchemaSnapshot.id == RegisteredSource.schema_snapshot_id,
+        )
+        .where(RegisteredSource.source_id == source_id)
+    ).one_or_none()
+    if governance_row is None:
         raise PreviewSubmissionContractError(
             f"Registered source '{source_id}' does not exist."
         )
+
+    source, dataset_contract, schema_snapshot = governance_row
 
     if source.dataset_contract_id is None:
         raise PreviewSubmissionContractError(
@@ -77,7 +88,6 @@ def _resolve_authoritative_source_governance(
             f"Registered source '{source.source_id}' has no linked schema snapshot."
         )
 
-    dataset_contract = session.get(DatasetContract, source.dataset_contract_id)
     if (
         dataset_contract is None
         or dataset_contract.registered_source_id != source.id
@@ -88,7 +98,6 @@ def _resolve_authoritative_source_governance(
             "authoritative source-scoped governance artifacts."
         )
 
-    schema_snapshot = session.get(SchemaSnapshot, source.schema_snapshot_id)
     if schema_snapshot is None or schema_snapshot.registered_source_id != source.id:
         raise PreviewSubmissionContractError(
             f"Registered source '{source.source_id}' has no linked schema snapshot."
