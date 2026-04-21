@@ -40,8 +40,8 @@ type StateDefinition = {
 type WorkflowContext = {
   candidateIdentity?: string;
   candidateState?: string;
-  lifecycleTimestamp: string;
-  requestIdentity: string;
+  lifecycleTimestamp?: string;
+  requestIdentity?: string;
   runIdentity?: string;
   runState?: string;
   sourceIdentity: string;
@@ -156,8 +156,6 @@ function getWorkflowContext(state: CanonicalWorkflowState): WorkflowContext {
 
   if (state === "query" || state === "signin") {
     return {
-      lifecycleTimestamp: "2026-04-21 14:12 JST",
-      requestIdentity,
       sourceIdentity
     };
   }
@@ -694,8 +692,10 @@ export function QueryWorkflowShell({
                 <strong>{workflowContext.sourceIdentity}</strong>
               </div>
               <div className="guard-item">
-                <span className="meta-label">Request identity</span>
-                <strong>{workflowContext.requestIdentity}</strong>
+                <span className="meta-label">
+                  {workflowContext.requestIdentity ? "Request identity" : "Request posture"}
+                </span>
+                <strong>{workflowContext.requestIdentity ?? "Draft only"}</strong>
               </div>
               <div className="guard-item">
                 <span className="meta-label">
@@ -722,8 +722,10 @@ export function QueryWorkflowShell({
                 </>
               ) : null}
               <div className="guard-item">
-                <span className="meta-label">Terminal timestamp</span>
-                <strong>{workflowContext.lifecycleTimestamp}</strong>
+                <span className="meta-label">
+                  {workflowContext.lifecycleTimestamp ? "Lifecycle timestamp" : "Lifecycle posture"}
+                </span>
+                <strong>{workflowContext.lifecycleTimestamp ?? "No submitted record yet"}</strong>
               </div>
             </div>
           </section>

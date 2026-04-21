@@ -145,6 +145,28 @@ describe("HomePage", () => {
     }
   });
 
+  it("keeps pre-submission states in a draft-only posture until a real request exists", async () => {
+    const { rerender } = render(await HomePage({}));
+
+    expect(screen.getByText(/request posture/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/^Draft only$/i)).not.toHaveLength(0);
+    expect(screen.getByText(/lifecycle posture/i)).toBeInTheDocument();
+    expect(screen.getByText(/no submitted record yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/req-sq-204/i)).not.toBeInTheDocument();
+
+    rerender(
+      await HomePage({
+        searchParams: {
+          state: "signin"
+        }
+      })
+    );
+
+    expect(screen.getByRole("heading", { name: /sign in state/i })).toBeInTheDocument();
+    expect(screen.getByText(/request posture/i)).toBeInTheDocument();
+    expect(screen.queryByText(/req-sq-204/i)).not.toBeInTheDocument();
+  });
+
   it("falls back to the query state for inherited object keys", () => {
     expect(resolveWorkflowState("toString")).toBe("query");
   });
