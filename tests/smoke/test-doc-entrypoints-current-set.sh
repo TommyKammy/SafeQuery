@@ -95,6 +95,34 @@ reading_order_required_links=(
   "security/threat-model.md"
 )
 
+require_markdown_link_target() {
+  local file="$1"
+  local link="$2"
+
+  if awk -v link="$link" '
+    /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence; next }
+    in_fence { next }
+    index($0, "](" link ")") ||
+    index($0, "](./" link ")") ||
+    index($0, "](" link "#") ||
+    index($0, "](./" link "#") ||
+    index($0, "](" link "?") ||
+    index($0, "](./" link "?") ||
+    index($0, "<" link ">") ||
+    index($0, "<./" link ">") ||
+    index($0, "<" link "#") ||
+    index($0, "<./" link "#") ||
+    index($0, "<" link "?") ||
+    index($0, "<./" link "?") { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$file"; then
+    return 0
+  fi
+
+  echo "$file missing required markdown link target: $link" >&2
+  exit 1
+}
+
 for pattern in "${docs_index_required_patterns[@]}"; do
   if ! grep -Eq "$pattern" "$docs_index"; then
     echo "$docs_index missing required entrypoint pattern: $pattern" >&2
@@ -103,10 +131,7 @@ for pattern in "${docs_index_required_patterns[@]}"; do
 done
 
 for link in "${docs_index_required_links[@]}"; do
-  if ! grep -Fq "$link" "$docs_index"; then
-    echo "$docs_index missing required entrypoint link: $link" >&2
-    exit 1
-  fi
+  require_markdown_link_target "$docs_index" "$link"
 done
 
 for pattern in "${reading_order_required_patterns[@]}"; do
@@ -117,8 +142,5 @@ for pattern in "${reading_order_required_patterns[@]}"; do
 done
 
 for link in "${reading_order_required_links[@]}"; do
-  if ! grep -Fq "$link" "$reading_order"; then
-    echo "$reading_order missing required reading-order link: $link" >&2
-    exit 1
-  fi
+  require_markdown_link_target "$reading_order" "$link"
 done
