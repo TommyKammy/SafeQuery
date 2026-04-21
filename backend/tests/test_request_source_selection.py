@@ -1,10 +1,15 @@
 import importlib
 import os
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
+from app.services.request_preview import (
+    PHASE1_REGISTERED_SOURCES,
+    _phase1_registered_source,
+)
 
 
 class RequestSourceSelectionTestCase(unittest.TestCase):
@@ -68,6 +73,37 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
                 "source_id": "legacy-finance-archive",
             },
         )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "Request validation failed.",
+                }
+            },
+        )
+
+    def test_preview_submission_rejects_malformed_source_posture(self) -> None:
+        with patch.dict(
+            PHASE1_REGISTERED_SOURCES,
+            {
+                "broken-source": _phase1_registered_source(
+                    source_id="broken-source",
+                    display_label="Broken source",
+                    activation_posture="bogus",
+                )
+            },
+            clear=False,
+        ):
+            response = self.client.post(
+                "/requests/preview",
+                json={
+                    "question": "Show approved vendors by quarterly spend",
+                    "source_id": "broken-source",
+                },
+            )
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(

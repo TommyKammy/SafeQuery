@@ -83,6 +83,10 @@ def submit_preview_request(
         resolved_source = ensure_source_is_executable(source)
     except SourceRegistryPostureError as exc:
         raise PreviewSubmissionContractError(str(exc)) from exc
+    except ValueError as exc:
+        raise PreviewSubmissionContractError(
+            f"Registered source '{payload.source_id}' has an invalid activation posture."
+        ) from exc
 
     return PreviewSubmissionResponse(
         request={
