@@ -71,6 +71,71 @@ size. Typical support content includes:
 - execution eligibility or preview metadata
 - audit anchors, timestamps, and future operator guidance
 
+## Request Composer Contract
+
+The request composer is a governed submission control, not a chat box.
+
+### Composer layout
+
+The composer keeps source identity visible in the same frame as the request draft.
+
+Desktop layout should treat the composer as a bounded work surface within the main workflow region:
+
+- a source-and-posture header that stays visually attached to the draft
+- the natural-language request field as the dominant editable control
+- supporting helper text that explains governed submission expectations
+- a compact action row for preview submission and allowed draft-level secondary actions
+
+On narrower screens, these elements may stack, but they should remain a single composer surface
+rather than dissolving into a transcript feed or disconnected controls.
+
+### Composer controls
+
+The primary editable control is a natural-language request field sized for multi-line operator
+prompts, revisions, and clarification before preview.
+
+The primary submit action must use governed language such as Submit for preview.
+
+The composer may expose helper text for governed submission, but it must not offer raw-SQL entry.
+
+Allowed secondary controls are limited to draft-safe actions such as clear draft, reopen as new
+draft, or explicit source-fork entry points when those actions are available.
+
+Free-form chat metaphors such as Send, message bubbles, or assistant-avatar framing are out of scope for this composer.
+
+### Source identity and submission posture
+
+The composer header should make three things obvious before submission:
+
+- the currently bound source identity
+- the governed submission posture, including that preview precedes any later execution step
+- whether the draft is editable, reopened from history, or blocked by missing trusted prerequisites
+
+Source identity and submit posture should remain visible without forcing the operator to open a
+separate side panel just to confirm where the request will go.
+
+If the draft was reopened from prior history, the composer should preserve lineage context and show
+whether the source is still historical read-only lineage or a newly created forked draft.
+
+### In-flight and blocked states
+
+While preview submission is in flight, the composer keeps the draft visible, locks mutable controls, and surfaces a non-success status until an authoritative outcome returns.
+
+The in-flight surface may show progress text, an inline pending indicator, and a disabled primary
+action, but it must not imply preview success before the authoritative request or candidate record
+exists.
+
+If source binding, policy posture, or trusted submission prerequisites are missing, the composer must stay blocked and explain the missing prerequisite rather than implying that submission succeeded.
+
+Blocked state messaging should stay attached to the composer so the operator can see which draft is
+being held and what must be fixed before preview can be requested.
+
+### Attachment posture
+
+Attachment support is not implemented in this issue.
+
+If attachments are shown at all, they must appear only as a disabled or omitted affordance with explicit out-of-scope copy.
+
 ## History Information Model
 
 History entities are authoritative workflow records, not transcript messages.

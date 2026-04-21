@@ -17,6 +17,7 @@ required_regex_patterns=(
   "^## Purpose$"
   "^## Workflow Principles$"
   "^## Screen Regions$"
+  "^## Request Composer Contract$"
   "^## History Information Model$"
   "^## Primary Workflow$"
   "^## Screen Model by State$"
@@ -50,11 +51,27 @@ required_literal_patterns=(
   "To work against a different source after history reopen, the operator must explicitly start a separate new draft or explicit fork rather than editing the bound source in place."
   "The UI must not silently switch sources after preview, approval, execution, or history reopen."
   "Do not collapse the shell into a generic chat transcript layout."
+  "The request composer is a governed submission control, not a chat box."
+  "### Composer layout"
+  "### Composer controls"
+  "### Source identity and submission posture"
+  "### In-flight and blocked states"
+  "### Attachment posture"
+  "The composer keeps source identity visible in the same frame as the request draft."
+  "The primary submit action must use governed language such as Submit for preview."
+  "Free-form chat metaphors such as Send, message bubbles, or assistant-avatar framing are out of scope for this composer."
+  "The composer may expose helper text for governed submission, but it must not offer raw-SQL entry."
+  "Attachment support is not implemented in this issue."
+  "If attachments are shown at all, they must appear only as a disabled or omitted affordance with explicit out-of-scope copy."
+  "While preview submission is in flight, the composer keeps the draft visible, locks mutable controls, and surfaces a non-success status until an authoritative outcome returns."
+  "If source binding, policy posture, or trusted submission prerequisites are missing, the composer must stay blocked and explain the missing prerequisite rather than implying that submission succeeded."
   "This document defines the shell contract for later UX-1 issues."
 )
 
 forbidden_literal_patterns=(
   "the operator may choose or replace the source before submitting into"
+  "The request composer is a chat box."
+  "The primary submit action should use Send."
 )
 
 for pattern in "${required_regex_patterns[@]}"; do
