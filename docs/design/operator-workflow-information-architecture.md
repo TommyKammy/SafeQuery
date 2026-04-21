@@ -387,6 +387,42 @@ Presentation and state rules:
 - If preview identity, guard posture, or execution anchors belong to a different source binding or candidate lineage, the panel must reject the mixed snapshot instead of stitching together a seemingly complete review.
 - Empty results must keep the same contract shape as populated results so revisit, export, and audit behavior can remain bound to one run record.
 
+### Terminal-state mapping
+
+The operator shell must present terminal outcomes through explicit UI states derived from the
+authoritative lifecycle record rather than a generic catch-all error bucket.
+
+The terminal-state mapping is:
+
+- `review_denied`: a pre-execution candidate terminal state reached when review or guard posture
+  blocks progress before any run record exists
+- `execution_denied`: a run-scoped terminal state reached when execute-time checks reject the
+  reviewed candidate before the backend begins execution
+- `failed`: a run-scoped terminal state reached when execution starts but ends in an error posture
+- `canceled`: a run-scoped terminal state reached when execution is intentionally stopped before a
+  terminal success or failure payload is produced
+- `empty`: a run-scoped terminal state reached when execution completes successfully with zero rows
+- `completed`: a run-scoped terminal state reached when execution completes successfully with
+  bounded rows
+
+The mapping must distinguish pre-execution review failures from post-execution outcomes.
+
+`review_denied` is candidate-anchored and must preserve request identity, source identity,
+candidate identity, candidate lifecycle state, and the timestamp that established the blocked
+review outcome.
+
+`execution_denied`, `failed`, `canceled`, `empty`, and `completed` are run-anchored and must
+preserve request identity, source identity, candidate identity, run identity, run lifecycle state,
+and the authoritative terminal timestamp for that run.
+
+The operator-facing state label may be calmer or more human-readable than the lifecycle field, but
+the surface must keep the authoritative request, candidate, and run anchors visible enough that the
+operator can tell exactly which record became terminal.
+
+If the shell lacks the authoritative source, request, candidate, or run anchor needed for one of
+these terminal states, it must stay blocked and surface the missing trusted prerequisite instead of
+guessing a terminal presentation from partial metadata.
+
 ## Primary Workflow
 
 The canonical operator path is:

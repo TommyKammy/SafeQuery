@@ -25,7 +25,7 @@ describe("HomePage", () => {
     expect(screen.getByText("Generated SQL")).toBeInTheDocument();
     expect(screen.getByText("Guard status")).toBeInTheDocument();
     expect(screen.getByText("Results")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /error state/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /review denied/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /empty state/i })).toBeInTheDocument();
   });
 
@@ -60,7 +60,7 @@ describe("HomePage", () => {
     expect(screen.getAllByText(/sql preview placeholder/i)).not.toHaveLength(0);
   });
 
-  it("renders explicit empty and error placeholder states", async () => {
+  it("renders explicit empty and review-denied placeholder states", async () => {
     const { rerender } = render(
       await HomePage({
         searchParams: {
@@ -81,8 +81,90 @@ describe("HomePage", () => {
       })
     );
 
-    expect(screen.getByText(/error state reached/i)).toBeInTheDocument();
-    expect(screen.getByText(/blocked pending trusted prerequisite/i)).toBeInTheDocument();
+    expect(screen.getByText(/review denied state reached/i)).toBeInTheDocument();
+    expect(screen.getByText(/review denied before execution/i)).toBeInTheDocument();
+  });
+
+  it("maps terminal outcomes to distinct operator-facing states with anchored context", async () => {
+    const question = "Show approved vendors by quarterly spend";
+    const terminalStateExpectations = [
+      {
+        state: "review_denied",
+        heading: /review denied state/i,
+        status: /review denied before execution/i,
+        lifecycle: /candidate state/i,
+        identity: /candidate-sq-204/i
+      },
+      {
+        state: "completed",
+        heading: /completed state/i,
+        status: /execution completed with rows/i,
+        lifecycle: /run state/i,
+        identity: /run-sq-204/i
+      },
+      {
+        state: "failed",
+        heading: /failed state/i,
+        status: /execution failed after run start/i,
+        lifecycle: /run state/i,
+        identity: /run-sq-204/i
+      },
+      {
+        state: "canceled",
+        heading: /canceled state/i,
+        status: /execution canceled before completion/i,
+        lifecycle: /run state/i,
+        identity: /run-sq-204/i
+      },
+      {
+        state: "execution_denied",
+        heading: /execution denied state/i,
+        status: /execution denied at execute time/i,
+        lifecycle: /run state/i,
+        identity: /run-sq-204/i
+      }
+    ] as const;
+
+    for (const terminalState of terminalStateExpectations) {
+      cleanup();
+      render(
+        await HomePage({
+          searchParams: {
+            question,
+            state: terminalState.state
+          }
+        })
+      );
+
+      expect(screen.getByRole("heading", { name: terminalState.heading })).toBeInTheDocument();
+      expect(screen.getByText(terminalState.status)).toBeInTheDocument();
+      expect(screen.getByText(/source identity/i)).toBeInTheDocument();
+      expect(screen.getByText(/request identity/i)).toBeInTheDocument();
+      expect(screen.getByText(terminalState.lifecycle)).toBeInTheDocument();
+      expect(screen.getByText(terminalState.identity)).toBeInTheDocument();
+    }
+  });
+
+  it("keeps pre-submission states in a draft-only posture until a real request exists", async () => {
+    const { rerender } = render(await HomePage({}));
+
+    expect(screen.getByText(/request posture/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/^Draft only$/i)).not.toHaveLength(0);
+    expect(screen.getByText(/lifecycle posture/i)).toBeInTheDocument();
+    expect(screen.getByText(/no submitted record yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/req-sq-204/i)).not.toBeInTheDocument();
+
+    rerender(
+      await HomePage({
+        searchParams: {
+          state: "signin"
+        }
+      })
+    );
+
+    expect(screen.getByRole("heading", { name: /sign in state/i })).toBeInTheDocument();
+    expect(screen.getByText(/request posture/i)).toBeInTheDocument();
+    expect(screen.queryByText(/req-sq-204/i)).not.toBeInTheDocument();
   });
 
   it("falls back to the query state for inherited object keys", () => {

@@ -1,7 +1,29 @@
 import { HealthStatusCard } from "./health-status-card";
 import type { HealthSnapshot } from "../lib/health";
 
-type WorkflowState = "signin" | "query" | "preview" | "results" | "empty" | "error";
+type WorkflowState =
+  | "signin"
+  | "query"
+  | "preview"
+  | "review_denied"
+  | "completed"
+  | "empty"
+  | "execution_denied"
+  | "failed"
+  | "canceled"
+  | "results"
+  | "error";
+
+type CanonicalWorkflowState =
+  | "signin"
+  | "query"
+  | "preview"
+  | "review_denied"
+  | "completed"
+  | "empty"
+  | "execution_denied"
+  | "failed"
+  | "canceled";
 
 type QueryWorkflowShellProps = {
   apiUrl: string;
@@ -15,14 +37,36 @@ type StateDefinition = {
   label: string;
 };
 
-const workflowStates: Record<WorkflowState, StateDefinition> = {
+type WorkflowContext = {
+  candidateIdentity?: string;
+  candidateState?: string;
+  lifecycleTimestamp?: string;
+  requestIdentity?: string;
+  runIdentity?: string;
+  runState?: string;
+  sourceIdentity: string;
+};
+
+const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
+  canceled: {
+    description: "Execution started from a reviewed candidate but stopped before the run completed.",
+    label: "Canceled"
+  },
+  completed: {
+    description: "Execution completed and returned bounded rows for the reviewed run record.",
+    label: "Completed"
+  },
   empty: {
-    description: "The workflow completed, but the approved query returned no rows.",
+    description: "Execution completed, but the reviewed run record returned no rows.",
     label: "Empty state"
   },
-  error: {
-    description: "The workflow hit a guarded failure path and is holding execution closed.",
-    label: "Error state"
+  execution_denied: {
+    description: "The reviewed candidate was blocked at execute time and no execution payload was produced.",
+    label: "Execution denied"
+  },
+  failed: {
+    description: "Execution started for the reviewed run record but ended in a controlled failure state.",
+    label: "Failed"
   },
   preview: {
     description: "The question has been staged for analyst review with generated SQL still in placeholder mode.",
@@ -32,9 +76,9 @@ const workflowStates: Record<WorkflowState, StateDefinition> = {
     description: "Compose a governed question and move into review without leaving the product shell.",
     label: "Query input"
   },
-  results: {
-    description: "Previewed SQL has advanced to a placeholder result view for future execution wiring.",
-    label: "Result state"
+  review_denied: {
+    description: "The request stopped during review before any execution run was allowed to start.",
+    label: "Review denied"
   },
   signin: {
     description: "Reserved sign-in entrypoint before any real authentication bridge is wired.",
@@ -42,15 +86,40 @@ const workflowStates: Record<WorkflowState, StateDefinition> = {
   }
 };
 
-export function resolveWorkflowState(value?: string): WorkflowState {
-  if (value && Object.prototype.hasOwnProperty.call(workflowStates, value)) {
-    return value as WorkflowState;
+const workflowStateAliases: Partial<Record<WorkflowState, CanonicalWorkflowState>> = {
+  error: "review_denied",
+  results: "completed"
+};
+
+const workflowStateOrder: CanonicalWorkflowState[] = [
+  "signin",
+  "query",
+  "preview",
+  "review_denied",
+  "completed",
+  "empty",
+  "execution_denied",
+  "failed",
+  "canceled"
+];
+
+export function resolveWorkflowState(value?: string): CanonicalWorkflowState {
+  if (!value) {
+    return "query";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(workflowStateAliases, value)) {
+    return workflowStateAliases[value as WorkflowState] ?? "query";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(workflowStates, value)) {
+    return value as CanonicalWorkflowState;
   }
 
   return "query";
 }
 
-function buildStateHref(state: WorkflowState, question: string): string {
+function buildStateHref(state: CanonicalWorkflowState, question: string): string {
   const params = new URLSearchParams({
     question,
     state
@@ -71,68 +140,157 @@ function getSqlPreview(question: string): string {
   ].join("\n");
 }
 
-function getGuardTone(state: WorkflowState): string {
-  if (state === "error") {
+function getWorkflowContext(state: CanonicalWorkflowState): WorkflowContext {
+  const sourceIdentity = "SAP spend cube / approved_vendor_spend";
+  const requestIdentity = "req-sq-204";
+
+  if (state === "preview" || state === "review_denied") {
+    return {
+      candidateIdentity: "candidate-sq-204",
+      candidateState: state === "review_denied" ? "guard_denied" : "preview_ready",
+      lifecycleTimestamp: state === "review_denied" ? "2026-04-21 14:24 JST" : "2026-04-21 14:18 JST",
+      requestIdentity,
+      sourceIdentity
+    };
+  }
+
+  if (state === "query" || state === "signin") {
+    return {
+      sourceIdentity
+    };
+  }
+
+  return {
+    candidateIdentity: "candidate-sq-204",
+    candidateState: "approved_previewed",
+    lifecycleTimestamp:
+      state === "completed"
+        ? "2026-04-21 14:32 JST"
+        : state === "empty"
+          ? "2026-04-21 14:34 JST"
+          : state === "execution_denied"
+            ? "2026-04-21 14:31 JST"
+            : state === "failed"
+              ? "2026-04-21 14:35 JST"
+              : "2026-04-21 14:33 JST",
+    requestIdentity,
+    runIdentity: "run-sq-204",
+    runState:
+      state === "completed"
+        ? "executed"
+        : state === "empty"
+          ? "executed_empty"
+          : state === "execution_denied"
+            ? "execution_denied"
+            : state === "failed"
+              ? "execution_failed"
+              : "execution_canceled",
+    sourceIdentity
+  };
+}
+
+function getGuardTone(state: CanonicalWorkflowState): string {
+  if (state === "review_denied" || state === "execution_denied" || state === "failed") {
     return "danger";
   }
 
-  if (state === "results" || state === "empty") {
+  if (state === "completed" || state === "empty") {
     return "success";
+  }
+
+  if (state === "canceled") {
+    return "muted";
   }
 
   return "warning";
 }
 
-function getGuardHeadline(state: WorkflowState): string {
-  if (state === "error") {
-    return "Blocked pending trusted prerequisite";
+function getGuardHeadline(state: CanonicalWorkflowState): string {
+  if (state === "review_denied") {
+    return "Review denied before execution";
   }
 
-  if (state === "results") {
-    return "Preview approved for placeholder execution";
+  if (state === "completed") {
+    return "Execution completed with rows";
   }
 
   if (state === "empty") {
     return "Execution completed with no approved rows";
   }
 
+  if (state === "execution_denied") {
+    return "Execution denied at execute time";
+  }
+
+  if (state === "failed") {
+    return "Execution failed after run start";
+  }
+
+  if (state === "canceled") {
+    return "Execution canceled before completion";
+  }
+
   return "Awaiting analyst review";
 }
 
-function getGuardCopy(state: WorkflowState): string {
-  if (state === "error") {
-    return "No auth context, approval record, or execution binding is inferred here. The shell stays fail-closed and surfaces a review-needed error placeholder instead.";
+function getGuardCopy(state: CanonicalWorkflowState): string {
+  if (state === "review_denied") {
+    return "The request never crossed into execution. Guard denial stays anchored to the candidate review record instead of being restyled as a run failure.";
   }
 
-  if (state === "results") {
-    return "Guard status remains explicit even in placeholder mode so the workflow keeps query intent, SQL review, and result inspection separate.";
+  if (state === "completed") {
+    return "Result inspection stays tied to the reviewed candidate and run record so operators can distinguish executed evidence from nearby advisory context.";
   }
 
   if (state === "empty") {
     return "The result surface can represent a clean no-data outcome without restyling the rest of the page or hiding guard context.";
   }
 
+  if (state === "execution_denied") {
+    return "Execute-time checks revalidated ownership, approval freshness, and replay posture. The run stays denied instead of inferring success from an earlier preview.";
+  }
+
+  if (state === "failed") {
+    return "The run record exists, but the payload is not trusted as successful output. The shell keeps the failure anchored to that run instead of showing speculative rows.";
+  }
+
+  if (state === "canceled") {
+    return "Cancellation is distinct from denial and failure. The shell preserves run lineage and lifecycle context so the operator can see that execution started but did not finish.";
+  }
+
   return "The first shell stops at review boundaries. No real auth, SQL generation, or execution path is trusted in this issue.";
 }
 
-function getResultTitle(state: WorkflowState): string {
-  if (state === "results") {
-    return "Placeholder result set";
+function getResultTitle(state: CanonicalWorkflowState): string {
+  if (state === "completed") {
+    return "Completed result set";
   }
 
   if (state === "empty") {
     return "No rows returned";
   }
 
-  if (state === "error") {
-    return "Execution unavailable";
+  if (state === "review_denied") {
+    return "Review denied before run creation";
+  }
+
+  if (state === "execution_denied") {
+    return "Execution denied";
+  }
+
+  if (state === "failed") {
+    return "Execution failed";
+  }
+
+  if (state === "canceled") {
+    return "Execution canceled";
   }
 
   return "Results placeholder";
 }
 
-function renderResultContent(state: WorkflowState) {
-  if (state === "results") {
+function renderResultContent(state: CanonicalWorkflowState) {
+  if (state === "completed") {
     return (
       <div className="result-table" role="table" aria-label="Placeholder query results">
         <div className="result-row result-row-head" role="row">
@@ -159,6 +317,18 @@ function renderResultContent(state: WorkflowState) {
     );
   }
 
+  if (state === "review_denied") {
+    return (
+      <div className="state-callout state-callout-danger">
+        <p className="state-callout-title">Review denied state reached</p>
+        <p>
+          The request stopped before execution. Candidate review context remains visible so the
+          operator can revise without inventing a run record.
+        </p>
+      </div>
+    );
+  }
+
   if (state === "empty") {
     return (
       <div className="state-callout state-callout-empty">
@@ -171,13 +341,37 @@ function renderResultContent(state: WorkflowState) {
     );
   }
 
-  if (state === "error") {
+  if (state === "execution_denied") {
     return (
       <div className="state-callout state-callout-danger">
-        <p className="state-callout-title">Error state reached</p>
+        <p className="state-callout-title">Execution denied state reached</p>
         <p>
-          The shell presents a controlled failure placeholder instead of implying that an
-          unauthorized execution succeeded.
+          The shell preserves the denied run record and keeps execution closed instead of implying
+          that an earlier preview automatically became successful output.
+        </p>
+      </div>
+    );
+  }
+
+  if (state === "failed") {
+    return (
+      <div className="state-callout state-callout-danger">
+        <p className="state-callout-title">Failed state reached</p>
+        <p>
+          A run was created, but it ended in failure. The operator sees the run anchor and failure
+          posture instead of placeholder rows.
+        </p>
+      </div>
+    );
+  }
+
+  if (state === "canceled") {
+    return (
+      <div className="state-callout">
+        <p className="state-callout-title">Canceled state reached</p>
+        <p>
+          Cancellation keeps the run history visible and distinct from empty, denied, or failed
+          outcomes.
         </p>
       </div>
     );
@@ -194,7 +388,7 @@ function renderResultContent(state: WorkflowState) {
   );
 }
 
-function renderStatePanel(state: WorkflowState, question: string) {
+function renderStatePanel(state: CanonicalWorkflowState, question: string) {
   if (state === "signin") {
     return (
       <div className="state-hero">
@@ -224,8 +418,8 @@ function renderStatePanel(state: WorkflowState, question: string) {
           before any future execution path is introduced.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("results", question)}>
-            Open result placeholder
+          <a className="action-link" href={buildStateHref("completed", question)}>
+            Open completed state
           </a>
           <a className="ghost-link" href={buildStateHref("empty", question)}>
             Open empty state
@@ -235,21 +429,21 @@ function renderStatePanel(state: WorkflowState, question: string) {
     );
   }
 
-  if (state === "results") {
+  if (state === "completed") {
     return (
       <div className="state-hero">
         <p className="eyebrow">Inspection mode</p>
-        <h2>Result state</h2>
+        <h2>Completed state</h2>
         <p className="section-copy">
-          Placeholder rows confirm the layout contract for reviewed output without pretending that
-          SafeQuery already executes approved SQL.
+          Execution-backed rows stay separate from preview and guard surfaces so completed output
+          is anchored to a specific run instead of a generic result placeholder.
         </p>
         <div className="action-row">
           <a className="action-link" href={buildStateHref("empty", question)}>
             Open empty state
           </a>
-          <a className="ghost-link" href={buildStateHref("error", question)}>
-            Open error state
+          <a className="ghost-link" href={buildStateHref("failed", question)}>
+            Open failed state
           </a>
         </div>
       </div>
@@ -277,21 +471,84 @@ function renderStatePanel(state: WorkflowState, question: string) {
     );
   }
 
-  if (state === "error") {
+  if (state === "review_denied") {
     return (
       <div className="state-hero">
-        <p className="eyebrow">Guarded failure path</p>
-        <h2>Error state</h2>
+        <p className="eyebrow">Pre-execution block</p>
+        <h2>Review denied state</h2>
         <p className="section-copy">
-          Fail-closed placeholders keep boundary signals explicit. Missing trusted prerequisites do
-          not silently degrade into success or partial results.
+          Pre-execution review failures stay attached to the candidate review surface. The operator
+          sees a blocked candidate, not a synthetic run outcome.
         </p>
         <div className="action-row">
           <a className="action-link" href={buildStateHref("query", question)}>
             Return to query input
           </a>
-          <a className="ghost-link" href={buildStateHref("signin", question)}>
-            Open sign in
+          <a className="ghost-link" href={buildStateHref("preview", question)}>
+            Back to SQL preview
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "execution_denied") {
+    return (
+      <div className="state-hero">
+        <p className="eyebrow">Run denied</p>
+        <h2>Execution denied state</h2>
+        <p className="section-copy">
+          Execute-time denial is distinct from review denial. The shell keeps the operator on the
+          run-backed outcome that was rejected after preview.
+        </p>
+        <div className="action-row">
+          <a className="action-link" href={buildStateHref("preview", question)}>
+            Back to SQL preview
+          </a>
+          <a className="ghost-link" href={buildStateHref("query", question)}>
+            Revise question
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "failed") {
+    return (
+      <div className="state-hero">
+        <p className="eyebrow">Run failure</p>
+        <h2>Failed state</h2>
+        <p className="section-copy">
+          Failure after execution start keeps the run identity, source binding, and reviewed
+          candidate visible for operator diagnosis.
+        </p>
+        <div className="action-row">
+          <a className="action-link" href={buildStateHref("completed", question)}>
+            Open completed state
+          </a>
+          <a className="ghost-link" href={buildStateHref("query", question)}>
+            Revise question
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "canceled") {
+    return (
+      <div className="state-hero">
+        <p className="eyebrow">Run canceled</p>
+        <h2>Canceled state</h2>
+        <p className="section-copy">
+          Cancellation is presented as its own terminal outcome so operators do not confuse
+          interrupted work with denial, failure, or an empty result.
+        </p>
+        <div className="action-row">
+          <a className="action-link" href={buildStateHref("query", question)}>
+            Start a new draft
+          </a>
+          <a className="ghost-link" href={buildStateHref("completed", question)}>
+            Compare completed state
           </a>
         </div>
       </div>
@@ -316,10 +573,12 @@ export function QueryWorkflowShell({
   question,
   state
 }: QueryWorkflowShellProps) {
+  const normalizedState = resolveWorkflowState(state);
   const sqlPreview = getSqlPreview(question);
-  const activeState = workflowStates[state];
-  const queryLocked = state === "signin";
-  const guardTone = getGuardTone(state);
+  const activeState = workflowStates[normalizedState];
+  const queryLocked = normalizedState === "signin";
+  const guardTone = getGuardTone(normalizedState);
+  const workflowContext = getWorkflowContext(normalizedState);
 
   return (
     <main className="app-shell">
@@ -350,9 +609,9 @@ export function QueryWorkflowShell({
         </div>
 
         <nav aria-label="Workflow states" className="state-nav">
-          {(Object.keys(workflowStates) as WorkflowState[]).map((workflowState) => (
+          {workflowStateOrder.map((workflowState) => (
             <a
-              aria-current={workflowState === state ? "page" : undefined}
+              aria-current={workflowState === normalizedState ? "page" : undefined}
               className="state-nav-link"
               href={buildStateHref(workflowState, question)}
               key={workflowState}
@@ -365,7 +624,9 @@ export function QueryWorkflowShell({
 
       <section className="workspace-grid">
         <div className="primary-column">
-          <section className="surface surface-primary">{renderStatePanel(state, question)}</section>
+          <section className="surface surface-primary">
+            {renderStatePanel(normalizedState, question)}
+          </section>
 
           <section className="surface surface-primary">
             <div className="section-header">
@@ -395,8 +656,8 @@ export function QueryWorkflowShell({
                 <button disabled={queryLocked} type="submit">
                   Generate preview
                 </button>
-                <a className="ghost-link" href={buildStateHref("results", question)}>
-                  Open result state
+                <a className="ghost-link" href={buildStateHref("completed", question)}>
+                  Open completed state
                 </a>
               </div>
             </form>
@@ -420,12 +681,64 @@ export function QueryWorkflowShell({
           <section className="surface surface-secondary">
             <div className="section-header">
               <div>
+                <p className="eyebrow">Workflow anchors</p>
+                <h2 className="panel-title">Source and lifecycle context</h2>
+              </div>
+              <span className="surface-badge surface-badge-code">Bound context</span>
+            </div>
+            <div className="guard-list">
+              <div className="guard-item">
+                <span className="meta-label">Source identity</span>
+                <strong>{workflowContext.sourceIdentity}</strong>
+              </div>
+              <div className="guard-item">
+                <span className="meta-label">
+                  {workflowContext.requestIdentity ? "Request identity" : "Request posture"}
+                </span>
+                <strong>{workflowContext.requestIdentity ?? "Draft only"}</strong>
+              </div>
+              <div className="guard-item">
+                <span className="meta-label">
+                  {workflowContext.candidateIdentity ? "Candidate identity" : "Draft posture"}
+                </span>
+                <strong>{workflowContext.candidateIdentity ?? "Draft only"}</strong>
+              </div>
+              <div className="guard-item">
+                <span className="meta-label">
+                  {workflowContext.candidateState ? "Candidate state" : "Lifecycle state"}
+                </span>
+                <strong>{workflowContext.candidateState ?? "drafting"}</strong>
+              </div>
+              {workflowContext.runIdentity ? (
+                <>
+                  <div className="guard-item">
+                    <span className="meta-label">Run identity</span>
+                    <strong>{workflowContext.runIdentity}</strong>
+                  </div>
+                  <div className="guard-item">
+                    <span className="meta-label">Run state</span>
+                    <strong>{workflowContext.runState}</strong>
+                  </div>
+                </>
+              ) : null}
+              <div className="guard-item">
+                <span className="meta-label">
+                  {workflowContext.lifecycleTimestamp ? "Lifecycle timestamp" : "Lifecycle posture"}
+                </span>
+                <strong>{workflowContext.lifecycleTimestamp ?? "No submitted record yet"}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="surface surface-secondary">
+            <div className="section-header">
+              <div>
                 <p className="eyebrow">Guard status</p>
-                <h2 className="panel-title">{getGuardHeadline(state)}</h2>
+                <h2 className="panel-title">{getGuardHeadline(normalizedState)}</h2>
               </div>
               <span className={`surface-badge surface-badge-${guardTone}`}>{guardTone}</span>
             </div>
-            <p className="section-copy">{getGuardCopy(state)}</p>
+            <p className="section-copy">{getGuardCopy(normalizedState)}</p>
             <div className="guard-list">
               <div className="guard-item">
                 <span className="meta-label">Auth</span>
@@ -446,13 +759,13 @@ export function QueryWorkflowShell({
             <div className="section-header">
               <div>
                 <p className="eyebrow">Results</p>
-                <h2 className="panel-title">{getResultTitle(state)}</h2>
+                <h2 className="panel-title">{getResultTitle(normalizedState)}</h2>
               </div>
               <a className="inline-link" href={`${apiUrl}/health`} rel="noreferrer" target="_blank">
                 API health
               </a>
             </div>
-            {renderResultContent(state)}
+            {renderResultContent(normalizedState)}
           </section>
         </aside>
       </section>
