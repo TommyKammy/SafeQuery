@@ -16,6 +16,16 @@ down_revision: str | None = "0001_baseline"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+source_activation_posture = sa.Enum(
+    "active",
+    "paused",
+    "blocked",
+    "retired",
+    name="source_activation_posture",
+    native_enum=False,
+    create_constraint=True,
+)
+
 
 def upgrade() -> None:
     op.create_table(
@@ -25,7 +35,7 @@ def upgrade() -> None:
         sa.Column("display_label", sa.String(length=255), nullable=False),
         sa.Column("source_family", sa.String(length=64), nullable=False),
         sa.Column("source_flavor", sa.String(length=64), nullable=True),
-        sa.Column("activation_posture", sa.String(length=32), nullable=False),
+        sa.Column("activation_posture", source_activation_posture, nullable=False),
         sa.Column("connector_profile_id", sa.Uuid(), nullable=True),
         sa.Column("dialect_profile_id", sa.Uuid(), nullable=True),
         sa.Column("dataset_contract_id", sa.Uuid(), nullable=True),

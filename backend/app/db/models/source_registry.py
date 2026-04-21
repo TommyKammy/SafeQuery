@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
-from sqlalchemy import DateTime, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Enum as SqlEnum, String, UniqueConstraint, func
 from sqlalchemy import Uuid as SqlAlchemyUuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+
+
+class SourceActivationPosture(str, Enum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    BLOCKED = "blocked"
+    RETIRED = "retired"
+
+    @property
+    def is_executable(self) -> bool:
+        return self is SourceActivationPosture.ACTIVE
 
 
 class RegisteredSource(Base):
@@ -26,7 +38,17 @@ class RegisteredSource(Base):
     display_label: Mapped[str] = mapped_column(String(255), nullable=False)
     source_family: Mapped[str] = mapped_column(String(64), nullable=False)
     source_flavor: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    activation_posture: Mapped[str] = mapped_column(String(32), nullable=False)
+    activation_posture: Mapped[SourceActivationPosture] = mapped_column(
+        SqlEnum(
+            SourceActivationPosture,
+            name="source_activation_posture",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+    )
     connector_profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         SqlAlchemyUuid,
         nullable=True,
