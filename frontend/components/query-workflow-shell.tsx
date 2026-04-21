@@ -29,6 +29,7 @@ type QueryWorkflowShellProps = {
   apiUrl: string;
   health: HealthSnapshot;
   question: string;
+  sourceId?: string;
   state: WorkflowState;
 };
 
@@ -45,6 +46,19 @@ type WorkflowContext = {
   runIdentity?: string;
   runState?: string;
   sourceIdentity: string;
+};
+
+type SourceOption = {
+  activationPosture: "active" | "paused";
+  description: string;
+  displayLabel: string;
+  sourceId: string;
+};
+
+type ResolvedSourceBinding = {
+  blockedReason?: string;
+  source?: SourceOption;
+  state: CanonicalWorkflowState;
 };
 
 const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
@@ -103,6 +117,21 @@ const workflowStateOrder: CanonicalWorkflowState[] = [
   "canceled"
 ];
 
+const previewSourceOptions: SourceOption[] = [
+  {
+    activationPosture: "active",
+    description: "Approved finance spend cube for governed preview and single-source execution.",
+    displayLabel: "SAP spend cube / approved_vendor_spend",
+    sourceId: "sap-approved-spend"
+  },
+  {
+    activationPosture: "paused",
+    description: "Historical archive is visible for posture review but not executable for preview.",
+    displayLabel: "Legacy finance archive",
+    sourceId: "legacy-finance-archive"
+  }
+];
+
 export function resolveWorkflowState(value?: string): CanonicalWorkflowState {
   if (!value) {
     return "query";
@@ -119,11 +148,70 @@ export function resolveWorkflowState(value?: string): CanonicalWorkflowState {
   return "query";
 }
 
-function buildStateHref(state: CanonicalWorkflowState, question: string): string {
+function findSourceOption(sourceId?: string): SourceOption | undefined {
+  return previewSourceOptions.find((source) => source.sourceId === sourceId);
+}
+
+function resolveSourceBinding(
+  state: CanonicalWorkflowState,
+  sourceId?: string
+): ResolvedSourceBinding {
+  const source = findSourceOption(sourceId);
+
+  if (state === "signin") {
+    return {
+      source,
+      state
+    };
+  }
+
+  if (state === "query") {
+    if (sourceId && source?.activationPosture !== "active") {
+      return {
+        blockedReason: "Select an executable source before preview can be requested.",
+        state: "query"
+      };
+    }
+
+    return {
+      source,
+      state
+    };
+  }
+
+  if (!sourceId || source === undefined) {
+    return {
+      blockedReason: "Select an executable source before preview can be requested.",
+      state: "query"
+    };
+  }
+
+  if (source.activationPosture !== "active") {
+    return {
+      blockedReason: "The selected source is not executable for preview submission.",
+      state: "query"
+    };
+  }
+
+  return {
+    source,
+    state
+  };
+}
+
+function buildStateHref(
+  state: CanonicalWorkflowState,
+  question: string,
+  sourceId?: string
+): string {
   const params = new URLSearchParams({
     question,
     state
   });
+
+  if (sourceId) {
+    params.set("source_id", sourceId);
+  }
 
   return `/?${params.toString()}`;
 }
@@ -140,8 +228,11 @@ function getSqlPreview(question: string): string {
   ].join("\n");
 }
 
-function getWorkflowContext(state: CanonicalWorkflowState): WorkflowContext {
-  const sourceIdentity = "SAP spend cube / approved_vendor_spend";
+function getWorkflowContext(
+  state: CanonicalWorkflowState,
+  source?: SourceOption
+): WorkflowContext {
+  const sourceIdentity = source?.displayLabel ?? "No source selected yet";
   const requestIdentity = "req-sq-204";
 
   if (state === "preview" || state === "review_denied") {
@@ -388,7 +479,11 @@ function renderResultContent(state: CanonicalWorkflowState) {
   );
 }
 
-function renderStatePanel(state: CanonicalWorkflowState, question: string) {
+function renderStatePanel(
+  state: CanonicalWorkflowState,
+  question: string,
+  sourceId?: string
+) {
   if (state === "signin") {
     return (
       <div className="state-hero">
@@ -399,7 +494,7 @@ function renderStatePanel(state: CanonicalWorkflowState, question: string) {
           does not establish a real identity session yet.
         </p>
         <div className="signin-actions">
-          <a className="action-link" href={buildStateHref("query", question)}>
+          <a className="action-link" href={buildStateHref("query", question, sourceId)}>
             Continue to query input
           </a>
           <span className="inline-note">Real auth wiring stays out of scope.</span>
@@ -418,10 +513,10 @@ function renderStatePanel(state: CanonicalWorkflowState, question: string) {
           before any future execution path is introduced.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("completed", question)}>
+          <a className="action-link" href={buildStateHref("completed", question, sourceId)}>
             Open completed state
           </a>
-          <a className="ghost-link" href={buildStateHref("empty", question)}>
+          <a className="ghost-link" href={buildStateHref("empty", question, sourceId)}>
             Open empty state
           </a>
         </div>
@@ -439,10 +534,10 @@ function renderStatePanel(state: CanonicalWorkflowState, question: string) {
           is anchored to a specific run instead of a generic result placeholder.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("empty", question)}>
+          <a className="action-link" href={buildStateHref("empty", question, sourceId)}>
             Open empty state
           </a>
-          <a className="ghost-link" href={buildStateHref("failed", question)}>
+          <a className="ghost-link" href={buildStateHref("failed", question, sourceId)}>
             Open failed state
           </a>
         </div>
@@ -460,10 +555,10 @@ function renderStatePanel(state: CanonicalWorkflowState, question: string) {
           denial, auth failure, or transport issues.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("query", question)}>
+          <a className="action-link" href={buildStateHref("query", question, sourceId)}>
             Revise question
           </a>
-          <a className="ghost-link" href={buildStateHref("preview", question)}>
+          <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
             Back to SQL preview
           </a>
         </div>
@@ -481,10 +576,10 @@ function renderStatePanel(state: CanonicalWorkflowState, question: string) {
           sees a blocked candidate, not a synthetic run outcome.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("query", question)}>
+          <a className="action-link" href={buildStateHref("query", question, sourceId)}>
             Return to query input
           </a>
-          <a className="ghost-link" href={buildStateHref("preview", question)}>
+          <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
             Back to SQL preview
           </a>
         </div>
@@ -502,10 +597,10 @@ function renderStatePanel(state: CanonicalWorkflowState, question: string) {
           run-backed outcome that was rejected after preview.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("preview", question)}>
+          <a className="action-link" href={buildStateHref("preview", question, sourceId)}>
             Back to SQL preview
           </a>
-          <a className="ghost-link" href={buildStateHref("query", question)}>
+          <a className="ghost-link" href={buildStateHref("query", question, sourceId)}>
             Revise question
           </a>
         </div>
@@ -523,10 +618,10 @@ function renderStatePanel(state: CanonicalWorkflowState, question: string) {
           candidate visible for operator diagnosis.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("completed", question)}>
+          <a className="action-link" href={buildStateHref("completed", question, sourceId)}>
             Open completed state
           </a>
-          <a className="ghost-link" href={buildStateHref("query", question)}>
+          <a className="ghost-link" href={buildStateHref("query", question, sourceId)}>
             Revise question
           </a>
         </div>
@@ -544,10 +639,10 @@ function renderStatePanel(state: CanonicalWorkflowState, question: string) {
           interrupted work with denial, failure, or an empty result.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("query", question)}>
+          <a className="action-link" href={buildStateHref("query", question, sourceId)}>
             Start a new draft
           </a>
-          <a className="ghost-link" href={buildStateHref("completed", question)}>
+          <a className="ghost-link" href={buildStateHref("completed", question, sourceId)}>
             Compare completed state
           </a>
         </div>
@@ -571,14 +666,19 @@ export function QueryWorkflowShell({
   apiUrl,
   health,
   question,
+  sourceId,
   state
 }: QueryWorkflowShellProps) {
-  const normalizedState = resolveWorkflowState(state);
+  const requestedState = resolveWorkflowState(state);
+  const sourceBinding = resolveSourceBinding(requestedState, sourceId);
+  const normalizedState = sourceBinding.state;
   const sqlPreview = getSqlPreview(question);
   const activeState = workflowStates[normalizedState];
   const queryLocked = normalizedState === "signin";
   const guardTone = getGuardTone(normalizedState);
-  const workflowContext = getWorkflowContext(normalizedState);
+  const workflowContext = getWorkflowContext(normalizedState, sourceBinding.source);
+  const sourceSelectVisible = normalizedState === "query";
+  const boundSourceId = sourceBinding.source?.sourceId;
 
   return (
     <main className="app-shell">
@@ -613,7 +713,7 @@ export function QueryWorkflowShell({
             <a
               aria-current={workflowState === normalizedState ? "page" : undefined}
               className="state-nav-link"
-              href={buildStateHref(workflowState, question)}
+              href={buildStateHref(workflowState, question, boundSourceId)}
               key={workflowState}
             >
               {workflowStates[workflowState].label}
@@ -625,7 +725,7 @@ export function QueryWorkflowShell({
       <section className="workspace-grid">
         <div className="primary-column">
           <section className="surface surface-primary">
-            {renderStatePanel(normalizedState, question)}
+            {renderStatePanel(normalizedState, question, boundSourceId)}
           </section>
 
           <section className="surface surface-primary">
@@ -641,6 +741,47 @@ export function QueryWorkflowShell({
 
             <form action="/" className="query-form" method="get">
               <input name="state" type="hidden" value="preview" />
+              {sourceSelectVisible ? (
+                <>
+                  <label className="field-label" htmlFor="source_id">
+                    Source
+                  </label>
+                  <select defaultValue={boundSourceId ?? ""} id="source_id" name="source_id" required>
+                    <option value="">Select one source</option>
+                    {previewSourceOptions.map((source) => (
+                      <option
+                        disabled={source.activationPosture !== "active"}
+                        key={source.sourceId}
+                        value={source.sourceId}
+                      >
+                        {source.displayLabel}
+                        {source.activationPosture === "active" ? "" : " (Unavailable for preview)"}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="section-copy">
+                    Choose one explicit source before preview submission. SafeQuery does not infer or
+                    auto-route the initial source binding.
+                  </p>
+                  {sourceBinding.blockedReason ? (
+                    <div className="state-callout state-callout-danger">
+                      <p className="state-callout-title">Preview submission blocked</p>
+                      <p>{sourceBinding.blockedReason}</p>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="guard-list">
+                  <div className="guard-item">
+                    <span className="meta-label">Bound source</span>
+                    <strong>{workflowContext.sourceIdentity}</strong>
+                  </div>
+                  <div className="guard-item">
+                    <span className="meta-label">Source posture</span>
+                    <strong>Read-only after preview binding</strong>
+                  </div>
+                </div>
+              )}
               <label className="field-label" htmlFor="question">
                 Natural-language question
               </label>
@@ -654,11 +795,13 @@ export function QueryWorkflowShell({
               />
               <div className="form-actions">
                 <button disabled={queryLocked} type="submit">
-                  Generate preview
+                  Submit for preview
                 </button>
-                <a className="ghost-link" href={buildStateHref("completed", question)}>
-                  Open completed state
-                </a>
+                {boundSourceId ? (
+                  <a className="ghost-link" href={buildStateHref("completed", question, boundSourceId)}>
+                    Open completed state
+                  </a>
+                ) : null}
               </div>
             </form>
           </section>

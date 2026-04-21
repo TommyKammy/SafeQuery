@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from time import perf_counter
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,6 +18,12 @@ from app.core.errors import (
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.services.health import check_database_health
+from app.services.request_preview import (
+    PreviewSubmissionContractError,
+    PreviewSubmissionRequest,
+    PreviewSubmissionResponse,
+    submit_preview_request,
+)
 
 configure_logging()
 
@@ -69,7 +75,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -145,6 +151,15 @@ def create_app() -> FastAPI:
                 "database": database,
             },
         )
+
+    @app.post("/requests/preview", response_model=PreviewSubmissionResponse)
+    def create_request_preview(
+        payload: PreviewSubmissionRequest,
+    ) -> PreviewSubmissionResponse:
+        try:
+            return submit_preview_request(payload)
+        except PreviewSubmissionContractError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return app
 

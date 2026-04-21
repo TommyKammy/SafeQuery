@@ -20,6 +20,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const params = searchParams ? await searchParams : {};
   const config = getAppConfig();
   const question = readParam(params.question)?.trim() || "List the top 10 approved vendors by quarterly spend.";
+  const sourceId = readParam(params.source_id)?.trim();
   const state = resolveWorkflowState(readParam(params.state));
 
   return (
@@ -27,6 +28,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       apiUrl={config.publicApiBaseUrl}
       health={DEFAULT_HEALTH_SNAPSHOT}
       question={question}
+      sourceId={sourceId}
       state={state}
     />
   );
