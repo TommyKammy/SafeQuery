@@ -8,6 +8,10 @@ SafeQuery is a controlled enterprise NL2SQL application. This repository checkpo
 
 The baseline intentionally stops at placeholder UI and health-oriented API behavior. No auth, SQL generation, SQL guard, or SQL execution logic is implemented yet.
 
+The current Epic A frontend should be treated as a developer state demo, not the intended production information architecture. It exists to make the baseline lifecycle and review states concrete while SafeQuery is still wiring the trusted backend boundary.
+
+For future UI implementation work, the next authoritative UI direction is the UX-1 workflow-first operator shell contract in [docs/design/operator-workflow-information-architecture.md](./docs/design/operator-workflow-information-architecture.md). Contributors should use that document as the source of truth for production-facing shell structure, workflow regions, and operator navigation rather than extending the current top-level demo shell as if it were the final product IA.
+
 ## Repository Shape
 
 ```text
@@ -123,6 +127,10 @@ The initial structure leaves explicit room for later feature work:
 - `backend/app/features/audit/` for lifecycle audit persistence
 
 The frontend remains a simple shell so later query input, SQL preview, and audit workflows can be added without changing the trusted backend boundary.
+
+That simple shell is a developer state demo for the Epic A prototype. It is useful for exercising baseline states and component posture, but it is not the intended production information architecture.
+
+When UI work moves beyond the current prototype, follow the UX-1 workflow-first operator shell contract in [docs/design/operator-workflow-information-architecture.md](./docs/design/operator-workflow-information-architecture.md) as the next authoritative UI direction.
 
 ## Focused Verification
 
