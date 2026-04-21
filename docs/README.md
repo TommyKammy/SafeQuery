@@ -2,6 +2,10 @@
 
 This directory contains the initial documentation baseline for SafeQuery, a secure enterprise NL2SQL proof of concept.
 
+The current Epic A repository shell should be read as a developer state demo, not the production information architecture. It helps contributors inspect baseline UI states and backend posture while the product-facing shell contract is still being established.
+
+For future frontend structure and navigation work, the UX-1 workflow-first operator shell contract in `docs/design/operator-workflow-information-architecture.md` is the next authoritative UI direction. Do not treat the current top-level prototype shell as the production information architecture.
+
 The docs are organized to make three things clear from the start:
 
 - which architectural decisions are already fixed
