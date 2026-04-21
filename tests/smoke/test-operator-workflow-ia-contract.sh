@@ -41,8 +41,20 @@ required_literal_patterns=(
   "SQL preview"
   "Guard review"
   "Result inspection"
+  "### Source selector lifecycle semantics"
+  "The source selector is interactive only while the operator is in an active draft with no bound preview candidate yet. In that state, it is used to choose the draft's initial source; changing to a different source must use an explicit draft-fork action rather than replacing the bound source in place."
+  "After preview is created, the selected source becomes read-only bound identity for that draft, its candidate records, and any later execution or history surfaces derived from it."
+  "Changing source from an unpreviewed draft must always be an explicit draft-fork action that creates a new draft context."
+  "The shell must clear preview, guard, execution, and result surfaces that belonged to the previous source binding instead of silently retargeting them."
+  "Reopening history into a new draft preserves the historical source binding as visible read-only lineage."
+  "To work against a different source after history reopen, the operator must explicitly start a separate new draft or explicit fork rather than editing the bound source in place."
+  "The UI must not silently switch sources after preview, approval, execution, or history reopen."
   "Do not collapse the shell into a generic chat transcript layout."
   "This document defines the shell contract for later UX-1 issues."
+)
+
+forbidden_literal_patterns=(
+  "the operator may choose or replace the source before submitting into"
 )
 
 for pattern in "${required_regex_patterns[@]}"; do
@@ -55,6 +67,13 @@ done
 for pattern in "${required_literal_patterns[@]}"; do
   if ! grep -Fq "$pattern" "$target_doc"; then
     echo "$target_doc missing required text: $pattern" >&2
+    exit 1
+  fi
+done
+
+for pattern in "${forbidden_literal_patterns[@]}"; do
+  if grep -Fq "$pattern" "$target_doc"; then
+    echo "$target_doc contains forbidden conflicting text: $pattern" >&2
     exit 1
   fi
 done

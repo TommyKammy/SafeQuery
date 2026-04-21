@@ -205,6 +205,38 @@ Source identity should appear in a stable, repeated location such as the frame h
 support panel, or both. It must not disappear when the main work surface switches from composition
 to preview or results.
 
+### Source selector lifecycle semantics
+
+The source selector is interactive only while the operator is in an active draft with no bound preview candidate yet. In that state, it is used to choose the draft's initial source; changing to a different source must use an explicit draft-fork action rather than replacing the bound source in place.
+
+State contract:
+
+- draft with no preview yet: the operator may choose the draft's initial source before submitting
+  into preview; switching to a different source must use an explicit draft-fork action that creates
+  a new draft context
+- previewed, approved, executing, and executed states: the selected source is displayed as bound
+  identity, not as an editable control
+- historical rows opened for review: the row shows the source that was bound to that request,
+  candidate, or run at the time it became authoritative
+- reopened history draft: the shell keeps the historical source binding visible as lineage and does
+  not silently substitute a different source
+
+After preview is created, the selected source becomes read-only bound identity for that draft, its candidate records, and any later execution or history surfaces derived from it.
+
+Changing source from an unpreviewed draft must always be an explicit draft-fork action that creates a new draft context.
+
+That explicit source-change action may carry forward the natural-language question only if the UI
+states that choice clearly, but it must not carry forward the prior candidate, guard posture,
+approval metadata, execution eligibility, or result history as if they still applied.
+
+The shell must clear preview, guard, execution, and result surfaces that belonged to the previous source binding instead of silently retargeting them.
+
+Reopening history into a new draft preserves the historical source binding as visible read-only lineage.
+
+To work against a different source after history reopen, the operator must explicitly start a separate new draft or explicit fork rather than editing the bound source in place.
+
+The UI must not silently switch sources after preview, approval, execution, or history reopen.
+
 ## Primary Workflow
 
 The canonical operator path is:
