@@ -5,7 +5,16 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    Enum as SqlEnum,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy import Uuid as SqlAlchemyUuid
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,7 +29,14 @@ class DatasetContractDatasetKind(str, Enum):
 
 class DatasetContract(Base):
     __tablename__ = "dataset_contracts"
-    __table_args__ = (UniqueConstraint("registered_source_id", "contract_version"),)
+    __table_args__ = (
+        UniqueConstraint("registered_source_id", "contract_version"),
+        UniqueConstraint("registered_source_id", "id"),
+        ForeignKeyConstraint(
+            ["registered_source_id", "schema_snapshot_id"],
+            ["schema_snapshots.registered_source_id", "schema_snapshots.id"],
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         SqlAlchemyUuid,
@@ -29,6 +45,10 @@ class DatasetContract(Base):
     )
     registered_source_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("registered_sources.id"),
+        nullable=False,
+    )
+    schema_snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schema_snapshots.id"),
         nullable=False,
     )
     contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
