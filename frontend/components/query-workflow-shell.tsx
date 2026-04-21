@@ -69,7 +69,7 @@ const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
     label: "Failed"
   },
   preview: {
-    description: "The question has been staged for analyst review with generated SQL still in placeholder mode.",
+    description: "The operator request has been staged for governed review with generated SQL still in placeholder mode.",
     label: "SQL preview"
   },
   query: {
@@ -230,7 +230,7 @@ function getGuardHeadline(state: CanonicalWorkflowState): string {
     return "Execution canceled before completion";
   }
 
-  return "Awaiting analyst review";
+  return "Awaiting operator review";
 }
 
 function getGuardCopy(state: CanonicalWorkflowState): string {
@@ -589,8 +589,8 @@ export function QueryWorkflowShell({
             <h1>Query workflow</h1>
           </div>
           <p className="frame-copy">
-            A governed application shell for review-first NL2SQL work. This first pass stays
-            independent from Vanna UI surfaces and keeps auth and execution as placeholders.
+            Operator shell for governed question review, SQL preview, and execution posture.
+            Analyst-style extensions stay optional and outside the core shell.
           </p>
         </div>
 
@@ -632,7 +632,7 @@ export function QueryWorkflowShell({
             <div className="section-header">
               <div>
                 <p className="eyebrow">Question input</p>
-                <h2 className="panel-title">Compose the analyst question</h2>
+                <h2 className="panel-title">Compose the operator request</h2>
               </div>
               <span className={`surface-badge surface-badge-${queryLocked ? "muted" : "active"}`}>
                 {queryLocked ? "Read only" : "Ready"}

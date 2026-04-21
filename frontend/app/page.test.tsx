@@ -27,6 +27,10 @@ describe("HomePage", () => {
     expect(screen.getByText("Results")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /review denied/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /empty state/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /compose the operator request/i })).toBeInTheDocument();
+    expect(screen.getByText(/operator shell for governed question review, sql preview, and execution posture/i)).toBeInTheDocument();
+    expect(screen.queryByText(/compose the analyst question/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/awaiting analyst review/i)).not.toBeInTheDocument();
   });
 
   it("renders the shell before the health probe completes", async () => {
