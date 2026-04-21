@@ -23,6 +23,7 @@ required_regex_patterns=(
   "^### Preview panel contract$"
   "^### Guard panel contract$"
   "^### Result panel contract$"
+  "^### Terminal-state mapping$"
   "^## Primary Workflow$"
   "^## Screen Model by State$"
   "^## UX Issue Contract$"
@@ -81,6 +82,25 @@ required_literal_patterns=(
   "guard code list or deny identifiers"
   "execution eligibility posture"
   "The result panel renders only execution-backed output for a specific run record and must not be used for speculative preview data, advisory text, or guard rationale."
+  "The operator shell must present terminal outcomes through explicit UI states derived from the"
+  "authoritative lifecycle record rather than a generic catch-all error bucket."
+  "The terminal-state mapping is:"
+  '`review_denied`'
+  '`execution_denied`'
+  '`failed`'
+  '`canceled`'
+  '`empty`'
+  '`completed`'
+  "The mapping must distinguish pre-execution review failures from post-execution outcomes."
+  '`review_denied` is candidate-anchored and must preserve request identity, source identity,'
+  'candidate identity, candidate lifecycle state, and the timestamp that established the blocked'
+  'review outcome.'
+  '`execution_denied`, `failed`, `canceled`, `empty`, and `completed` are run-anchored and must'
+  'preserve request identity, source identity, candidate identity, run identity, run lifecycle state,'
+  'and the authoritative terminal timestamp for that run.'
+  "If the shell lacks the authoritative source, request, candidate, or run anchor needed for one of"
+  "these terminal states, it must stay blocked and surface the missing trusted prerequisite instead of"
+  "guessing a terminal presentation from partial metadata."
   "Minimum result fields:"
   "run identity"
   "result state"
