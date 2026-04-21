@@ -93,6 +93,42 @@ class SourceEntitlementTestCase(unittest.TestCase):
         ):
             ensure_subject_is_entitled_for_source(subject, source, contract)
 
+    def test_subject_matching_only_security_review_binding_is_denied(self) -> None:
+        source = _registered_source(source_id="sap-approved-spend")
+        contract = _dataset_contract(
+            registered_source_id=source.id,
+            owner_binding="group:finance-approvers",
+            security_review_binding="group:security-reviewers",
+        )
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:security-reviewers"}),
+        )
+
+        with self.assertRaisesRegex(
+            SourceEntitlementError,
+            "is not entitled to use registered source 'sap-approved-spend'",
+        ):
+            ensure_subject_is_entitled_for_source(subject, source, contract)
+
+    def test_subject_matching_only_exception_policy_binding_is_denied(self) -> None:
+        source = _registered_source(source_id="sap-approved-spend")
+        contract = _dataset_contract(
+            registered_source_id=source.id,
+            owner_binding="group:finance-approvers",
+            exception_policy_binding="group:exception-approvers",
+        )
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:exception-approvers"}),
+        )
+
+        with self.assertRaisesRegex(
+            SourceEntitlementError,
+            "is not entitled to use registered source 'sap-approved-spend'",
+        ):
+            ensure_subject_is_entitled_for_source(subject, source, contract)
+
     def test_non_executable_source_posture_is_rejected_before_entitlement_allow(self) -> None:
         source = _registered_source(
             source_id="legacy-finance-archive",
