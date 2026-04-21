@@ -14,7 +14,7 @@ from app.db.base import Base
 class RegisteredSource(Base):
     __tablename__ = "registered_sources"
     __table_args__ = (
-        UniqueConstraint("source_identity"),
+        UniqueConstraint("source_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -22,7 +22,8 @@ class RegisteredSource(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    source_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_label: Mapped[str] = mapped_column(String(255), nullable=False)
     source_family: Mapped[str] = mapped_column(String(64), nullable=False)
     source_flavor: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     activation_posture: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -41,6 +42,14 @@ class RegisteredSource(Base):
     schema_snapshot_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         SqlAlchemyUuid,
         nullable=True,
+    )
+    execution_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        SqlAlchemyUuid,
+        nullable=True,
+    )
+    connection_reference: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
