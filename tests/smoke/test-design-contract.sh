@@ -29,6 +29,7 @@ required_literal_patterns=(
   "The left rail history is persistent workflow memory, not a transcript surface."
   "Source identity must stay visible in the frame or support surfaces across every workflow state."
   "Execute or run actions must stay unavailable until the operator is reviewing a trusted preview state backed by the server-owned candidate record."
+  "Attachments are out of scope for the UX-1 MVP. Do not present live upload, drag-and-drop intake, or an implied attachment pipeline in the shell until a later governed issue set defines that workflow."
 )
 
 for pattern in "${required_regex_patterns[@]}"; do
