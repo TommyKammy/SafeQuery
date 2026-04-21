@@ -302,6 +302,91 @@ To work against a different source after history reopen, the operator must expli
 
 The UI must not silently switch sources after preview, approval, execution, or history reopen.
 
+## Panel Data Contracts
+
+The panel contracts below define UI-facing review surfaces, not transport payload formats.
+
+They exist to keep question input, candidate preview, guard posture, and execution output separate even when later issues add real backend wiring.
+
+### Preview panel contract
+
+The preview panel renders one server-owned candidate review surface and must never be treated as editable execute input.
+
+It is the operator-facing view of the canonical SQL candidate that became authoritative after generation, canonicalization, bounded rewrite if any, and candidate persistence.
+
+Minimum preview fields:
+
+- candidate identity
+- request identity or direct request lineage reference
+- source identity bound to the candidate
+- canonical SQL preview text
+- SQL hash or equivalent review anchor
+- preview state
+- approval or expiry posture when execution eligibility exists
+- generated or previewed timestamp from the authoritative candidate lifecycle
+
+Presentation and state rules:
+
+- The preview panel must show read-only canonical SQL and preserve line structure suitable for human review.
+- The preview panel must not display question text as if it were SQL, and must not blur draft input with candidate output.
+- If the shell supports multiple candidates over time, the panel must make the selected candidate identity explicit instead of showing a floating SQL blob with inferred lineage.
+- If candidate identity, bound source, canonical SQL text, or review anchor is missing or untrusted, the preview panel must stay blocked rather than presenting a partial preview as review-ready.
+- Preview state must distinguish at least pending generation, preview ready, blocked, expired, invalidated, and stale or superseded candidate conditions when those conditions exist.
+- Preview metadata must stay bound to the selected candidate and must not be recomputed from later run summaries or sibling candidate records.
+
+### Guard panel contract
+
+The guard panel renders the authoritative execution posture for the selected candidate and must stay fail-closed when trusted guard signals are missing, malformed, or stale.
+
+The guard surface is separate from the SQL preview even when both are visible together. Guard review answers whether SafeQuery allows the candidate to proceed, not what the SQL text says in the abstract.
+
+Minimum guard fields:
+
+- candidate identity
+- source identity
+- guard decision
+- guard state
+- guard code list or deny identifiers
+- concise rationale or review summary
+- execution eligibility posture
+- guard version or policy version anchor when available
+- guard evaluated timestamp or equivalent lifecycle anchor
+
+Presentation and state rules:
+
+- The guard panel must make allow, blocked, expired, invalidated, and requires-revalidation postures visually distinct without implying that allow means execution already happened.
+- Guard rationale must remain attached to the selected candidate rather than generalized across sibling candidates, request history, or later runs.
+- When guard review is still pending, the panel must show a non-success pending state and keep execution controls unavailable.
+- Missing guard decisions, placeholder codes, or incomplete backend trust signals must be treated as blocked posture, not downgraded to advisory success.
+- The panel must distinguish authoritative deny codes from operator-facing explanatory copy so later implementations can map policy detail without changing the UI contract.
+
+### Result panel contract
+
+The result panel renders only execution-backed output for a specific run record and must not be used for speculative preview data, advisory text, or guard rationale.
+
+Result review begins only after an authoritative run exists. The result panel is therefore anchored to run identity first and to candidate identity second.
+
+Minimum result fields:
+
+- run identity
+- executed candidate identity
+- request identity or direct request lineage reference
+- source identity for the executed scope
+- result state
+- execution timestamp or terminal lifecycle timestamp
+- row or empty-result summary
+- bounded result payload or bounded result schema summary
+- execution metadata needed for review, such as duration, truncation, timeout, or error posture
+
+Presentation and state rules:
+
+- The result panel must clearly separate executed rows, explicit empty results, blocked-before-execution outcomes, and execution failures.
+- Result presentation must preserve the reviewed source identity, candidate identity, and run identity so the operator can see exactly what produced the output.
+- Advisory text, future analyst guidance, and source-description context may appear nearby, but they must not be rendered as if they were executed result rows.
+- If the result payload is unavailable but the run record exists, the panel should show the authoritative run state and missing payload posture instead of inventing placeholder data.
+- If preview identity, guard posture, or execution anchors belong to a different source binding or candidate lineage, the panel must reject the mixed snapshot instead of stitching together a seemingly complete review.
+- Empty results must keep the same contract shape as populated results so revisit, export, and audit behavior can remain bound to one run record.
+
 ## Primary Workflow
 
 The canonical operator path is:
