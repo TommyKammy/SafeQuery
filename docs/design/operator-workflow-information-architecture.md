@@ -71,6 +71,123 @@ size. Typical support content includes:
 - execution eligibility or preview metadata
 - audit anchors, timestamps, and future operator guidance
 
+## History Information Model
+
+History entities are authoritative workflow records, not transcript messages.
+
+The shell history model uses three distinct row types so operators can navigate prior work without
+reducing everything to a generic session list.
+
+### Request record
+
+A request record represents one natural-language question submission and its request-scoped operator
+intent.
+
+Visible request metadata should include:
+
+- request label with a short natural-language summary
+- source identity at the time the request was made
+- lifecycle state for the request, such as drafting, previewed, blocked, or superseded
+- recency label derived from the authoritative request timestamp
+- whether the request has later candidate or run descendants
+
+The request row is the operator's entry point for reopening or revising prior work.
+
+### Candidate record
+
+A candidate record represents one server-owned SQL preview artifact linked directly to a single
+request.
+
+Visible candidate metadata should include:
+
+- candidate label that makes preview identity explicit
+- source identity bound to the candidate
+- lifecycle state such as preview ready, blocked, expired, invalidated, or approved for execution
+- guard posture and review anchor details, including candidate identity and SQL hash or equivalent
+- recency label derived from the authoritative candidate timestamp
+
+Candidate rows must stay distinct from request rows because multiple candidates may exist for one
+request over time.
+
+### Run record
+
+A run record represents one attempted or completed execution of a specific candidate.
+
+Visible run metadata should include:
+
+- run label that distinguishes execution history from preview history
+- source identity for the executed or attempted scope
+- lifecycle state such as executing, succeeded, empty, denied, or failed
+- result posture, for example rows returned, no rows, blocked before execution, or execution error
+- recency label derived from the authoritative run timestamp
+
+Run rows must never be inferred from transcript ordering alone. They are separate execution facts
+anchored to an authoritative run record.
+
+### Labels and Ordering
+
+History labels should distinguish request, candidate, and run rows instead of flattening them into one generic session label.
+
+Default history ordering is newest-first by the authoritative record timestamp for each row type.
+
+When the shell groups related rows, the request is the parent anchor and linked candidate and run
+records appear only from explicit authoritative relationships. Do not infer lineage from proximity,
+display order, or similar wording alone.
+
+If derived badges or summary text drift from the authoritative lifecycle record, the shell should
+recalculate the surface from the authoritative request, candidate, or run state instead of
+redefining the outcome around the stale summary.
+
+### Left Rail Visibility
+
+The left rail should show enough metadata for safe navigation without expanding into a full detail
+pane.
+
+Every visible history row should expose:
+
+- row type label: Request, Candidate, or Run
+- concise title or summary
+- source identity
+- lifecycle state
+- recency label
+
+The selected row may also expose a compact secondary line for guard posture, run outcome, or reopen
+availability, but it should still read as navigation memory rather than full detail content.
+
+### Supporting Detail Surfaces
+
+When a history row is selected, supporting detail surfaces should reveal the anchored metadata for
+that exact record and only its directly linked context.
+
+Supporting details should include:
+
+- authoritative record identifier for the selected request, candidate, or run
+- source identity and source status
+- lifecycle state and the timestamp that established that state
+- direct parent or child links, such as request to candidate or candidate to run
+- review or execution-specific metadata, such as SQL hash, guard status, or run outcome
+
+Supporting surfaces should not generalize evidence or recommendations from one candidate or run to
+its siblings unless the system has an explicit authoritative link that says the broader context
+applies.
+
+### Reopen Behavior
+
+A request can reopen into a new active draft while preserving prior candidates and runs as immutable history.
+
+Reopen means:
+
+- the operator starts a new active request derived from the prior request intent
+- prior candidate and run records remain closed historical facts and do not mutate into the new
+  draft
+- the reopened draft links back to the request it came from so the operator can compare lineage
+- any later preview creates a new candidate record rather than reusing or editing a previous
+  candidate in place
+- any later execution creates a new run record tied to the newly selected candidate
+
+Reopen must therefore create a new active workflow record, not resurrect an old candidate or treat
+result history as if it were the current draft.
+
 ## Source Visibility
 
 Source visibility is a first-class shell concern, not a secondary detail inside result content.
