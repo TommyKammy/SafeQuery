@@ -11,6 +11,15 @@ The operator shell is workflow-first, not transcript-first.
 This document defines the product shell and screen contract only. It does not introduce backend
 integration, real execution behavior, or production-complete interaction details.
 
+## Visual Contract Alignment
+
+[DESIGN.md](../../DESIGN.md) is the visual contract for this shell.
+
+- Use `DESIGN.md` for surface hierarchy, spacing rhythm, typography, tone, and component posture.
+- Use this document for workflow regions, state transitions, and what must stay visible together.
+- If a future change alters both information architecture and visual treatment, update both documents
+  intentionally so the workflow-first shell stays coherent.
+
 ## Workflow Principles
 
 - Center the screen on the governed query workflow rather than a chat transcript.
@@ -75,6 +84,10 @@ The operator must be able to identify:
 Source identity should remain visible across the workflow so the operator does not lose scope when
 moving from composition to preview to results.
 
+Source identity should appear in a stable, repeated location such as the frame header, a pinned
+support panel, or both. It must not disappear when the main work surface switches from composition
+to preview or results.
+
 ## Primary Workflow
 
 The canonical operator path is:
@@ -105,6 +118,8 @@ conversation.
 - Main work surface switches from composition to SQL preview.
 - Support surfaces show Guard review, source details, and the preview contract metadata needed for
   later execution.
+- Preview metadata should include the server-owned candidate identity, SQL hash or equivalent review
+  anchor, and approval or expiry context when those fields exist.
 
 ### Guarded or blocked state
 
@@ -112,6 +127,8 @@ conversation.
   into a generic error conversation.
 - Support surfaces explain why execution remains closed and what prerequisite or policy caused the
   block.
+- If required review metadata or trusted backend signals are missing, the shell should stay blocked
+  rather than implying that execution can proceed.
 - Left rail history keeps the failed attempt as a workflow item so the operator can revise or
   compare without losing continuity.
 
@@ -121,6 +138,8 @@ conversation.
   outcomes.
 - Support surfaces keep the reviewed SQL, guard posture, source context, and execution metadata
   visible.
+- Result presentation should distinguish executed result-backed evidence from advisory notes,
+  source-description context, or future analyst-style guidance.
 - Left rail history keeps the item available for revisit and comparison with later runs.
 
 ## Transition Rules
