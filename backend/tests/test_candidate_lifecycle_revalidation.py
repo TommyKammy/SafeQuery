@@ -177,6 +177,26 @@ def test_revalidate_candidate_lifecycle_rejects_invalidated_candidate() -> None:
     assert exc_info.value.deny_code == "DENY_CANDIDATE_INVALIDATED"
 
 
+def test_revalidate_candidate_lifecycle_allows_future_dated_invalidation() -> None:
+    as_of = datetime.now(timezone.utc)
+
+    with _session_scope() as session:
+        _seed_source(session, source_id="sap-approved-spend")
+
+        result = revalidate_candidate_lifecycle(
+            candidate=_candidate(invalidated_at=as_of + timedelta(minutes=1)),
+            authenticated_subject=AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            session=session,
+            as_of=as_of,
+        )
+
+    assert result.source_id == "sap-approved-spend"
+    assert result.state == "execution_eligible"
+
+
 def test_revalidate_candidate_lifecycle_rejects_entitlement_drift_on_bound_source() -> None:
     with _session_scope() as session:
         _seed_source(session, source_id="sap-approved-spend")

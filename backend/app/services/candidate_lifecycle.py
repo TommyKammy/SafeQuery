@@ -110,14 +110,18 @@ def revalidate_candidate_lifecycle(
         )
 
     if candidate.invalidated_at is not None:
-        _require_aware_datetime(candidate.invalidated_at, field_name="invalidated_at")
-        _raise_revalidation_error(
-            deny_code="DENY_CANDIDATE_INVALIDATED",
-            message=(
-                f"Candidate for source '{candidate.source.source_id}' was invalidated "
-                "before lifecycle revalidation completed."
-            ),
+        invalidated_at = _require_aware_datetime(
+            candidate.invalidated_at,
+            field_name="invalidated_at",
         )
+        if invalidated_at <= effective_as_of:
+            _raise_revalidation_error(
+                deny_code="DENY_CANDIDATE_INVALIDATED",
+                message=(
+                    f"Candidate for source '{candidate.source.source_id}' was invalidated "
+                    "before lifecycle revalidation completed."
+                ),
+            )
 
     try:
         source, dataset_contract, schema_snapshot = resolve_authoritative_source_governance(
