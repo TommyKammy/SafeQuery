@@ -329,15 +329,6 @@ def evaluate_mssql_sql_guard(
         )
 
     canonical_sql = request.canonical_sql
-    if not _MSSQL_QUERY_START.search(canonical_sql):
-        return _reject_sql_guard(
-            profile="mssql",
-            canonical_sql=canonical_sql,
-            source=request.source,
-            code="DENY_UNSUPPORTED_SQL_SYNTAX",
-            detail="Canonical SQL must start with a supported SELECT query shape.",
-        )
-
     if _MSSQL_MULTI_STATEMENT_SEPARATOR.search(canonical_sql):
         return _reject_sql_guard(
             profile="mssql",
@@ -364,6 +355,15 @@ def evaluate_mssql_sql_guard(
             source=request.source,
             code="DENY_CROSS_DATABASE",
             detail="Cross-database references are not allowed in the MSSQL guard profile.",
+        )
+
+    if not _MSSQL_QUERY_START.search(canonical_sql):
+        return _reject_sql_guard(
+            profile="mssql",
+            canonical_sql=canonical_sql,
+            source=request.source,
+            code="DENY_UNSUPPORTED_SQL_SYNTAX",
+            detail="Canonical SQL must start with a supported SELECT query shape.",
         )
 
     return SQLGuardEvaluation(
@@ -402,15 +402,6 @@ def evaluate_postgresql_sql_guard(
         )
 
     canonical_sql = request.canonical_sql
-    if not _POSTGRESQL_QUERY_START.search(canonical_sql):
-        return _reject_sql_guard(
-            profile="postgresql",
-            canonical_sql=canonical_sql,
-            source=request.source,
-            code="DENY_UNSUPPORTED_SQL_SYNTAX",
-            detail="Canonical SQL must start with a supported SELECT query shape.",
-        )
-
     if _POSTGRESQL_MULTI_STATEMENT_SEPARATOR.search(canonical_sql):
         return _reject_sql_guard(
             profile="postgresql",
@@ -451,6 +442,15 @@ def evaluate_postgresql_sql_guard(
             source=request.source,
             code="DENY_CROSS_DATABASE",
             detail="Cross-database references are not allowed in the PostgreSQL guard profile.",
+        )
+
+    if not _POSTGRESQL_QUERY_START.search(canonical_sql):
+        return _reject_sql_guard(
+            profile="postgresql",
+            canonical_sql=canonical_sql,
+            source=request.source,
+            code="DENY_UNSUPPORTED_SQL_SYNTAX",
+            detail="Canonical SQL must start with a supported SELECT query shape.",
         )
 
     return SQLGuardEvaluation(
