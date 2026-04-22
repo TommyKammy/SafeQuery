@@ -21,6 +21,7 @@ from app.services.candidate_lifecycle import (
     SourceBoundCandidateMetadata,
     revalidate_candidate_lifecycle,
 )
+from app.services.source_entitlements import SourceEntitlementError
 
 
 @contextmanager
@@ -235,6 +236,45 @@ def test_revalidate_candidate_lifecycle_rejects_non_executable_bound_source() ->
             source_id="sap-approved-spend",
             activation_posture=SourceActivationPosture.PAUSED,
         )
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="DENY_POLICY_VERSION_STALE",
+        ) as exc_info:
+            revalidate_candidate_lifecycle(
+                candidate=_candidate(),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                as_of=datetime.now(timezone.utc),
+            )
+
+    assert exc_info.value.deny_code == "DENY_POLICY_VERSION_STALE"
+
+
+def test_revalidate_candidate_lifecycle_classifies_wrapped_value_error_as_stale_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_wrapped_value_error(
+        authenticated_subject: AuthenticatedSubject,
+        source: object,
+        dataset_contract: object,
+    ) -> object:
+        del authenticated_subject, source, dataset_contract
+        try:
+            raise ValueError("Registered source posture metadata is invalid.")
+        except ValueError as exc:
+            raise SourceEntitlementError(str(exc)) from exc
+
+    monkeypatch.setattr(
+        "app.services.candidate_lifecycle.ensure_subject_is_entitled_for_source",
+        _raise_wrapped_value_error,
+    )
+
+    with _session_scope() as session:
+        _seed_source(session, source_id="sap-approved-spend")
 
         with pytest.raises(
             CandidateLifecycleRevalidationError,

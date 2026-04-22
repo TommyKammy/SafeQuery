@@ -171,9 +171,10 @@ def revalidate_candidate_lifecycle(
         )
     except SourceEntitlementError as exc:
         message = str(exc)
+        cause = exc.__cause__
         deny_code = (
             "DENY_POLICY_VERSION_STALE"
-            if isinstance(exc.__cause__, SourceRegistryPostureError)
+            if isinstance(cause, (SourceRegistryPostureError, ValueError))
             else "DENY_ENTITLEMENT_CHANGED"
         )
         _raise_revalidation_error(
