@@ -69,12 +69,15 @@ def test_sql_generation_adapter_request_rejects_credentials_and_unbounded_contex
             }
         )
     except ValidationError as exc:
-        error_fields = {error["loc"][0] for error in exc.errors()}
+        field_error_types = {
+            (error["loc"][0], error["type"])
+            for error in exc.errors()
+        }
     else:
         raise AssertionError("Expected validation to fail for forbidden adapter fields.")
 
-    assert error_fields == {
-        "credentials",
-        "execution_authority",
-        "raw_schema_inventory",
+    assert field_error_types == {
+        ("credentials", "extra_forbidden"),
+        ("execution_authority", "extra_forbidden"),
+        ("raw_schema_inventory", "extra_forbidden"),
     }
