@@ -7,6 +7,14 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.features.auth.context import AuthenticatedSubject
+from app.features.guard.deny_taxonomy import (
+    DENY_APPROVAL_EXPIRED,
+    DENY_CANDIDATE_INVALIDATED,
+    DENY_ENTITLEMENT_CHANGED,
+    DENY_POLICY_VERSION_STALE,
+    DENY_SOURCE_BINDING_MISMATCH,
+    DENY_SUBJECT_MISMATCH,
+)
 from app.services.source_entitlements import (
     SourceEntitlementError,
     ensure_subject_is_entitled_for_source,
@@ -54,7 +62,7 @@ class CandidateLifecycleRevalidationError(PermissionError):
 def _require_aware_datetime(value: datetime, *, field_name: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise CandidateLifecycleRevalidationError(
-            deny_code="DENY_POLICY_VERSION_STALE",
+            deny_code=DENY_POLICY_VERSION_STALE,
             message=f"Candidate {field_name} must be timezone-aware.",
         )
     return value
@@ -83,7 +91,7 @@ def revalidate_candidate_lifecycle(
 
     if selected_source_id is not None and selected_source_id != candidate.source.source_id:
         _raise_revalidation_error(
-            deny_code="DENY_ENTITLEMENT_CHANGED",
+            deny_code=DENY_SOURCE_BINDING_MISMATCH,
             message=(
                 "Candidate source binding does not match the selected source. "
                 f"Expected '{candidate.source.source_id}' and received '{selected_source_id}'."
@@ -93,7 +101,7 @@ def revalidate_candidate_lifecycle(
     normalized_subject_id = authenticated_subject.normalized_subject_id()
     if normalized_subject_id != candidate.owner_subject_id.strip():
         _raise_revalidation_error(
-            deny_code="DENY_CANDIDATE_OWNER_MISMATCH",
+            deny_code=DENY_SUBJECT_MISMATCH,
             message=(
                 f"Candidate owner '{candidate.owner_subject_id}' does not match "
                 f"authenticated subject '{normalized_subject_id}'."
@@ -102,7 +110,7 @@ def revalidate_candidate_lifecycle(
 
     if approval_expires_at <= effective_as_of:
         _raise_revalidation_error(
-            deny_code="DENY_APPROVAL_EXPIRED",
+            deny_code=DENY_APPROVAL_EXPIRED,
             message=(
                 f"Candidate approval for source '{candidate.source.source_id}' expired "
                 "before lifecycle revalidation completed."
@@ -116,7 +124,7 @@ def revalidate_candidate_lifecycle(
         )
         if invalidated_at <= effective_as_of:
             _raise_revalidation_error(
-                deny_code="DENY_CANDIDATE_INVALIDATED",
+                deny_code=DENY_CANDIDATE_INVALIDATED,
                 message=(
                     f"Candidate for source '{candidate.source.source_id}' was invalidated "
                     "before lifecycle revalidation completed."
@@ -130,13 +138,13 @@ def revalidate_candidate_lifecycle(
         )
     except SourceGovernanceResolutionError as exc:
         _raise_revalidation_error(
-            deny_code="DENY_POLICY_VERSION_STALE",
+            deny_code=DENY_POLICY_VERSION_STALE,
             message=str(exc),
         )
 
     if source.source_family != candidate.source.source_family:
         _raise_revalidation_error(
-            deny_code="DENY_POLICY_VERSION_STALE",
+            deny_code=DENY_POLICY_VERSION_STALE,
             message=(
                 f"Candidate source family '{candidate.source.source_family}' no longer "
                 f"matches authoritative source '{source.source_family}'."
@@ -144,7 +152,7 @@ def revalidate_candidate_lifecycle(
         )
     if source.source_flavor != candidate.source.source_flavor:
         _raise_revalidation_error(
-            deny_code="DENY_POLICY_VERSION_STALE",
+            deny_code=DENY_POLICY_VERSION_STALE,
             message=(
                 f"Candidate source flavor '{candidate.source.source_flavor}' no longer "
                 "matches the authoritative source posture."
@@ -152,7 +160,7 @@ def revalidate_candidate_lifecycle(
         )
     if dataset_contract.contract_version != candidate.source.dataset_contract_version:
         _raise_revalidation_error(
-            deny_code="DENY_POLICY_VERSION_STALE",
+            deny_code=DENY_POLICY_VERSION_STALE,
             message=(
                 "Candidate dataset contract version is stale against the "
                 "authoritative source-scoped governance record."
@@ -160,7 +168,7 @@ def revalidate_candidate_lifecycle(
         )
     if schema_snapshot.snapshot_version != candidate.source.schema_snapshot_version:
         _raise_revalidation_error(
-            deny_code="DENY_POLICY_VERSION_STALE",
+            deny_code=DENY_POLICY_VERSION_STALE,
             message=(
                 "Candidate schema snapshot version is stale against the "
                 "authoritative source-scoped governance record."
@@ -177,9 +185,9 @@ def revalidate_candidate_lifecycle(
         message = str(exc)
         cause = exc.__cause__
         deny_code = (
-            "DENY_POLICY_VERSION_STALE"
+            DENY_POLICY_VERSION_STALE
             if isinstance(cause, (SourceRegistryPostureError, ValueError))
-            else "DENY_ENTITLEMENT_CHANGED"
+            else DENY_ENTITLEMENT_CHANGED
         )
         _raise_revalidation_error(
             deny_code=deny_code,
