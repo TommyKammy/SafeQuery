@@ -42,7 +42,10 @@ def _seed_source_governance(
     *,
     source_id: str,
     owner_binding: str = "group:finance-analysts",
+    snapshot_status: SchemaSnapshotReviewStatus = SchemaSnapshotReviewStatus.APPROVED,
     link_active_contract: bool = True,
+    link_active_snapshot: bool = True,
+    link_contract_snapshot: bool = True,
 ) -> RegisteredSource:
     source = RegisteredSource(
         id=uuid4(),
@@ -65,16 +68,28 @@ def _seed_source_governance(
         id=uuid4(),
         registered_source_id=source.id,
         snapshot_version=1,
-        review_status=SchemaSnapshotReviewStatus.APPROVED,
+        review_status=snapshot_status,
         reviewed_at=datetime.now(timezone.utc),
     )
     session.add(snapshot)
     session.flush()
 
+    drift_snapshot = None
+    if not link_contract_snapshot:
+        drift_snapshot = SchemaSnapshot(
+            id=uuid4(),
+            registered_source_id=source.id,
+            snapshot_version=2,
+            review_status=SchemaSnapshotReviewStatus.APPROVED,
+            reviewed_at=datetime.now(timezone.utc),
+        )
+        session.add(drift_snapshot)
+        session.flush()
+
     contract = DatasetContract(
         id=uuid4(),
         registered_source_id=source.id,
-        schema_snapshot_id=snapshot.id,
+        schema_snapshot_id=snapshot.id if link_contract_snapshot else drift_snapshot.id,
         contract_version=1,
         display_name=f"{source_id} contract",
         owner_binding=owner_binding,
@@ -105,7 +120,8 @@ def _seed_source_governance(
 
     if link_active_contract:
         source.dataset_contract_id = contract.id
-    source.schema_snapshot_id = snapshot.id
+    if link_active_snapshot:
+        source.schema_snapshot_id = snapshot.id
 
     session.commit()
     session.refresh(source)
@@ -179,6 +195,59 @@ def test_prepare_generation_context_rejects_missing_active_contract_linkage() ->
         with pytest.raises(
             GenerationContextPreparationError,
             match=r"Registered source 'sap-approved-spend' has no active dataset contract\.",
+        ):
+            prepare_generation_context(
+                request_id="req_preview_80",
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+            )
+
+
+def test_prepare_generation_context_rejects_non_approved_schema_snapshot() -> None:
+    with _session_scope() as session:
+        _seed_source_governance(
+            session,
+            source_id="sap-approved-spend",
+            snapshot_status=SchemaSnapshotReviewStatus.PENDING,
+        )
+
+        with pytest.raises(
+            GenerationContextPreparationError,
+            match=(
+                r"Registered source 'sap-approved-spend' requires an approved schema snapshot\."
+            ),
+        ):
+            prepare_generation_context(
+                request_id="req_preview_80",
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+            )
+
+
+def test_prepare_generation_context_rejects_contract_snapshot_drift() -> None:
+    with _session_scope() as session:
+        _seed_source_governance(
+            session,
+            source_id="sap-approved-spend",
+            link_contract_snapshot=False,
+        )
+
+        with pytest.raises(
+            GenerationContextPreparationError,
+            match=(
+                r"Registered source 'sap-approved-spend' is missing "
+                r"authoritative source-scoped governance artifacts\."
+            ),
         ):
             prepare_generation_context(
                 request_id="req_preview_80",
