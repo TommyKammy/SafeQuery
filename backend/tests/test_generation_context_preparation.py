@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -24,7 +25,7 @@ from app.services.generation_context import (
 
 
 @contextmanager
-def _session_scope() -> Session:
+def _session_scope() -> Iterator[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
