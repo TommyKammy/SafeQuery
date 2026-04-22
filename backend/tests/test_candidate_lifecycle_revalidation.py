@@ -328,7 +328,7 @@ def test_revalidate_candidate_lifecycle_does_not_switch_to_another_source() -> N
 
         with pytest.raises(
             CandidateLifecycleRevalidationError,
-            match="DENY_ENTITLEMENT_CHANGED",
+            match="DENY_SOURCE_BINDING_MISMATCH",
         ) as exc_info:
             revalidate_candidate_lifecycle(
                 candidate=_candidate(source_id="sap-approved-spend"),
@@ -343,4 +343,4 @@ def test_revalidate_candidate_lifecycle_does_not_switch_to_another_source() -> N
                 selected_source_id="marketing-approved-spend",
             )
 
-    assert exc_info.value.deny_code == "DENY_ENTITLEMENT_CHANGED"
+    assert exc_info.value.deny_code == "DENY_SOURCE_BINDING_MISMATCH"

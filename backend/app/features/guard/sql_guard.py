@@ -6,6 +6,21 @@ from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 from typing_extensions import Annotated
 
+from app.features.guard.deny_taxonomy import (
+    DENY_CROSS_DATABASE,
+    DENY_DISALLOWED_HINT,
+    DENY_DYNAMIC_SQL,
+    DENY_EXTERNAL_DATA_ACCESS,
+    DENY_LINKED_SERVER,
+    DENY_MULTI_STATEMENT,
+    DENY_PROCEDURE_EXECUTION,
+    DENY_RESOURCE_ABUSE,
+    DENY_SYSTEM_CATALOG_ACCESS,
+    DENY_TEMP_OBJECT,
+    DENY_UNSUPPORTED_SQL_SYNTAX,
+    DENY_WRITE_OPERATION,
+)
+
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -75,32 +90,32 @@ class MSSQLGuardRule(BaseModel):
 
 _MSSQL_DENY_RULES: tuple[MSSQLGuardRule, ...] = (
     MSSQLGuardRule(
-        code="DENY_RESOURCE_ABUSE",
+        code=DENY_RESOURCE_ABUSE,
         detail="WAITFOR is not allowed in the MSSQL guard profile.",
         pattern=r"\bWAITFOR\b",
     ),
     MSSQLGuardRule(
-        code="DENY_EXTERNAL_DATA_ACCESS",
+        code=DENY_EXTERNAL_DATA_ACCESS,
         detail="External data access is not allowed in the MSSQL guard profile.",
         pattern=r"\bOPENQUERY\b|\bOPENROWSET\b|\bOPENDATASOURCE\b",
     ),
     MSSQLGuardRule(
-        code="DENY_LINKED_SERVER",
+        code=DENY_LINKED_SERVER,
         detail="Linked-server references are not allowed in the MSSQL guard profile.",
         pattern=r"\[[^\]]+\]\.\[[^\]]+\]\.\[[^\]]+\]\.\[[^\]]+\]",
     ),
     MSSQLGuardRule(
-        code="DENY_DYNAMIC_SQL",
+        code=DENY_DYNAMIC_SQL,
         detail="Dynamic SQL execution is not allowed in the MSSQL guard profile.",
         pattern=r"\bsp_executesql\b|\bEXEC(?:UTE)?\s*\(",
     ),
     MSSQLGuardRule(
-        code="DENY_PROCEDURE_EXECUTION",
+        code=DENY_PROCEDURE_EXECUTION,
         detail="Stored procedure execution is not allowed in the MSSQL guard profile.",
         pattern=r"^\s*EXEC(?:UTE)?\b",
     ),
     MSSQLGuardRule(
-        code="DENY_WRITE_OPERATION",
+        code=DENY_WRITE_OPERATION,
         detail="Write operations are not allowed in the MSSQL guard profile.",
         pattern=(
             r"\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bMERGE\b|\bTRUNCATE\b|"
@@ -108,12 +123,12 @@ _MSSQL_DENY_RULES: tuple[MSSQLGuardRule, ...] = (
         ),
     ),
     MSSQLGuardRule(
-        code="DENY_TEMP_OBJECT",
+        code=DENY_TEMP_OBJECT,
         detail="Temporary object creation or mutation is not allowed in the MSSQL guard profile.",
         pattern=r"#\w+|\bINTO\s+#\w+",
     ),
     MSSQLGuardRule(
-        code="DENY_DISALLOWED_HINT",
+        code=DENY_DISALLOWED_HINT,
         detail="Query hints are not allowed in the MSSQL guard profile.",
         pattern=r"\bOPTION\s*\(",
     ),
@@ -130,7 +145,7 @@ _MSSQL_MULTI_STATEMENT_SEPARATOR = re.compile(
 )
 _POSTGRESQL_DENY_RULES: tuple[MSSQLGuardRule, ...] = (
     MSSQLGuardRule(
-        code="DENY_WRITE_OPERATION",
+        code=DENY_WRITE_OPERATION,
         detail="Write operations are not allowed in the PostgreSQL guard profile.",
         pattern=(
             r"\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bMERGE\b|\bTRUNCATE\b|"
@@ -138,22 +153,22 @@ _POSTGRESQL_DENY_RULES: tuple[MSSQLGuardRule, ...] = (
         ),
     ),
     MSSQLGuardRule(
-        code="DENY_PROCEDURE_EXECUTION",
+        code=DENY_PROCEDURE_EXECUTION,
         detail="Stored procedure execution is not allowed in the PostgreSQL guard profile.",
         pattern=r"^\s*CALL\b|\bDO\s+\$\$",
     ),
     MSSQLGuardRule(
-        code="DENY_DYNAMIC_SQL",
+        code=DENY_DYNAMIC_SQL,
         detail="Dynamic SQL execution is not allowed in the PostgreSQL guard profile.",
         pattern=r"\bEXECUTE\b",
     ),
     MSSQLGuardRule(
-        code="DENY_EXTERNAL_DATA_ACCESS",
+        code=DENY_EXTERNAL_DATA_ACCESS,
         detail="External data access is not allowed in the PostgreSQL guard profile.",
         pattern=r"\bCOPY\s+.+\b(?:FROM|TO)\b|\bdblink\s*\(|\bpostgres_fdw\b|\bfile_fdw\b",
     ),
     MSSQLGuardRule(
-        code="DENY_DISALLOWED_HINT",
+        code=DENY_DISALLOWED_HINT,
         detail="Query hints are not allowed in the PostgreSQL guard profile.",
         pattern=r"/\*\+",
     ),
@@ -334,7 +349,7 @@ def evaluate_mssql_sql_guard(
             profile="mssql",
             canonical_sql=canonical_sql,
             source=request.source,
-            code="DENY_MULTI_STATEMENT",
+            code=DENY_MULTI_STATEMENT,
             detail="Canonical SQL must contain exactly one SELECT statement.",
         )
 
@@ -353,7 +368,7 @@ def evaluate_mssql_sql_guard(
             profile="mssql",
             canonical_sql=canonical_sql,
             source=request.source,
-            code="DENY_CROSS_DATABASE",
+            code=DENY_CROSS_DATABASE,
             detail="Cross-database references are not allowed in the MSSQL guard profile.",
         )
 
@@ -362,7 +377,7 @@ def evaluate_mssql_sql_guard(
             profile="mssql",
             canonical_sql=canonical_sql,
             source=request.source,
-            code="DENY_UNSUPPORTED_SQL_SYNTAX",
+            code=DENY_UNSUPPORTED_SQL_SYNTAX,
             detail="Canonical SQL must start with a supported SELECT query shape.",
         )
 
@@ -407,7 +422,7 @@ def evaluate_postgresql_sql_guard(
             profile="postgresql",
             canonical_sql=canonical_sql,
             source=request.source,
-            code="DENY_MULTI_STATEMENT",
+            code=DENY_MULTI_STATEMENT,
             detail="Canonical SQL must contain exactly one SELECT statement.",
         )
 
@@ -428,7 +443,7 @@ def evaluate_postgresql_sql_guard(
             profile="postgresql",
             canonical_sql=canonical_sql,
             source=request.source,
-            code="DENY_SYSTEM_CATALOG_ACCESS",
+            code=DENY_SYSTEM_CATALOG_ACCESS,
             detail="System catalog access is not allowed in the PostgreSQL guard profile.",
         )
 
@@ -440,7 +455,7 @@ def evaluate_postgresql_sql_guard(
             profile="postgresql",
             canonical_sql=canonical_sql,
             source=request.source,
-            code="DENY_CROSS_DATABASE",
+            code=DENY_CROSS_DATABASE,
             detail="Cross-database references are not allowed in the PostgreSQL guard profile.",
         )
 
@@ -449,7 +464,7 @@ def evaluate_postgresql_sql_guard(
             profile="postgresql",
             canonical_sql=canonical_sql,
             source=request.source,
-            code="DENY_UNSUPPORTED_SQL_SYNTAX",
+            code=DENY_UNSUPPORTED_SQL_SYNTAX,
             detail="Canonical SQL must start with a supported SELECT query shape.",
         )
 
