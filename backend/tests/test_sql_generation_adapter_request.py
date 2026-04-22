@@ -17,10 +17,22 @@ def test_sql_generation_adapter_request_is_source_aware_and_single_source() -> N
             source_flavor="warehouse",
         ),
         context=SQLGenerationContextReferences(
-            dataset_contract_id="contract_finance_v1",
-            schema_snapshot_id="snapshot_finance_v3",
-            glossary_id="glossary_finance_v2",
-            policy_id="policy_generation_v1",
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+            glossary={
+                "context_id": "glossary_finance_v2",
+                "source_id": "sap-approved-spend",
+            },
+            policy={
+                "context_id": "policy_generation_v1",
+                "source_id": "sap-approved-spend",
+            },
         ),
     )
 
@@ -33,10 +45,22 @@ def test_sql_generation_adapter_request_is_source_aware_and_single_source() -> N
             "source_flavor": "warehouse",
         },
         "context": {
-            "dataset_contract_id": "contract_finance_v1",
-            "schema_snapshot_id": "snapshot_finance_v3",
-            "glossary_id": "glossary_finance_v2",
-            "policy_id": "policy_generation_v1",
+            "dataset_contract": {
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            "schema_snapshot": {
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+            "glossary": {
+                "context_id": "glossary_finance_v2",
+                "source_id": "sap-approved-spend",
+            },
+            "policy": {
+                "context_id": "policy_generation_v1",
+                "source_id": "sap-approved-spend",
+            },
         },
     }
 
@@ -52,8 +76,14 @@ def test_sql_generation_adapter_request_rejects_credentials_and_unbounded_contex
                     "source_family": "postgresql",
                 },
                 "context": {
-                    "dataset_contract_id": "contract_finance_v1",
-                    "schema_snapshot_id": "snapshot_finance_v3",
+                    "dataset_contract": {
+                        "context_id": "contract_finance_v1",
+                        "source_id": "sap-approved-spend",
+                    },
+                    "schema_snapshot": {
+                        "context_id": "snapshot_finance_v3",
+                        "source_id": "sap-approved-spend",
+                    },
                 },
                 "credentials": {
                     "username": "analyst",
