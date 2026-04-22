@@ -49,7 +49,7 @@ def _seed_authoritative_source_governance(session: Session) -> None:
     snapshot = SchemaSnapshot(
         id=uuid4(),
         registered_source_id=source.id,
-        snapshot_version=1,
+        snapshot_version=7,
         review_status=SchemaSnapshotReviewStatus.APPROVED,
         reviewed_at=datetime.now(timezone.utc),
     )
@@ -60,7 +60,7 @@ def _seed_authoritative_source_governance(session: Session) -> None:
         id=uuid4(),
         registered_source_id=source.id,
         schema_snapshot_id=snapshot.id,
-        contract_version=1,
+        contract_version=3,
         display_name="SAP spend cube contract",
         owner_binding="group:finance-analysts",
         security_review_binding=None,
@@ -74,7 +74,7 @@ def _seed_authoritative_source_governance(session: Session) -> None:
     session.commit()
 
 
-def test_preview_submission_binds_all_records_to_authoritative_source_id() -> None:
+def test_preview_candidate_carries_authoritative_source_metadata() -> None:
     with _session_scope() as session:
         _seed_authoritative_source_governance(session)
 
@@ -90,26 +90,11 @@ def test_preview_submission_binds_all_records_to_authoritative_source_id() -> No
             session,
         )
 
-    assert response.model_dump() == {
-        "request": {
-            "question": "Show approved vendors by quarterly spend",
-            "source_id": "sap-approved-spend",
-            "state": "submitted",
-        },
-        "candidate": {
-            "source_id": "sap-approved-spend",
-            "source_family": "postgresql",
-            "source_flavor": "warehouse",
-            "dataset_contract_version": 1,
-            "schema_snapshot_version": 1,
-            "state": "preview_ready",
-        },
-        "audit": {
-            "source_id": "sap-approved-spend",
-            "state": "recorded",
-        },
-        "evaluation": {
-            "source_id": "sap-approved-spend",
-            "state": "pending",
-        },
+    assert response.model_dump()["candidate"] == {
+        "source_id": "sap-approved-spend",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "dataset_contract_version": 3,
+        "schema_snapshot_version": 7,
+        "state": "preview_ready",
     }

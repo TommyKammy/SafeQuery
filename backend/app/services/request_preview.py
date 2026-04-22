@@ -1,8 +1,10 @@
 from pydantic import BaseModel, ConfigDict, StringConstraints
 from sqlalchemy.orm import Session
+from typing import Optional
 from typing_extensions import Annotated
 
 from app.db.models.dataset_contract import DatasetContract
+from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource
 from app.features.auth.context import AuthenticatedSubject
 from app.services.source_entitlements import (
@@ -33,6 +35,10 @@ class RequestRecord(BaseModel):
 
 class CandidateRecord(BaseModel):
     source_id: str
+    source_family: str
+    source_flavor: Optional[str]
+    dataset_contract_version: int
+    schema_snapshot_version: int
     state: str
 
 
@@ -61,16 +67,16 @@ def _resolve_authoritative_source_governance(
     session: Session,
     *,
     source_id: str,
-) -> tuple[RegisteredSource, DatasetContract]:
+) -> tuple[RegisteredSource, DatasetContract, SchemaSnapshot]:
     try:
-        source, dataset_contract, _ = resolve_authoritative_source_governance(
+        source, dataset_contract, schema_snapshot = resolve_authoritative_source_governance(
             session,
             source_id=source_id,
         )
     except SourceGovernanceResolutionError as exc:
         raise PreviewSubmissionContractError(str(exc)) from exc
 
-    return source, dataset_contract
+    return source, dataset_contract, schema_snapshot
 
 
 def submit_preview_request(
@@ -78,7 +84,7 @@ def submit_preview_request(
     authenticated_subject: AuthenticatedSubject,
     session: Session,
 ) -> PreviewSubmissionResponse:
-    source, dataset_contract = _resolve_authoritative_source_governance(
+    source, dataset_contract, schema_snapshot = _resolve_authoritative_source_governance(
         session,
         source_id=payload.source_id,
     )
@@ -100,6 +106,10 @@ def submit_preview_request(
         ),
         candidate=CandidateRecord(
             source_id=resolved_source.source_id,
+            source_family=resolved_source.source_family,
+            source_flavor=resolved_source.source_flavor,
+            dataset_contract_version=dataset_contract.contract_version,
+            schema_snapshot_version=schema_snapshot.snapshot_version,
             state="preview_ready",
         ),
         audit=AuditRecord(

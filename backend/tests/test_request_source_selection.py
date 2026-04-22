@@ -221,10 +221,17 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             security_review_binding=None,
             exception_policy_binding=None,
         )
+        malformed_snapshot = SchemaSnapshot(
+            id=malformed_source.schema_snapshot_id,
+            registered_source_id=source_id,
+            snapshot_version=1,
+            review_status=SchemaSnapshotReviewStatus.APPROVED,
+            reviewed_at=datetime.now(timezone.utc),
+        )
 
         with patch(
             "app.services.request_preview._resolve_authoritative_source_governance",
-            return_value=(malformed_source, malformed_contract),
+            return_value=(malformed_source, malformed_contract, malformed_snapshot),
         ):
             response = self.client.post(
                 "/requests/preview",
@@ -270,6 +277,10 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
                 },
                 "candidate": {
                     "source_id": "sap-approved-spend",
+                    "source_family": "postgresql",
+                    "source_flavor": "warehouse",
+                    "dataset_contract_version": 1,
+                    "schema_snapshot_version": 1,
                     "state": "preview_ready",
                 },
                 "audit": {
