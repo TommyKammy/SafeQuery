@@ -62,6 +62,45 @@ def test_mssql_sql_guard_rejects_multi_statement_input_fail_closed() -> None:
     }
 
 
+def test_mssql_sql_guard_rejects_go_batch_separator_fail_closed() -> None:
+    evaluation = evaluate_mssql_sql_guard(
+        {
+            "canonical_sql": (
+                "SELECT vendor_name FROM dbo.approved_vendor_spend\n"
+                "GO\n"
+                "SELECT @@VERSION"
+            ),
+            "source": {
+                "source_id": "business-mssql-source",
+                "source_family": "mssql",
+                "source_flavor": "sqlserver",
+            },
+        }
+    )
+
+    assert evaluation.model_dump() == {
+        "decision": "reject",
+        "profile": "mssql",
+        "canonical_sql": (
+            "SELECT vendor_name FROM dbo.approved_vendor_spend\n"
+            "GO\n"
+            "SELECT @@VERSION"
+        ),
+        "source": {
+            "source_id": "business-mssql-source",
+            "source_family": "mssql",
+            "source_flavor": "sqlserver",
+        },
+        "rejections": [
+            {
+                "code": "DENY_MULTI_STATEMENT",
+                "detail": "Canonical SQL must contain exactly one SELECT statement.",
+                "path": "canonical_sql",
+            }
+        ],
+    }
+
+
 def test_mssql_sql_guard_rejects_non_mssql_source_binding_fail_closed() -> None:
     evaluation = evaluate_mssql_sql_guard(
         {

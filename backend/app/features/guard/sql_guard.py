@@ -113,7 +113,10 @@ _MSSQL_CROSS_DATABASE = re.compile(
     r"(?:\[[^\]]+\]|\w+)\.(?:\[[^\]]+\]|\w+)\.(?:\[[^\]]+\]|\w+)",
     re.IGNORECASE,
 )
-_MSSQL_MULTI_STATEMENT_SEPARATOR = re.compile(r";\s*\S|^\s*GO\s*$", re.IGNORECASE)
+_MSSQL_MULTI_STATEMENT_SEPARATOR = re.compile(
+    r";\s*\S|^\s*GO\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _reject_sql_guard(
