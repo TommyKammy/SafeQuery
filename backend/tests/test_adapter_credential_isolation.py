@@ -41,10 +41,16 @@ def test_build_sql_generation_adapter_request_uses_only_adapter_safe_fields() ->
             "source_flavor": "warehouse",
         },
         "context": {
-            "dataset_contract_id": "contract_finance_v1",
-            "schema_snapshot_id": "snapshot_finance_v3",
-            "glossary_id": None,
-            "policy_id": None,
+            "dataset_contract": {
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            "schema_snapshot": {
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+            "glossary": None,
+            "policy": None,
         },
     }
     dumped = adapter_request.model_dump()
