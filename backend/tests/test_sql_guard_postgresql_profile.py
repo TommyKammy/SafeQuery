@@ -29,6 +29,37 @@ def test_postgresql_sql_guard_allows_source_bound_select_query() -> None:
     }
 
 
+def test_postgresql_sql_guard_allows_schema_table_column_projection() -> None:
+    evaluation = evaluate_postgresql_sql_guard(
+        {
+            "canonical_sql": (
+                "SELECT finance.approved_vendor_spend.vendor_name "
+                "FROM finance.approved_vendor_spend"
+            ),
+            "source": {
+                "source_id": "business-postgres-source",
+                "source_family": "postgresql",
+                "source_flavor": "warehouse",
+            },
+        }
+    )
+
+    assert evaluation.model_dump() == {
+        "decision": "allow",
+        "profile": "postgresql",
+        "canonical_sql": (
+            "SELECT finance.approved_vendor_spend.vendor_name "
+            "FROM finance.approved_vendor_spend"
+        ),
+        "source": {
+            "source_id": "business-postgres-source",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+        },
+        "rejections": [],
+    }
+
+
 def test_postgresql_sql_guard_rejects_write_operation_fail_closed() -> None:
     evaluation = evaluate_postgresql_sql_guard(
         {
@@ -62,6 +93,37 @@ def test_postgresql_sql_guard_rejects_write_operation_fail_closed() -> None:
             {
                 "code": "DENY_WRITE_OPERATION",
                 "detail": "Write operations are not allowed in the PostgreSQL guard profile.",
+                "path": "canonical_sql",
+            }
+        ],
+    }
+
+
+def test_postgresql_sql_guard_rejects_cross_database_relation_fail_closed() -> None:
+    evaluation = evaluate_postgresql_sql_guard(
+        {
+            "canonical_sql": "SELECT vendor_name FROM business.finance.approved_vendor_spend",
+            "source": {
+                "source_id": "business-postgres-source",
+                "source_family": "postgresql",
+                "source_flavor": "warehouse",
+            },
+        }
+    )
+
+    assert evaluation.model_dump() == {
+        "decision": "reject",
+        "profile": "postgresql",
+        "canonical_sql": "SELECT vendor_name FROM business.finance.approved_vendor_spend",
+        "source": {
+            "source_id": "business-postgres-source",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+        },
+        "rejections": [
+            {
+                "code": "DENY_CROSS_DATABASE",
+                "detail": "Cross-database references are not allowed in the PostgreSQL guard profile.",
                 "path": "canonical_sql",
             }
         ],

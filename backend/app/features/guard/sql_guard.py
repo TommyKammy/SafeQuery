@@ -166,8 +166,12 @@ _POSTGRESQL_DENY_RULES: tuple[MSSQLGuardRule, ...] = (
 
 _POSTGRESQL_QUERY_START = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
 _POSTGRESQL_MULTI_STATEMENT_SEPARATOR = re.compile(r";\s*\S", re.IGNORECASE)
-_POSTGRESQL_CROSS_DATABASE = re.compile(
-    r"(?:\"[^\"]+\"|\w+)\.(?:\"[^\"]+\"|\w+)\.(?:\"[^\"]+\"|\w+)",
+_POSTGRESQL_IDENTIFIER = r"(?:\"(?:[^\"]|\"\")+\"|[A-Za-z_][\w$]*)"
+_POSTGRESQL_CROSS_DATABASE_RELATION = re.compile(
+    rf"\b(?:FROM|JOIN)\s+(?:ONLY\s+)?(?:LATERAL\s+)?"
+    rf"{_POSTGRESQL_IDENTIFIER}\s*\.\s*"
+    rf"{_POSTGRESQL_IDENTIFIER}\s*\.\s*"
+    rf"{_POSTGRESQL_IDENTIFIER}(?=$|[\s,)\n])",
     re.IGNORECASE,
 )
 
@@ -358,7 +362,7 @@ def evaluate_postgresql_sql_guard(
                 detail=rule.detail,
             )
 
-    if _POSTGRESQL_CROSS_DATABASE.search(canonical_sql):
+    if _POSTGRESQL_CROSS_DATABASE_RELATION.search(canonical_sql):
         return _reject_sql_guard(
             profile="postgresql",
             canonical_sql=canonical_sql,
