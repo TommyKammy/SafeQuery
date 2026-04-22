@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -175,7 +176,10 @@ def test_prepare_generation_context_rejects_missing_active_contract_linkage() ->
             link_active_contract=False,
         )
 
-        try:
+        with pytest.raises(
+            GenerationContextPreparationError,
+            match=r"Registered source 'sap-approved-spend' has no active dataset contract\.",
+        ):
             prepare_generation_context(
                 request_id="req_preview_80",
                 question="Show approved vendors by quarterly spend",
@@ -185,12 +189,4 @@ def test_prepare_generation_context_rejects_missing_active_contract_linkage() ->
                     governance_bindings=frozenset({"group:finance-analysts"}),
                 ),
                 session=session,
-            )
-        except GenerationContextPreparationError as exc:
-            assert str(exc) == (
-                "Registered source 'sap-approved-spend' has no active dataset contract."
-            )
-        else:
-            raise AssertionError(
-                "generation context preparation unexpectedly accepted missing contract linkage"
             )

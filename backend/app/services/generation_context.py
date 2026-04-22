@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import select
@@ -20,6 +20,7 @@ from app.services.source_governance import (
 
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+DatasetKindLiteral = Literal["view", "table", "materialized_view"]
 
 
 class GenerationContextRequest(BaseModel):
@@ -50,7 +51,7 @@ class GenerationContextDataset(BaseModel):
 
     schema_name: NonEmptyTrimmedString
     dataset_name: NonEmptyTrimmedString
-    dataset_kind: NonEmptyTrimmedString
+    dataset_kind: DatasetKindLiteral
 
 
 class PreparedGenerationContext(BaseModel):
