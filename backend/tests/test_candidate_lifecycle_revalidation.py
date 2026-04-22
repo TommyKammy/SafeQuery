@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -23,7 +24,7 @@ from app.services.candidate_lifecycle import (
 
 
 @contextmanager
-def _session_scope() -> Session:
+def _session_scope() -> Iterator[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -41,6 +42,7 @@ def _seed_source(
     owner_binding: str = "group:finance-analysts",
     contract_version: int = 3,
     snapshot_version: int = 7,
+    activation_posture: SourceActivationPosture = SourceActivationPosture.ACTIVE,
 ) -> RegisteredSource:
     source = RegisteredSource(
         id=uuid4(),
@@ -48,7 +50,7 @@ def _seed_source(
         display_label=f"{source_id} display",
         source_family="postgresql",
         source_flavor="warehouse",
-        activation_posture=SourceActivationPosture.ACTIVE,
+        activation_posture=activation_posture,
         connector_profile_id=None,
         dialect_profile_id=None,
         dataset_contract_id=None,
@@ -215,6 +217,31 @@ def test_revalidate_candidate_lifecycle_rejects_stale_source_policy_versions() -
         ) as exc_info:
             revalidate_candidate_lifecycle(
                 candidate=_candidate(contract_version=3, snapshot_version=7),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                as_of=datetime.now(timezone.utc),
+            )
+
+    assert exc_info.value.deny_code == "DENY_POLICY_VERSION_STALE"
+
+
+def test_revalidate_candidate_lifecycle_rejects_non_executable_bound_source() -> None:
+    with _session_scope() as session:
+        _seed_source(
+            session,
+            source_id="sap-approved-spend",
+            activation_posture=SourceActivationPosture.PAUSED,
+        )
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="DENY_POLICY_VERSION_STALE",
+        ) as exc_info:
+            revalidate_candidate_lifecycle(
+                candidate=_candidate(),
                 authenticated_subject=AuthenticatedSubject(
                     subject_id="user:alice",
                     governance_bindings=frozenset({"group:finance-analysts"}),

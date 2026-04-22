@@ -15,6 +15,7 @@ from app.services.source_governance import (
     SourceGovernanceResolutionError,
     resolve_authoritative_source_governance,
 )
+from app.services.source_registry import SourceRegistryPostureError
 
 
 class SourceBoundCandidateMetadata(BaseModel):
@@ -172,7 +173,7 @@ def revalidate_candidate_lifecycle(
         message = str(exc)
         deny_code = (
             "DENY_POLICY_VERSION_STALE"
-            if "not executable" in message
+            if isinstance(exc.__cause__, SourceRegistryPostureError)
             else "DENY_ENTITLEMENT_CHANGED"
         )
         _raise_revalidation_error(
