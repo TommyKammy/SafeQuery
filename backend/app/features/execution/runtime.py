@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
+from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 from typing_extensions import Annotated
@@ -13,6 +14,7 @@ from app.features.execution.connector_selection import (
     select_execution_connector,
 )
 from app.features.guard.deny_taxonomy import (
+    DENY_APPLICATION_POSTGRES_REUSE,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_UNSUPPORTED_SOURCE_BINDING,
 )
@@ -39,6 +41,18 @@ class ExecutionRuntimeControls:
     timeout_seconds: int
     max_rows: int
     cancellation_probe: CancellationProbe | None = None
+
+
+@dataclass(frozen=True)
+class _PostgresConnectionIdentity:
+    username: str
+    host: str
+    port: int
+    database: str
+
+    @property
+    def endpoint_contract(self) -> tuple[str, int, str]:
+        return (self.host, self.port, self.database)
 
 
 class ExecutionResult(BaseModel):
@@ -247,12 +261,86 @@ def _cap_rows(
     return rows[: runtime_controls.max_rows]
 
 
+def _postgres_identity_from_url(
+    *,
+    database_url: str,
+    role_name: str,
+) -> _PostgresConnectionIdentity:
+    parsed = urlsplit(database_url)
+    if not parsed.scheme.startswith("postgresql"):
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_APPLICATION_POSTGRES_REUSE,
+            message=f"{role_name} must use a PostgreSQL URL.",
+        )
+
+    username = unquote(parsed.username or "").strip()
+    host = (parsed.hostname or "").strip().casefold()
+    database = unquote(parsed.path.lstrip("/")).strip()
+    if not username or not host or not database:
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_APPLICATION_POSTGRES_REUSE,
+            message=(
+                f"{role_name} is missing a trusted PostgreSQL user, host, or "
+                "database identity."
+            ),
+        )
+
+    try:
+        port = parsed.port or 5432
+    except ValueError as exc:
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_APPLICATION_POSTGRES_REUSE,
+            message=f"{role_name} has an invalid PostgreSQL port.",
+        ) from exc
+
+    return _PostgresConnectionIdentity(
+        username=username,
+        host=host,
+        port=port,
+        database=database,
+    )
+
+
+def _require_separate_postgresql_execution_target(
+    *,
+    business_postgres_url: str,
+    application_postgres_url: str,
+) -> None:
+    business_identity = _postgres_identity_from_url(
+        database_url=business_postgres_url,
+        role_name="business PostgreSQL execution URL",
+    )
+    application_identity = _postgres_identity_from_url(
+        database_url=application_postgres_url,
+        role_name="application PostgreSQL URL",
+    )
+
+    if business_identity == application_identity:
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_APPLICATION_POSTGRES_REUSE,
+            message=(
+                "The PostgreSQL execution connector must not reuse the application "
+                "PostgreSQL connection identity."
+            ),
+        )
+
+    if business_identity.endpoint_contract == application_identity.endpoint_contract:
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_APPLICATION_POSTGRES_REUSE,
+            message=(
+                "The PostgreSQL execution connector must not target the application "
+                "PostgreSQL endpoint contract."
+            ),
+        )
+
+
 def execute_candidate_sql(
     *,
     candidate: ExecutableCandidateRecord,
     selection: ExecutionConnectorSelection,
     business_mssql_connection_string: NonEmptyTrimmedString | None = None,
     business_postgres_url: NonEmptyTrimmedString | None = None,
+    application_postgres_url: NonEmptyTrimmedString | None = None,
     query_runner: QueryRunner | None = None,
     cancellation_probe: CancellationProbe | None = None,
 ) -> ExecutionResult:
@@ -296,6 +384,16 @@ def execute_candidate_sql(
                 "A backend-owned business PostgreSQL URL is required before the "
                 "PostgreSQL execution connector can run."
             )
+
+        if application_postgres_url is None:
+            from app.core.config import get_settings
+
+            application_postgres_url = str(get_settings().app_postgres_url)
+
+        _require_separate_postgresql_execution_target(
+            business_postgres_url=business_postgres_url,
+            application_postgres_url=application_postgres_url,
+        )
 
         effective_query_runner = query_runner or _default_postgresql_query_runner
         rows = _execute_query_runner(

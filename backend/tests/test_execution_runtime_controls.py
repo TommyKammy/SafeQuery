@@ -17,6 +17,12 @@ from app.features.execution.runtime import (
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
+APPLICATION_POSTGRES_URL = "postgresql://safequery:safequery@app-postgres:5432/safequery"
+BUSINESS_POSTGRES_URL = (
+    "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
+)
+
+
 def _candidate_source(
     *,
     source_id: str,
@@ -144,9 +150,8 @@ def test_execute_candidate_sql_passes_source_aware_controls_to_postgresql_runner
             source_flavor="warehouse",
             connector_id="postgresql_readonly",
         ),
-        business_postgres_url=(
-            "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
-        ),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
         query_runner=fake_query_runner,
     )
 
@@ -182,9 +187,8 @@ def test_execute_candidate_sql_blocks_pre_cancelled_execution_fail_closed() -> N
                 source_flavor="warehouse",
                 connector_id="postgresql_readonly",
             ),
-            business_postgres_url=(
-                "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
-            ),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
             query_runner=fake_query_runner,
             cancellation_probe=lambda: True,
         )
@@ -206,9 +210,8 @@ def test_execute_candidate_sql_caps_rows_to_source_bound_maximum() -> None:
             source_flavor="warehouse",
             connector_id="postgresql_readonly",
         ),
-        business_postgres_url=(
-            "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
-        ),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
         query_runner=lambda *, database_url, canonical_sql: [
             {"row_number": row_number}
             for row_number in range(

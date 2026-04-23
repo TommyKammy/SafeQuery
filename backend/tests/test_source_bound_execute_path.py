@@ -10,6 +10,12 @@ from app.features.execution.runtime import ExecutableCandidateRecord
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
+APPLICATION_POSTGRES_URL = "postgresql://safequery:safequery@app-postgres:5432/safequery"
+BUSINESS_POSTGRES_URL = (
+    "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
+)
+
+
 def _candidate_source() -> SourceBoundCandidateMetadata:
     return SourceBoundCandidateMetadata(
         source_id="approved-spend",
@@ -69,9 +75,8 @@ def test_execute_candidate_sql_rejects_connector_swaps_on_bound_source() -> None
         execute_candidate_sql(
             candidate=_candidate(),
             selection=_selection(connector_id="postgresql_readonly_shadow"),
-            business_postgres_url=(
-                "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
-            ),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
         )
 
     assert exc_info.value.deny_code == DENY_SOURCE_BINDING_MISMATCH

@@ -6,13 +6,22 @@ from typing import Any
 import pytest
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
-from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
+from app.features.guard.deny_taxonomy import (
+    DENY_APPLICATION_POSTGRES_REUSE,
+    DENY_SOURCE_BINDING_MISMATCH,
+)
 from app.features.execution.runtime import (
     ExecutableCandidateRecord,
     ExecutionRuntimeControls,
     _default_postgresql_query_runner,
 )
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
+
+
+APPLICATION_POSTGRES_URL = "postgresql://safequery:safequery@app-postgres:5432/safequery"
+BUSINESS_POSTGRES_URL = (
+    "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
+)
 
 
 def _candidate_source(
@@ -87,9 +96,8 @@ def test_execute_postgresql_connector_uses_backend_owned_connection_path() -> No
             )
         ),
         selection=_selection(),
-        business_postgres_url=(
-            "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
-        ),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
         query_runner=fake_query_runner,
     )
 
@@ -105,9 +113,7 @@ def test_execute_postgresql_connector_uses_backend_owned_connection_path() -> No
         ],
     }
     assert captured == {
-        "database_url": (
-            "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
-        ),
+        "database_url": BUSINESS_POSTGRES_URL,
         "canonical_sql": (
             "SELECT vendor_name, approved_spend "
             "FROM finance.approved_vendor_spend "
@@ -131,12 +137,65 @@ def test_execute_postgresql_connector_rejects_selection_binding_mismatch_fail_cl
                 canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"
             ),
             selection=_selection(source_id="other-source"),
-            business_postgres_url=(
-                "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
-            ),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
         )
 
     assert exc_info.value.deny_code == DENY_SOURCE_BINDING_MISMATCH
+
+
+def test_execute_postgresql_connector_rejects_application_postgres_reuse_before_query() -> None:
+    from app.features.execution import (
+        ExecutionConnectorExecutionError,
+        execute_candidate_sql,
+    )
+
+    def fake_query_runner(*, database_url: str, canonical_sql: str) -> list[dict[str, Any]]:
+        raise AssertionError("query runner must not run for application PostgreSQL reuse")
+
+    with pytest.raises(
+        ExecutionConnectorExecutionError,
+        match="must not reuse the application PostgreSQL connection identity",
+    ) as exc_info:
+        execute_candidate_sql(
+            candidate=_candidate(
+                canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"
+            ),
+            selection=_selection(),
+            business_postgres_url=APPLICATION_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            query_runner=fake_query_runner,
+        )
+
+    assert exc_info.value.deny_code == DENY_APPLICATION_POSTGRES_REUSE
+
+
+def test_execute_postgresql_connector_rejects_equivalent_application_endpoint_contract() -> None:
+    from app.features.execution import (
+        ExecutionConnectorExecutionError,
+        execute_candidate_sql,
+    )
+
+    def fake_query_runner(*, database_url: str, canonical_sql: str) -> list[dict[str, Any]]:
+        raise AssertionError("query runner must not run for application PostgreSQL reuse")
+
+    with pytest.raises(
+        ExecutionConnectorExecutionError,
+        match="must not target the application PostgreSQL endpoint contract",
+    ) as exc_info:
+        execute_candidate_sql(
+            candidate=_candidate(
+                canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"
+            ),
+            selection=_selection(),
+            business_postgres_url=(
+                "postgresql://safequery_exec:super-secret@app-postgres/safequery"
+            ),
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            query_runner=fake_query_runner,
+        )
+
+    assert exc_info.value.deny_code == DENY_APPLICATION_POSTGRES_REUSE
 
 
 def test_default_postgresql_query_runner_requires_psycopg_driver(
