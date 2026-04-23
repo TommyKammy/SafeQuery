@@ -111,3 +111,17 @@ def test_release_gate_reports_missing_source_aware_audit_fields() -> None:
     assert decision.failures[0].source_id == "business-mssql-source"
     assert decision.failures[0].source_family is None
     assert decision.failures[0].scenario_category == "positive"
+    assert "source.source_family" in decision.failures[0].detail
+
+
+def test_release_gate_reports_structured_failure_for_non_mapping_artifact() -> None:
+    decision = reconstruct_release_gate(observed_artifacts=("not-a-mapping",))
+
+    assert decision.status == "fail"
+    assert decision.failure_count == 1
+    assert decision.failures[0].deny_code == "DENY_MALFORMED_EVALUATION_ARTIFACT"
+    assert decision.failures[0].source_id is None
+    assert decision.failures[0].source_family is None
+    assert decision.failures[0].scenario_id is None
+    assert decision.failures[0].scenario_category is None
+    assert "<root>" in decision.failures[0].detail

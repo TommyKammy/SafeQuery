@@ -116,7 +116,7 @@ def _record_from_scenario(scenario: ScenarioArtifact) -> EvaluationOutcomeRecord
 
 def _validation_failure_for(
     *,
-    artifact: Mapping[str, Any],
+    artifact: Any,
     error: ValidationError,
 ) -> ReleaseGateFailure:
     errors = error.errors()
@@ -124,7 +124,8 @@ def _validation_failure_for(
         ".".join(str(part) for part in validation_error["loc"])
         for validation_error in errors
     }
-    source = artifact.get("source")
+    artifact_map = artifact if isinstance(artifact, Mapping) else {}
+    source = artifact_map.get("source")
     source_id = source.get("source_id") if isinstance(source, Mapping) else None
     source_family = source.get("source_family") if isinstance(source, Mapping) else None
     deny_code = (
@@ -137,9 +138,12 @@ def _validation_failure_for(
         deny_code=deny_code,
         source_id=source_id if isinstance(source_id, str) else None,
         source_family=source_family if isinstance(source_family, str) else None,
-        scenario_id=_string_or_none(artifact.get("scenario_id")),
-        scenario_category=_string_or_none(artifact.get("kind")),
-        detail="; ".join(validation_error["msg"] for validation_error in errors),
+        scenario_id=_string_or_none(artifact_map.get("scenario_id")),
+        scenario_category=_string_or_none(artifact_map.get("kind")),
+        detail="; ".join(
+            f"{_error_location(validation_error['loc'])}: {validation_error['msg']}"
+            for validation_error in errors
+        ),
     )
 
 
@@ -211,3 +215,9 @@ def _regression_detail(row: EvaluationComparisonRow) -> str:
 
 def _string_or_none(value: Any) -> Optional[str]:
     return value if isinstance(value, str) else None
+
+
+def _error_location(location: tuple[Any, ...]) -> str:
+    if not location:
+        return "<root>"
+    return ".".join(str(part) for part in location)
