@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 from typing_extensions import Annotated
@@ -23,9 +23,20 @@ class ExecutionConnectorSelection(BaseModel):
 
 
 class ExecutionConnectorSelectionError(PermissionError):
-    def __init__(self, *, deny_code: str, message: str) -> None:
+    def __init__(
+        self,
+        *,
+        deny_code: str,
+        message: str,
+        audit_event: Any | None = None,
+        audit_events: list[Any] | None = None,
+    ) -> None:
         super().__init__(f"{deny_code}: {message}")
         self.deny_code = deny_code
+        self.audit_events = list(audit_events or ([audit_event] if audit_event else []))
+        self.audit_event = audit_event or (
+            self.audit_events[-1] if self.audit_events else None
+        )
 
 
 _EXACT_CONNECTOR_BINDINGS: dict[tuple[str, str], str] = {

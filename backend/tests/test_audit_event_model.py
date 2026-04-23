@@ -33,9 +33,12 @@ def _source_aware_payload() -> dict[str, object]:
     "event_type",
     [
         "query_submitted",
+        "generation_requested",
         "generation_completed",
         "guard_evaluated",
         "execution_requested",
+        "execution_started",
+        "execution_completed",
         "execution_denied",
         "candidate_invalidated",
     ],
