@@ -44,21 +44,24 @@ def select_execution_connector(
     candidate_source: SourceBoundCandidateMetadata,
 ) -> ExecutionConnectorSelection:
     connector_id: str | None = None
-    source_flavor = candidate_source.source_flavor
+    source_family = candidate_source.source_family.strip()
+    source_flavor = (
+        candidate_source.source_flavor.strip()
+        if candidate_source.source_flavor is not None
+        else None
+    )
 
     if source_flavor is not None:
-        connector_id = _EXACT_CONNECTOR_BINDINGS.get(
-            (candidate_source.source_family, source_flavor)
-        )
+        connector_id = _EXACT_CONNECTOR_BINDINGS.get((source_family, source_flavor))
     else:
-        connector_id = _FAMILY_DEFAULT_CONNECTORS.get(candidate_source.source_family)
+        connector_id = _FAMILY_DEFAULT_CONNECTORS.get(source_family)
 
     if connector_id is None:
         raise ExecutionConnectorSelectionError(
             deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
             message=(
                 "No backend-owned execution connector is registered for the "
-                f"candidate-bound source family '{candidate_source.source_family}'"
+                f"candidate-bound source family '{source_family}'"
                 + (
                     f" and flavor '{source_flavor}'."
                     if source_flavor is not None
@@ -69,7 +72,7 @@ def select_execution_connector(
 
     return ExecutionConnectorSelection(
         source_id=candidate_source.source_id,
-        source_family=candidate_source.source_family,
+        source_family=source_family,
         source_flavor=source_flavor,
         connector_id=connector_id,
         ownership="backend",
