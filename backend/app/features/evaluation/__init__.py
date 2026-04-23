@@ -17,6 +17,11 @@ from app.features.evaluation.harness import (
     list_mssql_evaluation_scenarios,
     list_postgresql_evaluation_scenarios,
 )
+from app.features.evaluation.release_gate import (
+    ReleaseGateDecision,
+    ReleaseGateFailure,
+    reconstruct_release_gate,
+)
 
 __all__ = [
     "EvaluationComparisonKey",
@@ -29,7 +34,10 @@ __all__ = [
     "EvaluationSourceProfile",
     "MSSQLEvaluationScenario",
     "PostgreSQLEvaluationScenario",
+    "ReleaseGateDecision",
+    "ReleaseGateFailure",
     "compare_evaluation_outcomes",
     "list_mssql_evaluation_scenarios",
     "list_postgresql_evaluation_scenarios",
+    "reconstruct_release_gate",
 ]
