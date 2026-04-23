@@ -92,8 +92,13 @@ def _default_postgresql_query_runner(
     database_url: str,
     canonical_sql: str,
 ) -> list[dict[str, Any]]:
-    import psycopg
-    from psycopg.rows import dict_row
+    try:
+        import psycopg  # type: ignore[import-not-found]
+        from psycopg.rows import dict_row  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "psycopg must be installed before the PostgreSQL execution connector can run."
+        ) from exc
 
     with psycopg.connect(database_url) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:

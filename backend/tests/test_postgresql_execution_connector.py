@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import builtins
 from typing import Any
 
 import pytest
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
 from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
+from app.features.execution.runtime import _default_postgresql_query_runner
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
@@ -111,3 +113,31 @@ def test_execute_postgresql_connector_rejects_selection_binding_mismatch_fail_cl
         )
 
     assert exc_info.value.deny_code == DENY_SOURCE_BINDING_MISMATCH
+
+
+def test_default_postgresql_query_runner_requires_psycopg_driver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "psycopg":
+            raise ModuleNotFoundError("No module named 'psycopg'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(
+        RuntimeError,
+        match="psycopg must be installed before the PostgreSQL execution connector can run.",
+    ):
+        _default_postgresql_query_runner(
+            database_url="postgresql://business-postgres-source:5432/business",
+            canonical_sql="SELECT 1",
+        )
