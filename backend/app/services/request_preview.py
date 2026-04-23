@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, PrivateAttr, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.orm import Session
 from typing import Optional
 from typing_extensions import Annotated
@@ -50,11 +50,7 @@ class CandidateRecord(BaseModel):
 class AuditRecord(BaseModel):
     source_id: str
     state: str
-    _events: list[SourceAwareAuditEvent] = PrivateAttr(default_factory=list)
-
-    @property
-    def events(self) -> list[SourceAwareAuditEvent]:
-        return list(self._events)
+    events: list[SourceAwareAuditEvent] = Field(default_factory=list)
 
 
 class EvaluationRecord(BaseModel):
@@ -180,12 +176,12 @@ def submit_preview_request(
     audit = AuditRecord(
         source_id=resolved_source.source_id,
         state="recorded",
-    )
-    audit._events = _build_preview_lifecycle_audit_events(
-        resolved_source=resolved_source,
-        dataset_contract=dataset_contract,
-        schema_snapshot=schema_snapshot,
-        audit_context=audit_context,
+        events=_build_preview_lifecycle_audit_events(
+            resolved_source=resolved_source,
+            dataset_contract=dataset_contract,
+            schema_snapshot=schema_snapshot,
+            audit_context=audit_context,
+        ),
     )
 
     return PreviewSubmissionResponse(

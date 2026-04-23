@@ -221,14 +221,14 @@ def _build_execution_audit_events(
 
 def _attach_execution_denial_audit_event(
     *,
-    error: ExecutionConnectorExecutionError,
+    error: ExecutionConnectorExecutionError | ExecutionConnectorSelectionError,
     candidate_source: SourceBoundCandidateMetadata,
     audit_context: ExecutionAuditContext | None,
-) -> ExecutionConnectorExecutionError:
+) -> ExecutionConnectorExecutionError | ExecutionConnectorSelectionError:
     if error.audit_event is not None or audit_context is None:
         return error
     message = str(error).split(": ", 1)[1] if ": " in str(error) else str(error)
-    return ExecutionConnectorExecutionError(
+    return type(error)(
         deny_code=error.deny_code,
         message=message,
         audit_events=_build_execution_audit_events(
@@ -563,7 +563,7 @@ def execute_candidate_sql(
                     f"'{selection.connector_id}'."
                 ),
             )
-    except ExecutionConnectorExecutionError as exc:
+    except (ExecutionConnectorExecutionError, ExecutionConnectorSelectionError) as exc:
         raise _attach_execution_denial_audit_event(
             error=exc,
             candidate_source=candidate.source,

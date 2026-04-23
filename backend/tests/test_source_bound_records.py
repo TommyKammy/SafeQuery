@@ -107,6 +107,7 @@ def test_preview_submission_binds_all_records_to_authoritative_source_id() -> No
         "audit": {
             "source_id": "sap-approved-spend",
             "state": "recorded",
+            "events": [],
         },
         "evaluation": {
             "source_id": "sap-approved-spend",

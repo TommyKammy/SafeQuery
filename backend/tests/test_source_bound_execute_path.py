@@ -7,7 +7,10 @@ from uuid import uuid4
 import pytest
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
-from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
+from app.features.guard.deny_taxonomy import (
+    DENY_SOURCE_BINDING_MISMATCH,
+    DENY_UNSUPPORTED_SOURCE_BINDING,
+)
 from app.features.execution.runtime import ExecutableCandidateRecord, ExecutionAuditContext
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
@@ -45,6 +48,19 @@ def _candidate() -> ExecutableCandidateRecord:
     return ExecutableCandidateRecord(
         canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
         source=_candidate_source(),
+    )
+
+
+def _unsupported_flavor_candidate() -> ExecutableCandidateRecord:
+    return ExecutableCandidateRecord(
+        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
+        source=SourceBoundCandidateMetadata(
+            source_id="approved-spend",
+            source_family="postgresql",
+            source_flavor="analytics",
+            dataset_contract_version=3,
+            schema_snapshot_version=7,
+        ),
     )
 
 
@@ -118,6 +134,48 @@ def test_execute_candidate_sql_rejects_connector_swaps_on_bound_source() -> None
         "connector_profile_version": 11,
         "primary_deny_code": DENY_SOURCE_BINDING_MISMATCH,
         "denial_cause": "source_binding_mismatch",
+    }.items() <= exc_info.value.audit_event.model_dump(exclude_none=True).items()
+
+
+def test_execute_candidate_sql_attaches_audit_events_to_selection_denials() -> None:
+    from app.features.execution import (
+        ExecutionConnectorSelectionError,
+        execute_candidate_sql,
+    )
+
+    with pytest.raises(
+        ExecutionConnectorSelectionError,
+        match="No backend-owned execution connector is registered",
+    ) as exc_info:
+        execute_candidate_sql(
+            candidate=_unsupported_flavor_candidate(),
+            selection=ExecutionConnectorSelection(
+                source_id="approved-spend",
+                source_family="postgresql",
+                source_flavor="analytics",
+                connector_id="postgresql_readonly",
+                ownership="backend",
+            ),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            audit_context=_audit_context(),
+        )
+
+    assert exc_info.value.deny_code == DENY_UNSUPPORTED_SOURCE_BINDING
+    assert exc_info.value.audit_event is not None
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_denied",
+    ]
+    assert {
+        "event_type": "execution_denied",
+        "source_id": "approved-spend",
+        "source_family": "postgresql",
+        "source_flavor": "analytics",
+        "dataset_contract_version": 3,
+        "schema_snapshot_version": 7,
+        "primary_deny_code": DENY_UNSUPPORTED_SOURCE_BINDING,
+        "denial_cause": "unsupported_source_binding",
     }.items() <= exc_info.value.audit_event.model_dump(exclude_none=True).items()
 
 

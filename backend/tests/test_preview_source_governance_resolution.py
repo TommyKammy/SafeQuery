@@ -160,6 +160,13 @@ def test_preview_submission_emits_source_aware_lifecycle_audit_events() -> None:
         "generation_completed",
         "guard_evaluated",
     ]
+    serialized_audit = response.model_dump()["audit"]
+    assert [event["event_type"] for event in serialized_audit["events"]] == [
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated",
+    ]
     for event in response.audit.events:
         assert {
             "request_id": "request-123",
