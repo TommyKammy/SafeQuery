@@ -122,20 +122,20 @@ def test_default_postgresql_query_runner_requires_psycopg_driver(
 
     def fake_import(
         name: str,
-        globals: dict[str, Any] | None = None,
-        locals: dict[str, Any] | None = None,
+        globalns: dict[str, Any] | None = None,
+        localns: dict[str, Any] | None = None,
         fromlist: tuple[str, ...] = (),
         level: int = 0,
     ) -> Any:
         if name == "psycopg":
             raise ModuleNotFoundError("No module named 'psycopg'")
-        return real_import(name, globals, locals, fromlist, level)
+        return real_import(name, globalns, localns, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
     with pytest.raises(
         RuntimeError,
-        match="psycopg must be installed before the PostgreSQL execution connector can run.",
+        match=r"psycopg must be installed before the PostgreSQL execution connector can run\.",
     ):
         _default_postgresql_query_runner(
             database_url="postgresql://business-postgres-source:5432/business",
