@@ -312,11 +312,15 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             response.headers["X-Request-ID"],
         )
 
+        first_event = audit["events"][0]
+        self.assertTrue(first_event["correlation_id"])
+        self.assertTrue(first_event["session_id"])
+
         for event in audit["events"]:
             self.assertEqual(event["request_id"], response.headers["X-Request-ID"])
-            self.assertTrue(event["correlation_id"])
+            self.assertEqual(event["correlation_id"], first_event["correlation_id"])
             self.assertEqual(event["user_subject"], "user:alice")
-            self.assertTrue(event["session_id"])
+            self.assertEqual(event["session_id"], first_event["session_id"])
             self.assertEqual(event["source_id"], "sap-approved-spend")
             self.assertEqual(event["source_family"], "postgresql")
             self.assertEqual(event["source_flavor"], "warehouse")
@@ -324,6 +328,10 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             self.assertEqual(event["schema_snapshot_version"], 1)
             self.assertEqual(event["application_version"], "safequery-api/0.1.0")
 
+        self.assertIsNone(audit["events"][0]["query_candidate_id"])
+        self.assertIsNone(audit["events"][1]["query_candidate_id"])
+        self.assertIsNotNone(audit["events"][2]["query_candidate_id"])
+        self.assertIsNotNone(audit["events"][3]["query_candidate_id"])
         self.assertEqual(
             audit["events"][2]["query_candidate_id"],
             audit["events"][3]["query_candidate_id"],
