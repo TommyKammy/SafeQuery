@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import pytest
@@ -8,6 +9,9 @@ from app.features.execution.connector_selection import ExecutionConnectorSelecti
 from app.features.execution.runtime import (
     DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY,
     DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY,
+    ExecutionRuntimeCancelledError,
+    ExecutionRuntimeControls,
+    _default_mssql_query_runner,
 )
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
@@ -145,7 +149,7 @@ def test_execute_candidate_sql_blocks_pre_cancelled_execution_fail_closed() -> N
 
     with pytest.raises(
         ExecutionRuntimeCancelledError,
-        match="Execution canceled before the backend-owned query runner started.",
+        match=r"Execution canceled before the backend-owned query runner started\.",
     ):
         execute_candidate_sql(
             canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
@@ -200,3 +204,99 @@ def test_execute_candidate_sql_caps_rows_to_source_bound_maximum() -> None:
     assert result.rows[-1] == {
         "row_number": DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY["postgresql"] - 1
     }
+
+
+def test_default_mssql_query_runner_requires_timeout_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeCursor:
+        pass
+
+    class FakeConnection:
+        def __enter__(self) -> FakeConnection:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+            return False
+
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+    class FakePyodbcModule:
+        @staticmethod
+        def connect(connection_string: str) -> FakeConnection:
+            assert connection_string == "Driver={ODBC Driver 18 for SQL Server};Server=tcp:test"
+            return FakeConnection()
+
+    monkeypatch.setitem(sys.modules, "pyodbc", FakePyodbcModule())
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"The MSSQL execution connector requires cursor timeout support to "
+            r"enforce backend-owned runtime controls\."
+        ),
+    ):
+        _default_mssql_query_runner(
+            connection_string="Driver={ODBC Driver 18 for SQL Server};Server=tcp:test",
+            canonical_sql="SELECT 1",
+            runtime_controls=ExecutionRuntimeControls(
+                source_family="mssql",
+                timeout_seconds=30,
+                max_rows=200,
+            ),
+        )
+
+
+def test_default_mssql_query_runner_preserves_cancelled_error_when_cancel_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeCursor:
+        def __init__(self) -> None:
+            self.timeout: int | None = None
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.cancel_calls = 0
+            self._cursor = FakeCursor()
+
+        def __enter__(self) -> FakeConnection:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+            return False
+
+        def cursor(self) -> FakeCursor:
+            return self._cursor
+
+        def cancel(self) -> None:
+            self.cancel_calls += 1
+            raise RuntimeError("driver cancellation failure")
+
+    connection = FakeConnection()
+
+    class FakePyodbcModule:
+        @staticmethod
+        def connect(connection_string: str) -> FakeConnection:
+            assert connection_string == "Driver={ODBC Driver 18 for SQL Server};Server=tcp:test"
+            return connection
+
+    monkeypatch.setitem(sys.modules, "pyodbc", FakePyodbcModule())
+
+    with pytest.raises(
+        ExecutionRuntimeCancelledError,
+        match=r"Execution canceled before the MSSQL query started\.",
+    ):
+        _default_mssql_query_runner(
+            connection_string="Driver={ODBC Driver 18 for SQL Server};Server=tcp:test",
+            canonical_sql="SELECT 1",
+            runtime_controls=ExecutionRuntimeControls(
+                source_family="mssql",
+                timeout_seconds=17,
+                max_rows=200,
+                cancellation_probe=lambda: True,
+            ),
+        )
+
+    assert connection.cancel_calls == 1
+    assert connection._cursor.timeout == 17

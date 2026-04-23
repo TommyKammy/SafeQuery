@@ -110,8 +110,12 @@ def _default_mssql_query_runner(
 
     with pyodbc.connect(connection_string) as connection:
         cursor = connection.cursor()
-        if hasattr(cursor, "timeout"):
-            cursor.timeout = runtime_controls.timeout_seconds
+        if not hasattr(cursor, "timeout"):
+            raise RuntimeError(
+                "The MSSQL execution connector requires cursor timeout support to "
+                "enforce backend-owned runtime controls."
+            )
+        cursor.timeout = runtime_controls.timeout_seconds
         _raise_if_cancelled(
             runtime_controls=runtime_controls,
             connection=connection,
@@ -202,7 +206,10 @@ def _raise_if_cancelled(
         return
 
     if connection is not None and hasattr(connection, "cancel"):
-        connection.cancel()
+        try:
+            connection.cancel()
+        except Exception:
+            pass
     raise ExecutionRuntimeCancelledError(message)
 
 
