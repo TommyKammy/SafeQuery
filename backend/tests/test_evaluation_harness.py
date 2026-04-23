@@ -16,8 +16,12 @@ from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewSt
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
 from app.features.evaluation import (
+    EvaluationComparisonRow,
+    EvaluationOutcomeRecord,
+    EvaluationOutcomeSnapshot,
     MSSQLEvaluationScenario,
     PostgreSQLEvaluationScenario,
+    compare_evaluation_outcomes,
     list_mssql_evaluation_scenarios,
     list_postgresql_evaluation_scenarios,
 )
@@ -621,3 +625,106 @@ def test_postgresql_safety_application_postgres_execution_reuse_denies_before_qu
 
     assert scenario.expected.primary_code == DENY_APPLICATION_POSTGRES_REUSE
     assert exc_info.value.deny_code == scenario.expected.primary_code
+
+
+def test_evaluation_comparison_keeps_same_family_different_sources_separate() -> None:
+    baseline = (
+        EvaluationOutcomeRecord(
+            scenario_id="postgresql-positive-approved-vendor-spend-top-vendors",
+            kind="positive",
+            source=EvaluationOutcomeSnapshot(
+                source_id="business-postgres-source-a",
+                source_family="postgresql",
+                source_flavor="warehouse",
+                dialect_profile="postgresql.warehouse.v1",
+                dialect_profile_version=1,
+                connector_profile_version=2,
+                dataset_contract_version=4,
+                schema_snapshot_version=9,
+                execution_policy_version=3,
+            ),
+            outcome={"decision": "allow"},
+        ),
+    )
+    candidate = (
+        EvaluationOutcomeRecord(
+            scenario_id="postgresql-positive-approved-vendor-spend-top-vendors",
+            kind="positive",
+            source=EvaluationOutcomeSnapshot(
+                source_id="business-postgres-source-b",
+                source_family="postgresql",
+                source_flavor="warehouse",
+                dialect_profile="postgresql.warehouse.v1",
+                dialect_profile_version=1,
+                connector_profile_version=2,
+                dataset_contract_version=4,
+                schema_snapshot_version=9,
+                execution_policy_version=3,
+            ),
+            outcome={"decision": "allow"},
+        ),
+    )
+
+    comparison = compare_evaluation_outcomes(baseline=baseline, candidate=candidate)
+
+    assert tuple(row.status for row in comparison) == ("fail", "fail")
+    assert {row.key.source_id for row in comparison} == {
+        "business-postgres-source-a",
+        "business-postgres-source-b",
+    }
+    assert all(row.key.source_family == "postgresql" for row in comparison)
+    assert all(row.kind == "positive" for row in comparison)
+
+
+def test_evaluation_comparison_marks_profile_version_drift_as_regression() -> None:
+    baseline = EvaluationOutcomeRecord(
+        scenario_id="mssql-positive-approved-vendor-spend-top-vendors",
+        kind="positive",
+        source=EvaluationOutcomeSnapshot(
+            source_id="business-mssql-source",
+            source_family="mssql",
+            source_flavor="sqlserver",
+            dialect_profile="mssql.sqlserver.v1",
+            dialect_profile_version=1,
+            connector_profile_version=4,
+            dataset_contract_version=3,
+            schema_snapshot_version=7,
+            execution_policy_version=2,
+        ),
+        outcome={"decision": "allow"},
+    )
+    candidate = EvaluationOutcomeRecord(
+        scenario_id="mssql-positive-approved-vendor-spend-top-vendors",
+        kind="positive",
+        source=EvaluationOutcomeSnapshot(
+            source_id="business-mssql-source",
+            source_family="mssql",
+            source_flavor="sqlserver",
+            dialect_profile="mssql.sqlserver.v1",
+            dialect_profile_version=2,
+            connector_profile_version=5,
+            dataset_contract_version=3,
+            schema_snapshot_version=7,
+            execution_policy_version=2,
+        ),
+        outcome={"decision": "allow"},
+    )
+
+    comparison = compare_evaluation_outcomes(
+        baseline=(baseline,),
+        candidate=(candidate,),
+    )
+
+    assert len(comparison) == 1
+    row = comparison[0]
+    assert isinstance(row, EvaluationComparisonRow)
+    assert row.status == "regression"
+    assert row.key.source_id == "business-mssql-source"
+    assert row.baseline.source.dialect_profile_version == 1
+    assert row.candidate.source.dialect_profile_version == 2
+    assert row.baseline.source.connector_profile_version == 4
+    assert row.candidate.source.connector_profile_version == 5
+    assert row.regressions == (
+        "dialect_profile_version",
+        "connector_profile_version",
+    )
