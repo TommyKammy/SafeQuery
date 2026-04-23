@@ -7,7 +7,10 @@ import pytest
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
 from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
-from app.features.execution.runtime import _default_postgresql_query_runner
+from app.features.execution.runtime import (
+    ExecutionRuntimeControls,
+    _default_postgresql_query_runner,
+)
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
@@ -141,4 +144,9 @@ def test_default_postgresql_query_runner_requires_psycopg_driver(
         _default_postgresql_query_runner(
             database_url="postgresql://business-postgres-source:5432/business",
             canonical_sql="SELECT 1",
+            runtime_controls=ExecutionRuntimeControls(
+                source_family="postgresql",
+                timeout_seconds=30,
+                max_rows=200,
+            ),
         )
