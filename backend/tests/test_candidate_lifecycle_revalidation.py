@@ -16,6 +16,7 @@ from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewSt
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
 from app.services.candidate_lifecycle import (
+    CandidateLifecycleAuditContext,
     CandidateLifecycleRecord,
     CandidateLifecycleRevalidationError,
     SourceBoundCandidateMetadata,
@@ -115,6 +116,19 @@ def _candidate(
     )
 
 
+def _audit_context() -> CandidateLifecycleAuditContext:
+    return CandidateLifecycleAuditContext(
+        event_id=uuid4(),
+        occurred_at=datetime.now(timezone.utc),
+        request_id="request-123",
+        correlation_id="correlation-123",
+        user_subject="user:alice",
+        session_id="session-123",
+        query_candidate_id="candidate-123",
+        candidate_owner_subject="user:alice",
+    )
+
+
 def test_revalidate_candidate_lifecycle_accepts_current_source_bound_candidate() -> None:
     with _session_scope() as session:
         _seed_source(session, source_id="sap-approved-spend")
@@ -156,6 +170,44 @@ def test_revalidate_candidate_lifecycle_rejects_expired_approval() -> None:
     assert exc_info.value.deny_code == "DENY_APPROVAL_EXPIRED"
 
 
+def test_revalidate_candidate_lifecycle_attaches_source_aware_expiry_audit_event() -> None:
+    with _session_scope() as session:
+        _seed_source(session, source_id="sap-approved-spend")
+
+        with pytest.raises(CandidateLifecycleRevalidationError) as exc_info:
+            revalidate_candidate_lifecycle(
+                candidate=_candidate(
+                    approval_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                as_of=datetime.now(timezone.utc),
+                audit_context=_audit_context(),
+            )
+
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert {
+        "event_type": "execution_denied",
+        "request_id": "request-123",
+        "correlation_id": "correlation-123",
+        "user_subject": "user:alice",
+        "session_id": "session-123",
+        "query_candidate_id": "candidate-123",
+        "candidate_owner_subject": "user:alice",
+        "source_id": "sap-approved-spend",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "dataset_contract_version": 3,
+        "schema_snapshot_version": 7,
+        "primary_deny_code": "DENY_APPROVAL_EXPIRED",
+        "denial_cause": "approval_expired",
+    }.items() <= audit_event.model_dump(exclude_none=True).items()
+
+
 def test_revalidate_candidate_lifecycle_rejects_invalidated_candidate() -> None:
     with _session_scope() as session:
         _seed_source(session, source_id="sap-approved-spend")
@@ -175,6 +227,37 @@ def test_revalidate_candidate_lifecycle_rejects_invalidated_candidate() -> None:
             )
 
     assert exc_info.value.deny_code == "DENY_CANDIDATE_INVALIDATED"
+
+
+def test_revalidate_candidate_lifecycle_attaches_source_aware_invalidation_audit_event() -> None:
+    with _session_scope() as session:
+        _seed_source(session, source_id="sap-approved-spend")
+
+        with pytest.raises(CandidateLifecycleRevalidationError) as exc_info:
+            revalidate_candidate_lifecycle(
+                candidate=_candidate(invalidated_at=datetime.now(timezone.utc)),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                as_of=datetime.now(timezone.utc),
+                audit_context=_audit_context(),
+            )
+
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert {
+        "event_type": "candidate_invalidated",
+        "source_id": "sap-approved-spend",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "dataset_contract_version": 3,
+        "schema_snapshot_version": 7,
+        "primary_deny_code": "DENY_CANDIDATE_INVALIDATED",
+        "denial_cause": "candidate_invalidated",
+        "candidate_state": "invalidated",
+    }.items() <= audit_event.model_dump(exclude_none=True).items()
 
 
 def test_revalidate_candidate_lifecycle_allows_future_dated_invalidation() -> None:

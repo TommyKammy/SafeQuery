@@ -77,3 +77,8 @@ class SourceAwareAuditEvent(BaseModel):
     schema_snapshot_version: Optional[PositiveInt] = None
     execution_policy_version: Optional[PositiveInt] = None
     connector_profile_version: Optional[PositiveInt] = None
+    primary_deny_code: Optional[NonEmptyTrimmedString] = None
+    denial_cause: Optional[NonEmptyTrimmedString] = None
+    candidate_state: Optional[NonEmptyTrimmedString] = None
+    execution_row_count: Optional[int] = None
+    result_truncated: Optional[bool] = None
