@@ -728,3 +728,36 @@ def test_evaluation_comparison_marks_profile_version_drift_as_regression() -> No
         "dialect_profile_version",
         "connector_profile_version",
     )
+
+
+@pytest.mark.parametrize("duplicate_side", ("baseline", "candidate"))
+def test_evaluation_comparison_rejects_duplicate_comparison_identity(
+    duplicate_side: str,
+) -> None:
+    record = EvaluationOutcomeRecord(
+        scenario_id="postgresql-positive-approved-vendor-spend-top-vendors",
+        kind="positive",
+        source=EvaluationOutcomeSnapshot(
+            source_id="business-postgres-source-a",
+            source_family="postgresql",
+            source_flavor="warehouse",
+            dialect_profile="postgresql.warehouse.v1",
+            dialect_profile_version=1,
+            connector_profile_version=2,
+            dataset_contract_version=4,
+            schema_snapshot_version=9,
+            execution_policy_version=3,
+        ),
+        outcome={"decision": "allow"},
+    )
+    baseline = (record, record) if duplicate_side == "baseline" else (record,)
+    candidate = (record, record) if duplicate_side == "candidate" else (record,)
+
+    with pytest.raises(ValueError) as exc_info:
+        compare_evaluation_outcomes(baseline=baseline, candidate=candidate)
+
+    assert str(exc_info.value) == (
+        "Duplicate "
+        f"{duplicate_side} evaluation outcome identity: "
+        "('business-postgres-source-a', 'postgresql-positive-approved-vendor-spend-top-vendors')"
+    )

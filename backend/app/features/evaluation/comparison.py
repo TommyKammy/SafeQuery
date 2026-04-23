@@ -73,8 +73,8 @@ def compare_evaluation_outcomes(
     baseline: tuple[EvaluationOutcomeRecord, ...],
     candidate: tuple[EvaluationOutcomeRecord, ...],
 ) -> tuple[EvaluationComparisonRow, ...]:
-    baseline_index = {record.comparison_identity: record for record in baseline}
-    candidate_index = {record.comparison_identity: record for record in candidate}
+    baseline_index = _index_outcomes_by_identity(baseline, side="baseline")
+    candidate_index = _index_outcomes_by_identity(candidate, side="candidate")
     identities = sorted(set(baseline_index) | set(candidate_index))
 
     return tuple(
@@ -84,6 +84,20 @@ def compare_evaluation_outcomes(
         )
         for identity in identities
     )
+
+
+def _index_outcomes_by_identity(
+    records: tuple[EvaluationOutcomeRecord, ...],
+    *,
+    side: str,
+) -> dict[tuple[str, str], EvaluationOutcomeRecord]:
+    index: dict[tuple[str, str], EvaluationOutcomeRecord] = {}
+    for record in records:
+        identity = record.comparison_identity
+        if identity in index:
+            raise ValueError(f"Duplicate {side} evaluation outcome identity: {identity!r}")
+        index[identity] = record
+    return index
 
 
 def _build_comparison_row(
