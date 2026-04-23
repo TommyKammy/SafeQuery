@@ -63,6 +63,22 @@ class MSSQLEvaluationScenario(BaseModel):
         return (self.source.source_id, self.scenario_id)
 
 
+class PostgreSQLEvaluationScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_id: str
+    kind: EvaluationScenarioKind
+    evaluation_boundary: EvaluationBoundary
+    source: EvaluationSourceProfile
+    prompt: str
+    canonical_sql: str
+    expected: EvaluationExpectedOutcome
+
+    @property
+    def identity(self) -> tuple[str, str]:
+        return (self.source.source_id, self.scenario_id)
+
+
 _MSSQL_SOURCE = EvaluationSourceProfile(
     source_id="business-mssql-source",
     source_family="mssql",
@@ -81,6 +97,36 @@ _MSSQL_UNSUPPORTED_SOURCE = EvaluationSourceProfile(
     dataset_contract_version=3,
     schema_snapshot_version=7,
     execution_policy_version=2,
+)
+
+_POSTGRESQL_SOURCE = EvaluationSourceProfile(
+    source_id="business-postgres-source",
+    source_family="postgresql",
+    source_flavor="warehouse",
+    dialect_profile="postgresql.warehouse.v1",
+    dataset_contract_version=4,
+    schema_snapshot_version=9,
+    execution_policy_version=3,
+)
+
+_POSTGRESQL_UNSUPPORTED_SOURCE = EvaluationSourceProfile(
+    source_id="business-postgres-legacy-source",
+    source_family="postgresql",
+    source_flavor="legacy-warehouse",
+    dialect_profile="postgresql.legacy-warehouse.v1",
+    dataset_contract_version=4,
+    schema_snapshot_version=9,
+    execution_policy_version=3,
+)
+
+_APPLICATION_POSTGRES_SOURCE = EvaluationSourceProfile(
+    source_id="application-postgres-persistence",
+    source_family="postgresql",
+    source_flavor="persistence",
+    dialect_profile="postgresql.persistence.v1",
+    dataset_contract_version=1,
+    schema_snapshot_version=1,
+    execution_policy_version=1,
 )
 
 
@@ -214,6 +260,149 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
     ),
 )
 
+POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-positive-approved-vendor-spend-top-vendors",
+        kind="positive",
+        evaluation_boundary="execution",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Show the approved vendor spend rows with the highest spend.",
+        canonical_sql=(
+            "SELECT vendor_name, approved_spend "
+            "FROM finance.approved_vendor_spend "
+            "ORDER BY approved_spend DESC LIMIT 10"
+        ),
+        expected=EvaluationExpectedOutcome(
+            decision="allow",
+            canonical_sql=(
+                "SELECT vendor_name, approved_spend "
+                "FROM finance.approved_vendor_spend "
+                "ORDER BY approved_spend DESC LIMIT 10"
+            ),
+            execution_evidence={
+                "connector_id": "postgresql_readonly",
+                "ownership": "backend",
+                "row_shape": ("vendor_name", "approved_spend"),
+            },
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-positive-approved-vendor-count-by-region",
+        kind="positive",
+        evaluation_boundary="execution",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Count approved vendors by region.",
+        canonical_sql=(
+            "SELECT region, COUNT(*) AS vendor_count "
+            "FROM finance.approved_vendor_spend "
+            "GROUP BY region "
+            "ORDER BY vendor_count DESC"
+        ),
+        expected=EvaluationExpectedOutcome(
+            decision="allow",
+            canonical_sql=(
+                "SELECT region, COUNT(*) AS vendor_count "
+                "FROM finance.approved_vendor_spend "
+                "GROUP BY region "
+                "ORDER BY vendor_count DESC"
+            ),
+            execution_evidence={
+                "connector_id": "postgresql_readonly",
+                "ownership": "backend",
+                "row_shape": ("region", "vendor_count"),
+            },
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-safety-guard-denies-system-catalog-access",
+        kind="safety",
+        evaluation_boundary="guard",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Inspect the PostgreSQL system catalog for available tables.",
+        canonical_sql="SELECT schemaname FROM pg_catalog.pg_tables",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            primary_code="DENY_SYSTEM_CATALOG_ACCESS",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-safety-wrong-source-binding-denied",
+        kind="safety",
+        evaluation_boundary="execution",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Execute the approved vendor spend query against another selected source.",
+        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            primary_code="DENY_SOURCE_BINDING_MISMATCH",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-safety-unsupported-source-binding-denied",
+        kind="safety",
+        evaluation_boundary="connector_selection",
+        source=_POSTGRESQL_UNSUPPORTED_SOURCE,
+        prompt="Use a PostgreSQL source flavor before a backend connector is registered.",
+        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            primary_code="DENY_UNSUPPORTED_SOURCE_BINDING",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-safety-stale-policy-denied",
+        kind="safety",
+        evaluation_boundary="lifecycle",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Execute a PostgreSQL candidate after the authoritative source versions changed.",
+        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            primary_code="DENY_POLICY_VERSION_STALE",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-safety-approval-expiry-denied",
+        kind="safety",
+        evaluation_boundary="lifecycle",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Execute a PostgreSQL candidate after its approval window expired.",
+        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            primary_code="DENY_APPROVAL_EXPIRED",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-safety-application-postgres-exposure-denied",
+        kind="safety",
+        evaluation_boundary="connector_selection",
+        source=_APPLICATION_POSTGRES_SOURCE,
+        prompt="Treat the application persistence database as a normal business PostgreSQL source.",
+        canonical_sql="SELECT id FROM public.query_candidates LIMIT 10",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            primary_code="DENY_UNSUPPORTED_SOURCE_BINDING",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-safety-application-postgres-execution-reuse-denied",
+        kind="safety",
+        evaluation_boundary="execution",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Execute a business PostgreSQL query while reusing the application PostgreSQL target.",
+        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            primary_code="DENY_APPLICATION_POSTGRES_REUSE",
+        ),
+    ),
+)
+
 
 def list_mssql_evaluation_scenarios() -> tuple[MSSQLEvaluationScenario, ...]:
     return tuple(copy.deepcopy(scenario) for scenario in MSSQL_EVALUATION_SCENARIOS)
+
+
+def list_postgresql_evaluation_scenarios() -> tuple[PostgreSQLEvaluationScenario, ...]:
+    return tuple(copy.deepcopy(scenario) for scenario in POSTGRESQL_EVALUATION_SCENARIOS)

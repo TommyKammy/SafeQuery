@@ -5,7 +5,9 @@ from app.features.evaluation.harness import (
     EvaluationScenarioKind,
     EvaluationSourceProfile,
     MSSQLEvaluationScenario,
+    PostgreSQLEvaluationScenario,
     list_mssql_evaluation_scenarios,
+    list_postgresql_evaluation_scenarios,
 )
 
 __all__ = [
@@ -13,5 +15,7 @@ __all__ = [
     "EvaluationScenarioKind",
     "EvaluationSourceProfile",
     "MSSQLEvaluationScenario",
+    "PostgreSQLEvaluationScenario",
     "list_mssql_evaluation_scenarios",
+    "list_postgresql_evaluation_scenarios",
 ]
