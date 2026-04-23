@@ -18,7 +18,7 @@ from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-MssqlQueryRunner = Callable[..., list[dict[str, Any]]]
+QueryRunner = Callable[..., list[dict[str, Any]]]
 
 
 class ExecutionResult(BaseModel):
@@ -87,13 +87,33 @@ def _default_mssql_query_runner(
         return [dict(zip(column_names, row)) for row in cursor.fetchall()]
 
 
+def _default_postgresql_query_runner(
+    *,
+    database_url: str,
+    canonical_sql: str,
+) -> list[dict[str, Any]]:
+    try:
+        import psycopg  # type: ignore[import-not-found]
+        from psycopg.rows import dict_row  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "psycopg must be installed before the PostgreSQL execution connector can run."
+        ) from exc
+
+    with psycopg.connect(database_url) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(canonical_sql)
+            return [dict(row) for row in cursor.fetchall()]
+
+
 def execute_candidate_sql(
     *,
     canonical_sql: NonEmptyTrimmedString,
     candidate_source: SourceBoundCandidateMetadata,
-    business_mssql_connection_string: NonEmptyTrimmedString,
+    business_mssql_connection_string: NonEmptyTrimmedString | None = None,
+    business_postgres_url: NonEmptyTrimmedString | None = None,
     selection: ExecutionConnectorSelection | None = None,
-    query_runner: MssqlQueryRunner | None = None,
+    query_runner: QueryRunner | None = None,
 ) -> ExecutionResult:
     resolved_selection = (
         selection
@@ -111,7 +131,31 @@ def execute_candidate_sql(
             message="Execution connectors must remain backend-owned.",
         )
 
-    if resolved_selection.connector_id != "mssql_readonly":
+    if resolved_selection.connector_id == "mssql_readonly":
+        if business_mssql_connection_string is None:
+            raise RuntimeError(
+                "A backend-owned business MSSQL connection string is required before "
+                "the MSSQL execution connector can run."
+            )
+
+        effective_query_runner = query_runner or _default_mssql_query_runner
+        rows = effective_query_runner(
+            connection_string=business_mssql_connection_string,
+            canonical_sql=canonical_sql,
+        )
+    elif resolved_selection.connector_id == "postgresql_readonly":
+        if business_postgres_url is None:
+            raise RuntimeError(
+                "A backend-owned business PostgreSQL URL is required before the "
+                "PostgreSQL execution connector can run."
+            )
+
+        effective_query_runner = query_runner or _default_postgresql_query_runner
+        rows = effective_query_runner(
+            database_url=business_postgres_url,
+            canonical_sql=canonical_sql,
+        )
+    else:
         raise ExecutionConnectorSelectionError(
             deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
             message=(
@@ -119,12 +163,6 @@ def execute_candidate_sql(
                 f"'{resolved_selection.connector_id}'."
             ),
         )
-
-    effective_query_runner = query_runner or _default_mssql_query_runner
-    rows = effective_query_runner(
-        connection_string=business_mssql_connection_string,
-        canonical_sql=canonical_sql,
-    )
     return ExecutionResult(
         source_id=resolved_selection.source_id,
         connector_id=resolved_selection.connector_id,
