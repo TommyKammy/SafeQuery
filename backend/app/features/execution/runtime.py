@@ -51,6 +51,7 @@ def _require_matching_selection(
     candidate_source: SourceBoundCandidateMetadata,
     selection: ExecutionConnectorSelection,
 ) -> None:
+    expected_selection = select_execution_connector(candidate_source=candidate_source)
     if (
         candidate_source.source_id.strip() != selection.source_id
         or candidate_source.source_family.strip() != selection.source_family
@@ -58,6 +59,8 @@ def _require_matching_selection(
             candidate_source=candidate_source,
             selection=selection,
         )
+        or selection.connector_id != expected_selection.connector_id
+        or selection.ownership != expected_selection.ownership
     ):
         raise ExecutionConnectorExecutionError(
             deny_code=DENY_SOURCE_BINDING_MISMATCH,
@@ -110,28 +113,23 @@ def execute_candidate_sql(
     *,
     canonical_sql: NonEmptyTrimmedString,
     candidate_source: SourceBoundCandidateMetadata,
+    selection: ExecutionConnectorSelection,
     business_mssql_connection_string: NonEmptyTrimmedString | None = None,
     business_postgres_url: NonEmptyTrimmedString | None = None,
-    selection: ExecutionConnectorSelection | None = None,
     query_runner: QueryRunner | None = None,
 ) -> ExecutionResult:
-    resolved_selection = (
-        selection
-        if selection is not None
-        else select_execution_connector(candidate_source=candidate_source)
-    )
     _require_matching_selection(
         candidate_source=candidate_source,
-        selection=resolved_selection,
+        selection=selection,
     )
 
-    if resolved_selection.ownership != "backend":
+    if selection.ownership != "backend":
         raise ExecutionConnectorExecutionError(
             deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
             message="Execution connectors must remain backend-owned.",
         )
 
-    if resolved_selection.connector_id == "mssql_readonly":
+    if selection.connector_id == "mssql_readonly":
         if business_mssql_connection_string is None:
             raise RuntimeError(
                 "A backend-owned business MSSQL connection string is required before "
@@ -143,7 +141,7 @@ def execute_candidate_sql(
             connection_string=business_mssql_connection_string,
             canonical_sql=canonical_sql,
         )
-    elif resolved_selection.connector_id == "postgresql_readonly":
+    elif selection.connector_id == "postgresql_readonly":
         if business_postgres_url is None:
             raise RuntimeError(
                 "A backend-owned business PostgreSQL URL is required before the "
@@ -160,12 +158,12 @@ def execute_candidate_sql(
             deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
             message=(
                 "No backend-owned execution runtime is registered for connector "
-                f"'{resolved_selection.connector_id}'."
+                f"'{selection.connector_id}'."
             ),
         )
     return ExecutionResult(
-        source_id=resolved_selection.source_id,
-        connector_id=resolved_selection.connector_id,
-        ownership=resolved_selection.ownership,
+        source_id=selection.source_id,
+        connector_id=selection.connector_id,
+        ownership=selection.ownership,
         rows=rows,
     )
