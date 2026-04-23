@@ -22,7 +22,9 @@ class EvaluationObservedOutcome(BaseModel):
 
     @model_validator(mode="after")
     def _validate_primary_code(self) -> "EvaluationObservedOutcome":
-        if self.decision == "reject" and self.primary_code is None:
+        if self.decision == "reject" and (
+            self.primary_code is None or not self.primary_code.strip()
+        ):
             raise ValueError("Reject outcomes must include a machine-readable primary code.")
         if self.decision == "allow" and self.primary_code is not None:
             raise ValueError("Allow outcomes must not include a primary deny code.")

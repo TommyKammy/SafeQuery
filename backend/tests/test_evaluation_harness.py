@@ -17,6 +17,7 @@ from app.db.models.source_registry import RegisteredSource, SourceActivationPost
 from app.features.auth.context import AuthenticatedSubject
 from app.features.evaluation import (
     EvaluationComparisonRow,
+    EvaluationObservedOutcome,
     EvaluationOutcomeRecord,
     EvaluationOutcomeSnapshot,
     MSSQLEvaluationScenario,
@@ -728,6 +729,17 @@ def test_evaluation_comparison_marks_profile_version_drift_as_regression() -> No
         "dialect_profile_version",
         "connector_profile_version",
     )
+
+
+@pytest.mark.parametrize("primary_code", ("", "   "))
+def test_evaluation_observed_outcome_reject_requires_non_blank_primary_code(
+    primary_code: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="Reject outcomes must include a machine-readable primary code.",
+    ):
+        EvaluationObservedOutcome(decision="reject", primary_code=primary_code)
 
 
 @pytest.mark.parametrize("duplicate_side", ("baseline", "candidate"))
