@@ -5,6 +5,7 @@ from typing import Any, Iterable as TypingIterable, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.evaluation.comparison import (
     EvaluationComparisonRow,
     EvaluationObservedOutcome,
@@ -45,6 +46,13 @@ class ReleaseGateFailure(BaseModel):
     detail: str
 
 
+class ReleaseGateAuditArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_id: str
+    event: SourceAwareAuditEvent
+
+
 class ReleaseGateDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -57,8 +65,10 @@ class ReleaseGateDecision(BaseModel):
 def reconstruct_release_gate(
     *,
     observed_artifacts: TypingIterable[Union[EvaluationOutcomeRecord, Mapping[str, Any]]],
+    audit_artifacts: TypingIterable[Union[ReleaseGateAuditArtifact, Mapping[str, Any]]] = (),
 ) -> ReleaseGateDecision:
     normalized_records: list[EvaluationOutcomeRecord] = []
+    normalized_audit_artifacts: list[ReleaseGateAuditArtifact] = []
     failures: list[ReleaseGateFailure] = []
 
     for artifact in observed_artifacts:
@@ -70,6 +80,16 @@ def reconstruct_release_gate(
             normalized_records.append(EvaluationOutcomeRecord.model_validate(artifact))
         except ValidationError as exc:
             failures.append(_validation_failure_for(artifact=artifact, error=exc))
+
+    for artifact in audit_artifacts:
+        if isinstance(artifact, ReleaseGateAuditArtifact):
+            normalized_audit_artifacts.append(artifact)
+            continue
+
+        try:
+            normalized_audit_artifacts.append(ReleaseGateAuditArtifact.model_validate(artifact))
+        except ValidationError as exc:
+            failures.append(_audit_validation_failure_for(artifact=artifact, error=exc))
 
     if failures:
         return ReleaseGateDecision(
@@ -84,6 +104,16 @@ def reconstruct_release_gate(
         candidate=tuple(normalized_records),
     )
     failures = [failure for row in comparison for failure in _failures_for_row(row)]
+    failures.extend(
+        _audit_failures_for_scenario(
+            scenario=scenario,
+            audit_artifacts=tuple(normalized_audit_artifacts),
+        )
+        for scenario in (
+            list_mssql_evaluation_scenarios() + list_postgresql_evaluation_scenarios()
+        )
+    )
+    failures = [failure for failure in failures if failure is not None]
 
     return ReleaseGateDecision(
         status="pass" if not failures else "fail",
@@ -144,6 +174,110 @@ def _validation_failure_for(
             f"{_error_location(validation_error['loc'])}: {validation_error['msg']}"
             for validation_error in errors
         ),
+    )
+
+
+def _audit_validation_failure_for(
+    *,
+    artifact: Any,
+    error: ValidationError,
+) -> ReleaseGateFailure:
+    errors = error.errors()
+    artifact_map = artifact if isinstance(artifact, Mapping) else {}
+    event = artifact_map.get("event")
+    event_map = event if isinstance(event, Mapping) else {}
+    source_id = event_map.get("source_id")
+    source_family = event_map.get("source_family")
+
+    return ReleaseGateFailure(
+        deny_code="DENY_MALFORMED_AUDIT_ARTIFACT",
+        source_id=source_id if isinstance(source_id, str) else None,
+        source_family=source_family if isinstance(source_family, str) else None,
+        scenario_id=_string_or_none(artifact_map.get("scenario_id")),
+        scenario_category=None,
+        detail="; ".join(
+            f"{_error_location(validation_error['loc'])}: {validation_error['msg']}"
+            for validation_error in errors
+        ),
+    )
+
+
+def _audit_failures_for_scenario(
+    *,
+    scenario: ScenarioArtifact,
+    audit_artifacts: tuple[ReleaseGateAuditArtifact, ...],
+) -> ReleaseGateFailure | None:
+    candidates = [
+        artifact.event
+        for artifact in audit_artifacts
+        if artifact.scenario_id == scenario.scenario_id
+    ]
+    if not candidates:
+        return ReleaseGateFailure(
+            deny_code="DENY_MISSING_AUDIT_COVERAGE",
+            source_id=scenario.source.source_id,
+            source_family=scenario.source.source_family,
+            scenario_id=scenario.scenario_id,
+            scenario_category=scenario.kind,
+            detail="Missing authoritative source-aware audit artifact for required scenario.",
+        )
+
+    expected_event_type = _expected_audit_event_type_for(scenario)
+    expected_primary_code = scenario.expected.primary_code
+    for event in candidates:
+        mismatches = _audit_mismatches_for_scenario(
+            scenario=scenario,
+            event=event,
+            expected_event_type=expected_event_type,
+            expected_primary_code=expected_primary_code,
+        )
+        if not mismatches:
+            return None
+
+    return ReleaseGateFailure(
+        deny_code="DENY_STALE_AUDIT_COVERAGE",
+        source_id=scenario.source.source_id,
+        source_family=scenario.source.source_family,
+        scenario_id=scenario.scenario_id,
+        scenario_category=scenario.kind,
+        detail=(
+            "No authoritative audit artifact matched the required source-aware "
+            f"scenario evidence: {', '.join(mismatches)}."
+        ),
+    )
+
+
+def _expected_audit_event_type_for(scenario: ScenarioArtifact) -> str:
+    if scenario.evaluation_boundary == "guard":
+        return "guard_evaluated"
+    if scenario.expected.decision == "allow":
+        return "execution_completed"
+    return "execution_denied"
+
+
+def _audit_mismatches_for_scenario(
+    *,
+    scenario: ScenarioArtifact,
+    event: SourceAwareAuditEvent,
+    expected_event_type: str,
+    expected_primary_code: str | None,
+) -> tuple[str, ...]:
+    expected_values = {
+        "event_type": expected_event_type,
+        "source_id": scenario.source.source_id,
+        "source_family": scenario.source.source_family,
+        "source_flavor": scenario.source.source_flavor,
+        "dialect_profile_version": scenario.source.dialect_profile_version,
+        "dataset_contract_version": scenario.source.dataset_contract_version,
+        "schema_snapshot_version": scenario.source.schema_snapshot_version,
+        "execution_policy_version": scenario.source.execution_policy_version,
+        "connector_profile_version": scenario.source.connector_profile_version,
+        "primary_deny_code": expected_primary_code,
+    }
+    return tuple(
+        field
+        for field, expected in expected_values.items()
+        if getattr(event, field) != expected
     )
 
 

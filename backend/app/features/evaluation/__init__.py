@@ -18,6 +18,7 @@ from app.features.evaluation.harness import (
     list_postgresql_evaluation_scenarios,
 )
 from app.features.evaluation.release_gate import (
+    ReleaseGateAuditArtifact,
     ReleaseGateDecision,
     ReleaseGateFailure,
     reconstruct_release_gate,
@@ -34,6 +35,7 @@ __all__ = [
     "EvaluationSourceProfile",
     "MSSQLEvaluationScenario",
     "PostgreSQLEvaluationScenario",
+    "ReleaseGateAuditArtifact",
     "ReleaseGateDecision",
     "ReleaseGateFailure",
     "compare_evaluation_outcomes",
