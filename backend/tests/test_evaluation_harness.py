@@ -57,10 +57,10 @@ MSSQL_TEST_CONNECTION_STRING = (
 )
 
 POSTGRESQL_TEST_URL = (
-    "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
+    "postgresql://placeholder_user:placeholder_password@business-postgres-source:5432/business"
 )
 APPLICATION_POSTGRESQL_TEST_URL = (
-    "postgresql://safequery:safequery@app-postgres:5432/safequery"
+    "postgresql://placeholder_user:placeholder_password@app-postgres:5432/safequery"
 )
 
 
