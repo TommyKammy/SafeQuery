@@ -138,6 +138,10 @@ class OperatorHistoryResultSummary(_SourceAwareHistoryPayload):
     def validate_result_summary(self) -> "OperatorHistoryResultSummary":
         if self.execution_status != self.result_state:
             raise ValueError("Result state must match the authoritative execution status.")
+        if self.execution_status == "execution_denied" and self.primary_deny_code is None:
+            raise ValueError(
+                "Execution-denied result summaries must include a primary_deny_code."
+            )
         if self.execution_status in {"empty", "completed"} and self.row_count is None:
             raise ValueError(
                 "Completed and empty result summaries must include a row_count summary."

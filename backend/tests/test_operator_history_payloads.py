@@ -144,6 +144,13 @@ def test_operator_history_result_summary_rejects_raw_result_rows() -> None:
     ("payload_overrides", "message"),
     [
         (
+            {
+                "result_state": "execution_denied",
+                "execution_status": "execution_denied",
+            },
+            "include a primary_deny_code",
+        ),
+        (
             {"result_state": "completed", "execution_status": "completed", "row_count": 1},
             "include truncation posture",
         ),
