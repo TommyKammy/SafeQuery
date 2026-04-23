@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, Callable
+from datetime import datetime
+from typing import Any, Callable, Optional
 from urllib.parse import unquote, urlsplit
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, PrivateAttr, StringConstraints
 from typing_extensions import Annotated
 
+from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.execution.connector_selection import (
     ExecutionConnectorSelection,
     ExecutionConnectorSelectionError,
@@ -57,11 +60,16 @@ class _PostgresConnectionIdentity:
 
 class ExecutionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    _audit_event: Optional[SourceAwareAuditEvent] = PrivateAttr(default=None)
 
     source_id: NonEmptyTrimmedString
     connector_id: NonEmptyTrimmedString
     ownership: str
     rows: list[dict[str, Any]]
+
+    @property
+    def audit_event(self) -> Optional[SourceAwareAuditEvent]:
+        return self._audit_event
 
 
 class ExecutableCandidateRecord(BaseModel):
@@ -71,10 +79,31 @@ class ExecutableCandidateRecord(BaseModel):
     source: SourceBoundCandidateMetadata
 
 
+class ExecutionAuditContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: UUID
+    occurred_at: datetime
+    request_id: str
+    correlation_id: str
+    user_subject: str
+    session_id: str
+    query_candidate_id: Optional[str] = None
+    candidate_owner_subject: Optional[str] = None
+    connector_profile_version: Optional[int] = None
+
+
 class ExecutionConnectorExecutionError(PermissionError):
-    def __init__(self, *, deny_code: str, message: str) -> None:
+    def __init__(
+        self,
+        *,
+        deny_code: str,
+        message: str,
+        audit_event: SourceAwareAuditEvent | None = None,
+    ) -> None:
         super().__init__(f"{deny_code}: {message}")
         self.deny_code = deny_code
+        self.audit_event = audit_event
 
 
 class ExecutionRuntimeCancelledError(RuntimeError):
@@ -91,10 +120,80 @@ def _source_flavor_matches(
     return candidate_flavor == selection_flavor
 
 
+def _execution_denial_cause_for_code(deny_code: str) -> str:
+    return {
+        DENY_APPLICATION_POSTGRES_REUSE: "application_postgresql_reuse",
+        DENY_SOURCE_BINDING_MISMATCH: "source_binding_mismatch",
+        DENY_UNSUPPORTED_SOURCE_BINDING: "unsupported_source_binding",
+    }.get(deny_code, "execution_denied")
+
+
+def _build_execution_audit_event(
+    *,
+    event_type: str,
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: ExecutionAuditContext | None,
+    primary_deny_code: str | None = None,
+    execution_row_count: int | None = None,
+    result_truncated: bool | None = None,
+) -> SourceAwareAuditEvent | None:
+    if audit_context is None:
+        return None
+
+    return SourceAwareAuditEvent(
+        event_id=audit_context.event_id,
+        event_type=event_type,
+        occurred_at=audit_context.occurred_at,
+        request_id=audit_context.request_id,
+        correlation_id=audit_context.correlation_id,
+        user_subject=audit_context.user_subject,
+        session_id=audit_context.session_id,
+        query_candidate_id=audit_context.query_candidate_id,
+        candidate_owner_subject=audit_context.candidate_owner_subject,
+        source_id=candidate_source.source_id,
+        source_family=candidate_source.source_family,
+        source_flavor=candidate_source.source_flavor,
+        dataset_contract_version=candidate_source.dataset_contract_version,
+        schema_snapshot_version=candidate_source.schema_snapshot_version,
+        connector_profile_version=audit_context.connector_profile_version,
+        primary_deny_code=primary_deny_code,
+        denial_cause=(
+            _execution_denial_cause_for_code(primary_deny_code)
+            if primary_deny_code is not None
+            else None
+        ),
+        candidate_state="denied" if primary_deny_code is not None else None,
+        execution_row_count=execution_row_count,
+        result_truncated=result_truncated,
+    )
+
+
+def _attach_execution_denial_audit_event(
+    *,
+    error: ExecutionConnectorExecutionError,
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: ExecutionAuditContext | None,
+) -> ExecutionConnectorExecutionError:
+    if error.audit_event is not None or audit_context is None:
+        return error
+    message = str(error).split(": ", 1)[1] if ": " in str(error) else str(error)
+    return ExecutionConnectorExecutionError(
+        deny_code=error.deny_code,
+        message=message,
+        audit_event=_build_execution_audit_event(
+            event_type="execution_denied",
+            candidate_source=candidate_source,
+            audit_context=audit_context,
+            primary_deny_code=error.deny_code,
+        ),
+    )
+
+
 def _require_matching_selection(
     *,
     candidate_source: SourceBoundCandidateMetadata,
     selection: ExecutionConnectorSelection,
+    audit_context: ExecutionAuditContext | None = None,
 ) -> None:
     expected_selection = select_execution_connector(candidate_source=candidate_source)
     if (
@@ -112,6 +211,12 @@ def _require_matching_selection(
             message=(
                 "The candidate-bound source metadata does not match the selected "
                 "connector binding."
+            ),
+            audit_event=_build_execution_audit_event(
+                event_type="execution_denied",
+                candidate_source=candidate_source,
+                audit_context=audit_context,
+                primary_deny_code=DENY_SOURCE_BINDING_MISMATCH,
             ),
         )
 
@@ -343,77 +448,96 @@ def execute_candidate_sql(
     application_postgres_url: NonEmptyTrimmedString | None = None,
     query_runner: QueryRunner | None = None,
     cancellation_probe: CancellationProbe | None = None,
+    audit_context: ExecutionAuditContext | None = None,
 ) -> ExecutionResult:
-    _require_matching_selection(
-        candidate_source=candidate.source,
-        selection=selection,
-    )
-
-    if selection.ownership != "backend":
-        raise ExecutionConnectorExecutionError(
-            deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
-            message="Execution connectors must remain backend-owned.",
+    try:
+        _require_matching_selection(
+            candidate_source=candidate.source,
+            selection=selection,
+            audit_context=audit_context,
         )
 
-    runtime_controls = _resolve_runtime_controls(
-        selection=selection,
-        cancellation_probe=cancellation_probe,
-    )
-    _raise_if_cancelled(
-        runtime_controls=runtime_controls,
-        message="Execution canceled before the backend-owned query runner started.",
-    )
-
-    if selection.connector_id == "mssql_readonly":
-        if business_mssql_connection_string is None:
-            raise RuntimeError(
-                "A backend-owned business MSSQL connection string is required before "
-                "the MSSQL execution connector can run."
+        if selection.ownership != "backend":
+            raise ExecutionConnectorExecutionError(
+                deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
+                message="Execution connectors must remain backend-owned.",
             )
 
-        effective_query_runner = query_runner or _default_mssql_query_runner
-        rows = _execute_query_runner(
-            query_runner=effective_query_runner,
-            runtime_controls=runtime_controls,
-            connection_string=business_mssql_connection_string,
-            canonical_sql=candidate.canonical_sql,
+        runtime_controls = _resolve_runtime_controls(
+            selection=selection,
+            cancellation_probe=cancellation_probe,
         )
-    elif selection.connector_id == "postgresql_readonly":
-        if business_postgres_url is None:
-            raise RuntimeError(
-                "A backend-owned business PostgreSQL URL is required before the "
-                "PostgreSQL execution connector can run."
+        _raise_if_cancelled(
+            runtime_controls=runtime_controls,
+            message="Execution canceled before the backend-owned query runner started.",
+        )
+
+        if selection.connector_id == "mssql_readonly":
+            if business_mssql_connection_string is None:
+                raise RuntimeError(
+                    "A backend-owned business MSSQL connection string is required before "
+                    "the MSSQL execution connector can run."
+                )
+
+            effective_query_runner = query_runner or _default_mssql_query_runner
+            rows = _execute_query_runner(
+                query_runner=effective_query_runner,
+                runtime_controls=runtime_controls,
+                connection_string=business_mssql_connection_string,
+                canonical_sql=candidate.canonical_sql,
+            )
+        elif selection.connector_id == "postgresql_readonly":
+            if business_postgres_url is None:
+                raise RuntimeError(
+                    "A backend-owned business PostgreSQL URL is required before the "
+                    "PostgreSQL execution connector can run."
+                )
+
+            if application_postgres_url is None:
+                from app.core.config import get_settings
+
+                application_postgres_url = str(get_settings().app_postgres_url)
+
+            _require_separate_postgresql_execution_target(
+                business_postgres_url=business_postgres_url,
+                application_postgres_url=application_postgres_url,
             )
 
-        if application_postgres_url is None:
-            from app.core.config import get_settings
+            effective_query_runner = query_runner or _default_postgresql_query_runner
+            rows = _execute_query_runner(
+                query_runner=effective_query_runner,
+                runtime_controls=runtime_controls,
+                database_url=business_postgres_url,
+                canonical_sql=candidate.canonical_sql,
+            )
+        else:
+            raise ExecutionConnectorSelectionError(
+                deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
+                message=(
+                    "No backend-owned execution runtime is registered for connector "
+                    f"'{selection.connector_id}'."
+                ),
+            )
+    except ExecutionConnectorExecutionError as exc:
+        raise _attach_execution_denial_audit_event(
+            error=exc,
+            candidate_source=candidate.source,
+            audit_context=audit_context,
+        ) from exc
 
-            application_postgres_url = str(get_settings().app_postgres_url)
+    capped_rows = _cap_rows(rows, runtime_controls=runtime_controls)
 
-        _require_separate_postgresql_execution_target(
-            business_postgres_url=business_postgres_url,
-            application_postgres_url=application_postgres_url,
-        )
-
-        effective_query_runner = query_runner or _default_postgresql_query_runner
-        rows = _execute_query_runner(
-            query_runner=effective_query_runner,
-            runtime_controls=runtime_controls,
-            database_url=business_postgres_url,
-            canonical_sql=candidate.canonical_sql,
-        )
-    else:
-        raise ExecutionConnectorSelectionError(
-            deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
-            message=(
-                "No backend-owned execution runtime is registered for connector "
-                f"'{selection.connector_id}'."
-            ),
-        )
-
-    return ExecutionResult(
+    result = ExecutionResult(
         source_id=selection.source_id,
         connector_id=selection.connector_id,
         ownership=selection.ownership,
-        rows=_cap_rows(rows, runtime_controls=runtime_controls),
+        rows=capped_rows,
     )
+    result._audit_event = _build_execution_audit_event(
+        event_type="execution_completed",
+        candidate_source=candidate.source,
+        audit_context=audit_context,
+        execution_row_count=len(capped_rows),
+        result_truncated=len(rows) > len(capped_rows),
+    )
+    return result
