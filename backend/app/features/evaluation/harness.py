@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, PositiveInt, model_validator
@@ -215,4 +216,4 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
 
 
 def list_mssql_evaluation_scenarios() -> tuple[MSSQLEvaluationScenario, ...]:
-    return MSSQL_EVALUATION_SCENARIOS
+    return tuple(copy.deepcopy(scenario) for scenario in MSSQL_EVALUATION_SCENARIOS)

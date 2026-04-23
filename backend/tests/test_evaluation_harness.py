@@ -171,6 +171,24 @@ def test_mssql_evaluation_fixtures_are_source_bound_and_reconstructable() -> Non
             assert scenario.expected.primary_code
 
 
+def test_mssql_evaluation_fixture_listing_returns_defensive_copies() -> None:
+    first_read = list_mssql_evaluation_scenarios()
+    mutated_scenario = first_read[0]
+    original_scenario_id = mutated_scenario.scenario_id
+    original_source_id = mutated_scenario.source.source_id
+
+    mutated_scenario.scenario_id = "mutated-scenario-id"
+    mutated_scenario.source.source_id = "mutated-source-id"
+
+    second_read = list_mssql_evaluation_scenarios()
+    fresh_scenario = second_read[0]
+
+    assert fresh_scenario is not mutated_scenario
+    assert fresh_scenario.source is not mutated_scenario.source
+    assert fresh_scenario.scenario_id == original_scenario_id
+    assert fresh_scenario.source.source_id == original_source_id
+
+
 @pytest.mark.parametrize(
     "scenario_id",
     (
