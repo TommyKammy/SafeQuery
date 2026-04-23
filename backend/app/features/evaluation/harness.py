@@ -17,6 +17,8 @@ class EvaluationSourceProfile(BaseModel):
     source_family: str
     source_flavor: str
     dialect_profile: str
+    dialect_profile_version: Optional[PositiveInt] = None
+    connector_profile_version: Optional[PositiveInt] = None
     dataset_contract_version: PositiveInt
     schema_snapshot_version: PositiveInt
     execution_policy_version: PositiveInt
@@ -84,6 +86,8 @@ _MSSQL_SOURCE = EvaluationSourceProfile(
     source_family="mssql",
     source_flavor="sqlserver",
     dialect_profile="mssql.sqlserver.v1",
+    dialect_profile_version=1,
+    connector_profile_version=1,
     dataset_contract_version=3,
     schema_snapshot_version=7,
     execution_policy_version=2,
@@ -94,6 +98,7 @@ _MSSQL_UNSUPPORTED_SOURCE = EvaluationSourceProfile(
     source_family="mssql",
     source_flavor="legacy-sqlserver",
     dialect_profile="mssql.legacy-sqlserver.v1",
+    dialect_profile_version=1,
     dataset_contract_version=3,
     schema_snapshot_version=7,
     execution_policy_version=2,
@@ -104,6 +109,8 @@ _POSTGRESQL_SOURCE = EvaluationSourceProfile(
     source_family="postgresql",
     source_flavor="warehouse",
     dialect_profile="postgresql.warehouse.v1",
+    dialect_profile_version=1,
+    connector_profile_version=1,
     dataset_contract_version=4,
     schema_snapshot_version=9,
     execution_policy_version=3,
@@ -114,6 +121,7 @@ _POSTGRESQL_UNSUPPORTED_SOURCE = EvaluationSourceProfile(
     source_family="postgresql",
     source_flavor="legacy-warehouse",
     dialect_profile="postgresql.legacy-warehouse.v1",
+    dialect_profile_version=1,
     dataset_contract_version=4,
     schema_snapshot_version=9,
     execution_policy_version=3,
@@ -124,6 +132,8 @@ _APPLICATION_POSTGRES_SOURCE = EvaluationSourceProfile(
     source_family="postgresql",
     source_flavor="persistence",
     dialect_profile="postgresql.persistence.v1",
+    dialect_profile_version=1,
+    connector_profile_version=1,
     dataset_contract_version=1,
     schema_snapshot_version=1,
     execution_policy_version=1,
