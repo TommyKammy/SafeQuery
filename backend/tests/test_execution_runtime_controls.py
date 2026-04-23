@@ -9,6 +9,7 @@ from app.features.execution.connector_selection import ExecutionConnectorSelecti
 from app.features.execution.runtime import (
     DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY,
     DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY,
+    ExecutableCandidateRecord,
     ExecutionRuntimeCancelledError,
     ExecutionRuntimeControls,
     _default_mssql_query_runner,
@@ -47,6 +48,23 @@ def _selection(
     )
 
 
+def _candidate(
+    *,
+    canonical_sql: str,
+    source_id: str,
+    source_family: str,
+    source_flavor: str | None,
+) -> ExecutableCandidateRecord:
+    return ExecutableCandidateRecord(
+        canonical_sql=canonical_sql,
+        source=_candidate_source(
+            source_id=source_id,
+            source_family=source_family,
+            source_flavor=source_flavor,
+        ),
+    )
+
+
 def test_execute_candidate_sql_passes_source_aware_controls_to_mssql_runner() -> None:
     from app.features.execution import execute_candidate_sql
 
@@ -64,8 +82,8 @@ def test_execute_candidate_sql_passes_source_aware_controls_to_mssql_runner() ->
         return [{"vendor_name": "Northwind"}]
 
     execute_candidate_sql(
-        canonical_sql="SELECT TOP 1 vendor_name FROM dbo.approved_vendor_spend",
-        candidate_source=_candidate_source(
+        candidate=_candidate(
+            canonical_sql="SELECT TOP 1 vendor_name FROM dbo.approved_vendor_spend",
             source_id="business-mssql-source",
             source_family="mssql",
             source_flavor="sqlserver",
@@ -111,11 +129,11 @@ def test_execute_candidate_sql_passes_source_aware_controls_to_postgresql_runner
         return [{"vendor_name": "Northwind"}]
 
     execute_candidate_sql(
-        canonical_sql=(
-            "SELECT vendor_name FROM finance.approved_vendor_spend "
-            "ORDER BY approved_spend DESC LIMIT 1"
-        ),
-        candidate_source=_candidate_source(
+        candidate=_candidate(
+            canonical_sql=(
+                "SELECT vendor_name FROM finance.approved_vendor_spend "
+                "ORDER BY approved_spend DESC LIMIT 1"
+            ),
             source_id="approved-spend",
             source_family="postgresql",
             source_flavor="warehouse",
@@ -152,8 +170,8 @@ def test_execute_candidate_sql_blocks_pre_cancelled_execution_fail_closed() -> N
         match=r"Execution canceled before the backend-owned query runner started\.",
     ):
         execute_candidate_sql(
-            canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
-            candidate_source=_candidate_source(
+            candidate=_candidate(
+                canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
                 source_id="approved-spend",
                 source_family="postgresql",
                 source_flavor="warehouse",
@@ -176,8 +194,8 @@ def test_execute_candidate_sql_caps_rows_to_source_bound_maximum() -> None:
     from app.features.execution import execute_candidate_sql
 
     result = execute_candidate_sql(
-        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend",
-        candidate_source=_candidate_source(
+        candidate=_candidate(
+            canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend",
             source_id="approved-spend",
             source_family="postgresql",
             source_flavor="warehouse",

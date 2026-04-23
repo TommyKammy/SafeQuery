@@ -6,6 +6,7 @@ from app.features.execution.connector_selection import (
     select_execution_connector,
 )
 from app.features.execution.runtime import (
+    ExecutableCandidateRecord,
     ExecutionConnectorExecutionError,
     ExecutionRuntimeCancelledError,
     ExecutionRuntimeControls,
@@ -14,6 +15,7 @@ from app.features.execution.runtime import (
 )
 
 __all__ = [
+    "ExecutableCandidateRecord",
     "ExecutionConnectorExecutionError",
     "ExecutionConnectorSelection",
     "ExecutionConnectorSelectionError",

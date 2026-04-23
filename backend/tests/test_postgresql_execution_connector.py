@@ -8,6 +8,7 @@ import pytest
 from app.features.execution.connector_selection import ExecutionConnectorSelection
 from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
 from app.features.execution.runtime import (
+    ExecutableCandidateRecord,
     ExecutionRuntimeControls,
     _default_postgresql_query_runner,
 )
@@ -45,6 +46,23 @@ def _selection(
     )
 
 
+def _candidate(
+    *,
+    canonical_sql: str,
+    source_id: str = "approved-spend",
+    source_family: str = "postgresql",
+    source_flavor: str | None = "warehouse",
+) -> ExecutableCandidateRecord:
+    return ExecutableCandidateRecord(
+        canonical_sql=canonical_sql,
+        source=_candidate_source(
+            source_id=source_id,
+            source_family=source_family,
+            source_flavor=source_flavor,
+        ),
+    )
+
+
 def test_execute_postgresql_connector_uses_backend_owned_connection_path() -> None:
     from app.features.execution import execute_candidate_sql
 
@@ -61,12 +79,13 @@ def test_execute_postgresql_connector_uses_backend_owned_connection_path() -> No
         ]
 
     result = execute_candidate_sql(
-        canonical_sql=(
-            "SELECT vendor_name, approved_spend "
-            "FROM finance.approved_vendor_spend "
-            "ORDER BY approved_spend DESC LIMIT 1"
+        candidate=_candidate(
+            canonical_sql=(
+                "SELECT vendor_name, approved_spend "
+                "FROM finance.approved_vendor_spend "
+                "ORDER BY approved_spend DESC LIMIT 1"
+            )
         ),
-        candidate_source=_candidate_source(),
         selection=_selection(),
         business_postgres_url=(
             "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
@@ -108,8 +127,9 @@ def test_execute_postgresql_connector_rejects_selection_binding_mismatch_fail_cl
         match="candidate-bound source metadata does not match the selected connector binding",
     ) as exc_info:
         execute_candidate_sql(
-            canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
-            candidate_source=_candidate_source(),
+            candidate=_candidate(
+                canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"
+            ),
             selection=_selection(source_id="other-source"),
             business_postgres_url=(
                 "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
