@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from time import perf_counter
 from uuid import uuid4
 
@@ -25,6 +26,7 @@ from app.features.auth.context import (
 )
 from app.services.health import check_database_health
 from app.services.request_preview import (
+    PreviewAuditContext,
     PreviewSubmissionContractError,
     PreviewSubmissionRequest,
     PreviewSubmissionResponse,
@@ -160,6 +162,7 @@ def create_app() -> FastAPI:
 
     @app.post("/requests/preview", response_model=PreviewSubmissionResponse)
     def create_request_preview(
+        request: Request,
         payload: PreviewSubmissionRequest,
         authenticated_subject: AuthenticatedSubject = Depends(
             require_authenticated_subject
@@ -167,7 +170,30 @@ def create_app() -> FastAPI:
         session: Session = Depends(require_preview_submission_session),
     ) -> PreviewSubmissionResponse:
         try:
-            return submit_preview_request(payload, authenticated_subject, session)
+            request_id = getattr(request.state, "request_id", None)
+            if not isinstance(request_id, str) or not request_id.strip():
+                raise HTTPException(
+                    status_code=500,
+                    detail="Request audit context is unavailable.",
+                )
+
+            user_subject = authenticated_subject.normalized_subject_id()
+            audit_context = PreviewAuditContext(
+                occurred_at=datetime.now(timezone.utc),
+                request_id=request_id,
+                correlation_id=str(uuid4()),
+                user_subject=user_subject,
+                session_id=str(uuid4()),
+                query_candidate_id=str(uuid4()),
+                candidate_owner_subject=user_subject,
+                application_version=f"safequery-api/{app.version}",
+            )
+            return submit_preview_request(
+                payload,
+                authenticated_subject,
+                session,
+                audit_context=audit_context,
+            )
         except PreviewSubmissionContractError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

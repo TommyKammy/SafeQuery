@@ -267,33 +267,70 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        response_body = response.json()
         self.assertEqual(
-            response.json(),
+            response_body["request"],
             {
-                "request": {
-                    "question": "Show approved vendors by quarterly spend",
-                    "source_id": "sap-approved-spend",
-                    "state": "submitted",
-                },
-                "candidate": {
-                    "source_id": "sap-approved-spend",
-                    "source_family": "postgresql",
-                    "source_flavor": "warehouse",
-                    "dataset_contract_version": 1,
-                    "schema_snapshot_version": 1,
-                    "state": "preview_ready",
-                },
-                "audit": {
-                    "source_id": "sap-approved-spend",
-                    "state": "recorded",
-                    "events": [],
-                },
-                "evaluation": {
-                    "source_id": "sap-approved-spend",
-                    "state": "pending",
-                },
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+                "state": "submitted",
             },
         )
+        self.assertEqual(
+            response_body["candidate"],
+            {
+                "source_id": "sap-approved-spend",
+                "source_family": "postgresql",
+                "source_flavor": "warehouse",
+                "dataset_contract_version": 1,
+                "schema_snapshot_version": 1,
+                "state": "preview_ready",
+            },
+        )
+        self.assertEqual(
+            response_body["evaluation"],
+            {
+                "source_id": "sap-approved-spend",
+                "state": "pending",
+            },
+        )
+
+        audit = response_body["audit"]
+        self.assertEqual(audit["source_id"], "sap-approved-spend")
+        self.assertEqual(audit["state"], "recorded")
+        self.assertEqual(
+            [event["event_type"] for event in audit["events"]],
+            [
+                "query_submitted",
+                "generation_requested",
+                "generation_completed",
+                "guard_evaluated",
+            ],
+        )
+        self.assertEqual(
+            audit["events"][0]["request_id"],
+            response.headers["X-Request-ID"],
+        )
+
+        for event in audit["events"]:
+            self.assertEqual(event["request_id"], response.headers["X-Request-ID"])
+            self.assertTrue(event["correlation_id"])
+            self.assertEqual(event["user_subject"], "user:alice")
+            self.assertTrue(event["session_id"])
+            self.assertEqual(event["source_id"], "sap-approved-spend")
+            self.assertEqual(event["source_family"], "postgresql")
+            self.assertEqual(event["source_flavor"], "warehouse")
+            self.assertEqual(event["dataset_contract_version"], 1)
+            self.assertEqual(event["schema_snapshot_version"], 1)
+            self.assertEqual(event["application_version"], "safequery-api/0.1.0")
+
+        self.assertEqual(
+            audit["events"][2]["query_candidate_id"],
+            audit["events"][3]["query_candidate_id"],
+        )
+        self.assertEqual(audit["events"][2]["candidate_owner_subject"], "user:alice")
+        self.assertEqual(audit["events"][3]["candidate_owner_subject"], "user:alice")
+        self.assertEqual(audit["events"][3]["candidate_state"], "preview_ready")
 
     def test_preview_submission_rejects_subject_matching_only_security_review_binding(self) -> None:
         self.app.dependency_overrides[require_authenticated_subject] = lambda: AuthenticatedSubject(
