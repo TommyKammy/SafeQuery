@@ -98,6 +98,10 @@ def test_execute_candidate_sql_rejects_connector_swaps_on_bound_source() -> None
 
     assert exc_info.value.deny_code == DENY_SOURCE_BINDING_MISMATCH
     assert exc_info.value.audit_event is not None
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_denied",
+    ]
     assert {
         "event_type": "execution_denied",
         "request_id": "request-123",
@@ -130,6 +134,11 @@ def test_execute_candidate_sql_returns_source_aware_completion_audit_event() -> 
     )
 
     assert result.audit_event is not None
+    assert [event.event_type for event in result.audit_events] == [
+        "execution_requested",
+        "execution_started",
+        "execution_completed",
+    ]
     assert {
         "event_type": "execution_completed",
         "source_id": "approved-spend",

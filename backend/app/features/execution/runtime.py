@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Optional
 from urllib.parse import unquote, urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, StringConstraints
 from typing_extensions import Annotated
@@ -61,6 +61,7 @@ class _PostgresConnectionIdentity:
 class ExecutionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     _audit_event: Optional[SourceAwareAuditEvent] = PrivateAttr(default=None)
+    _audit_events: list[SourceAwareAuditEvent] = PrivateAttr(default_factory=list)
 
     source_id: NonEmptyTrimmedString
     connector_id: NonEmptyTrimmedString
@@ -70,6 +71,10 @@ class ExecutionResult(BaseModel):
     @property
     def audit_event(self) -> Optional[SourceAwareAuditEvent]:
         return self._audit_event
+
+    @property
+    def audit_events(self) -> list[SourceAwareAuditEvent]:
+        return list(self._audit_events)
 
 
 class ExecutableCandidateRecord(BaseModel):
@@ -100,10 +105,14 @@ class ExecutionConnectorExecutionError(PermissionError):
         deny_code: str,
         message: str,
         audit_event: SourceAwareAuditEvent | None = None,
+        audit_events: list[SourceAwareAuditEvent] | None = None,
     ) -> None:
         super().__init__(f"{deny_code}: {message}")
         self.deny_code = deny_code
-        self.audit_event = audit_event
+        self.audit_events = list(audit_events or ([audit_event] if audit_event else []))
+        self.audit_event = audit_event or (
+            self.audit_events[-1] if self.audit_events else None
+        )
 
 
 class ExecutionRuntimeCancelledError(RuntimeError):
@@ -141,7 +150,11 @@ def _build_execution_audit_event(
         return None
 
     return SourceAwareAuditEvent(
-        event_id=audit_context.event_id,
+        event_id=(
+            audit_context.event_id
+            if event_type in {"execution_completed", "execution_denied"}
+            else uuid4()
+        ),
         event_type=event_type,
         occurred_at=audit_context.occurred_at,
         request_id=audit_context.request_id,
@@ -168,6 +181,44 @@ def _build_execution_audit_event(
     )
 
 
+def _build_execution_audit_events(
+    *,
+    event_types: list[str],
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: ExecutionAuditContext | None,
+    primary_deny_code: str | None = None,
+    execution_row_count: int | None = None,
+    result_truncated: bool | None = None,
+) -> list[SourceAwareAuditEvent]:
+    if audit_context is None:
+        return []
+
+    events: list[SourceAwareAuditEvent] = []
+    causation_event_id: UUID | None = None
+    for event_type in event_types:
+        event = _build_execution_audit_event(
+            event_type=event_type,
+            candidate_source=candidate_source,
+            audit_context=audit_context,
+            primary_deny_code=(
+                primary_deny_code if event_type == "execution_denied" else None
+            ),
+            execution_row_count=(
+                execution_row_count if event_type == "execution_completed" else None
+            ),
+            result_truncated=(
+                result_truncated if event_type == "execution_completed" else None
+            ),
+        )
+        if event is None:
+            continue
+        if causation_event_id is not None:
+            event.causation_event_id = causation_event_id
+        causation_event_id = event.event_id
+        events.append(event)
+    return events
+
+
 def _attach_execution_denial_audit_event(
     *,
     error: ExecutionConnectorExecutionError,
@@ -180,8 +231,8 @@ def _attach_execution_denial_audit_event(
     return ExecutionConnectorExecutionError(
         deny_code=error.deny_code,
         message=message,
-        audit_event=_build_execution_audit_event(
-            event_type="execution_denied",
+        audit_events=_build_execution_audit_events(
+            event_types=["execution_requested", "execution_denied"],
             candidate_source=candidate_source,
             audit_context=audit_context,
             primary_deny_code=error.deny_code,
@@ -211,12 +262,6 @@ def _require_matching_selection(
             message=(
                 "The candidate-bound source metadata does not match the selected "
                 "connector binding."
-            ),
-            audit_event=_build_execution_audit_event(
-                event_type="execution_denied",
-                candidate_source=candidate_source,
-                audit_context=audit_context,
-                primary_deny_code=DENY_SOURCE_BINDING_MISMATCH,
             ),
         )
 
@@ -533,11 +578,12 @@ def execute_candidate_sql(
         ownership=selection.ownership,
         rows=capped_rows,
     )
-    result._audit_event = _build_execution_audit_event(
-        event_type="execution_completed",
+    result._audit_events = _build_execution_audit_events(
+        event_types=["execution_requested", "execution_started", "execution_completed"],
         candidate_source=candidate.source,
         audit_context=audit_context,
         execution_row_count=len(capped_rows),
         result_truncated=len(rows) > len(capped_rows),
     )
+    result._audit_event = result._audit_events[-1] if result._audit_events else None
     return result

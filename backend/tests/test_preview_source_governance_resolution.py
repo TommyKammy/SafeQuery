@@ -14,6 +14,7 @@ from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewSt
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
 from app.services.request_preview import (
+    PreviewAuditContext,
     PreviewSubmissionContractError,
     PreviewSubmissionRequest,
     submit_preview_request,
@@ -121,6 +122,66 @@ def test_preview_submission_resolves_persisted_source_governance_records() -> No
         )
 
     assert response.model_dump()["candidate"]["source_id"] == "persisted-approved-spend"
+
+
+def test_preview_submission_emits_source_aware_lifecycle_audit_events() -> None:
+    with _session_scope() as session:
+        _seed_authoritative_source_governance(
+            session,
+            source_id="persisted-approved-spend",
+        )
+
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="persisted-approved-spend",
+            ),
+            AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime.now(timezone.utc),
+                request_id="request-123",
+                correlation_id="correlation-123",
+                user_subject="user:alice",
+                session_id="session-123",
+                query_candidate_id="candidate-123",
+                candidate_owner_subject="user:alice",
+                guard_version="guard-profile-v1",
+                application_version="safequery-test",
+            ),
+        )
+
+    assert [event.event_type for event in response.audit.events] == [
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated",
+    ]
+    for event in response.audit.events:
+        assert {
+            "request_id": "request-123",
+            "correlation_id": "correlation-123",
+            "user_subject": "user:alice",
+            "session_id": "session-123",
+            "source_id": "persisted-approved-spend",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+            "dataset_contract_version": 1,
+            "schema_snapshot_version": 1,
+            "application_version": "safequery-test",
+        }.items() <= event.model_dump(exclude_none=True).items()
+
+    guard_event = response.audit.events[-1].model_dump(exclude_none=True)
+    assert {
+        "event_type": "guard_evaluated",
+        "query_candidate_id": "candidate-123",
+        "candidate_owner_subject": "user:alice",
+        "guard_version": "guard-profile-v1",
+        "candidate_state": "preview_ready",
+    }.items() <= guard_event.items()
 
 
 def test_preview_submission_rejects_missing_active_contract_linkage() -> None:
