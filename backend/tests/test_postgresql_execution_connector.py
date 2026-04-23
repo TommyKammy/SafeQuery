@@ -64,6 +64,7 @@ def test_execute_postgresql_connector_uses_backend_owned_connection_path() -> No
             "ORDER BY approved_spend DESC LIMIT 1"
         ),
         candidate_source=_candidate_source(),
+        selection=_selection(),
         business_postgres_url=(
             "postgresql://safequery_exec:super-secret@business-postgres-source:5432/business"
         ),
