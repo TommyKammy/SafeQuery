@@ -82,6 +82,24 @@ def test_operator_history_candidate_summary_rejects_reopen_source_retargeting() 
         )
 
 
+def test_operator_history_summary_payloads_are_immutable() -> None:
+    candidate = OperatorHistoryCandidateSummary(
+        request_id="request-123",
+        candidate_id="candidate-123",
+        candidate_state="preview_ready",
+        guard_status="allow",
+        sql_review_anchor="sha256:preview-123",
+        occurred_at=datetime.now(timezone.utc),
+        **_source_fields(),
+    )
+
+    with pytest.raises(ValidationError, match="Instance is frozen"):
+        candidate.source_id = "marketing-spend"
+
+    with pytest.raises(ValidationError, match="Instance is frozen"):
+        candidate.reopened_draft_source_id = "marketing-spend"
+
+
 def test_operator_history_terminal_summaries_preserve_authoritative_state_mapping() -> None:
     denial = OperatorHistoryDenialSummary(
         request_id="request-123",
@@ -122,6 +140,19 @@ def test_operator_history_terminal_summaries_preserve_authoritative_state_mappin
     assert invalidation.guard_status == "invalidated"
     assert result.execution_status == "empty"
     assert result.row_count == 0
+
+
+def test_operator_history_run_summary_requires_primary_deny_code_when_execution_denied() -> None:
+    with pytest.raises(ValidationError, match="include a primary_deny_code"):
+        OperatorHistoryRunSummary(
+            request_id="request-123",
+            candidate_id="candidate-123",
+            run_id="run-123",
+            execution_status="execution_denied",
+            occurred_at=datetime.now(timezone.utc),
+            audit_event_id=uuid4(),
+            **_source_fields(),
+        )
 
 
 def test_operator_history_result_summary_rejects_raw_result_rows() -> None:

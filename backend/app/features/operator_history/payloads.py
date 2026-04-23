@@ -52,7 +52,7 @@ ResultState = Literal["execution_denied", "failed", "canceled", "empty", "comple
 
 
 class _SourceAwareHistoryPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     source_id: SourceIdentifier
     source_family: SourceFamily
@@ -96,6 +96,14 @@ class OperatorHistoryRunSummary(_SourceAwareHistoryPayload):
     row_count: Optional[NonNegativeInt] = None
     result_truncated: Optional[bool] = None
     primary_deny_code: Optional[NonEmptyTrimmedString] = None
+
+    @model_validator(mode="after")
+    def validate_run_summary(self) -> "OperatorHistoryRunSummary":
+        if self.execution_status == "execution_denied" and self.primary_deny_code is None:
+            raise ValueError(
+                "Execution-denied run summaries must include a primary_deny_code."
+            )
+        return self
 
 
 class OperatorHistoryDenialSummary(_SourceAwareHistoryPayload):
