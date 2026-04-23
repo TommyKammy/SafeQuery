@@ -8,10 +8,10 @@ from app.features.operator_history.payloads import (
 )
 
 __all__ = [
-    "OperatorHistoryRequestSummary",
     "OperatorHistoryCandidateSummary",
-    "OperatorHistoryRunSummary",
     "OperatorHistoryDenialSummary",
     "OperatorHistoryInvalidationSummary",
+    "OperatorHistoryRequestSummary",
     "OperatorHistoryResultSummary",
+    "OperatorHistoryRunSummary",
 ]

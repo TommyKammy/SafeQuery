@@ -138,3 +138,36 @@ def test_operator_history_result_summary_rejects_raw_result_rows() -> None:
             rows=[{"vendor_name": "Acme"}],
             **_source_fields(),
         )
+
+
+@pytest.mark.parametrize(
+    ("payload_overrides", "message"),
+    [
+        (
+            {"result_state": "completed", "execution_status": "completed", "row_count": 1},
+            "include truncation posture",
+        ),
+        (
+            {
+                "result_state": "empty",
+                "execution_status": "empty",
+                "row_count": 0,
+                "result_truncated": True,
+            },
+            "set result_truncated=False",
+        ),
+    ],
+)
+def test_operator_history_result_summary_enforces_explicit_truncation_posture(
+    payload_overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        OperatorHistoryResultSummary(
+            request_id="request-123",
+            candidate_id="candidate-123",
+            run_id="run-123",
+            occurred_at=datetime.now(timezone.utc),
+            audit_event_id=uuid4(),
+            **_source_fields(),
+            **payload_overrides,
+        )

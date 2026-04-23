@@ -142,8 +142,14 @@ class OperatorHistoryResultSummary(_SourceAwareHistoryPayload):
             raise ValueError(
                 "Completed and empty result summaries must include a row_count summary."
             )
+        if self.execution_status in {"empty", "completed"} and self.result_truncated is None:
+            raise ValueError(
+                "Completed and empty result summaries must include truncation posture."
+            )
         if self.execution_status == "empty" and self.row_count != 0:
             raise ValueError("Empty result summaries must report row_count=0.")
+        if self.execution_status == "empty" and self.result_truncated is not False:
+            raise ValueError("Empty result summaries must set result_truncated=False.")
         if self.execution_status in {"execution_denied", "failed", "canceled"}:
             if self.row_count is not None:
                 raise ValueError(
