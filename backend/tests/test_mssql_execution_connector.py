@@ -6,6 +6,7 @@ import pytest
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
 from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
+from app.features.execution.runtime import ExecutableCandidateRecord
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
@@ -40,6 +41,23 @@ def _selection(
     )
 
 
+def _candidate(
+    *,
+    canonical_sql: str,
+    source_id: str = "business-mssql-source",
+    source_family: str = "mssql",
+    source_flavor: str | None = "sqlserver",
+) -> ExecutableCandidateRecord:
+    return ExecutableCandidateRecord(
+        canonical_sql=canonical_sql,
+        source=_candidate_source(
+            source_id=source_id,
+            source_family=source_family,
+            source_flavor=source_flavor,
+        ),
+    )
+
+
 def test_execute_mssql_connector_uses_backend_owned_connection_path() -> None:
     from app.features.execution import execute_candidate_sql
 
@@ -56,8 +74,9 @@ def test_execute_mssql_connector_uses_backend_owned_connection_path() -> None:
         ]
 
     result = execute_candidate_sql(
-        canonical_sql="SELECT TOP 1 vendor_name, approved_spend FROM dbo.approved_vendor_spend",
-        candidate_source=_candidate_source(),
+        candidate=_candidate(
+            canonical_sql="SELECT TOP 1 vendor_name, approved_spend FROM dbo.approved_vendor_spend"
+        ),
         selection=_selection(),
         business_mssql_connection_string=(
             "Driver={ODBC Driver 18 for SQL Server};"
@@ -107,8 +126,9 @@ def test_execute_mssql_connector_rejects_selection_binding_mismatch_fail_closed(
         match="candidate-bound source metadata does not match the selected connector binding",
     ) as exc_info:
         execute_candidate_sql(
-            canonical_sql="SELECT TOP 1 vendor_name FROM dbo.approved_vendor_spend",
-            candidate_source=_candidate_source(),
+            candidate=_candidate(
+                canonical_sql="SELECT TOP 1 vendor_name FROM dbo.approved_vendor_spend"
+            ),
             selection=_selection(source_id="other-source"),
             business_mssql_connection_string=(
                 "Driver={ODBC Driver 18 for SQL Server};"

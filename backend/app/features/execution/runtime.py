@@ -50,6 +50,13 @@ class ExecutionResult(BaseModel):
     rows: list[dict[str, Any]]
 
 
+class ExecutableCandidateRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    canonical_sql: NonEmptyTrimmedString
+    source: SourceBoundCandidateMetadata
+
+
 class ExecutionConnectorExecutionError(PermissionError):
     def __init__(self, *, deny_code: str, message: str) -> None:
         super().__init__(f"{deny_code}: {message}")
@@ -242,8 +249,7 @@ def _cap_rows(
 
 def execute_candidate_sql(
     *,
-    canonical_sql: NonEmptyTrimmedString,
-    candidate_source: SourceBoundCandidateMetadata,
+    candidate: ExecutableCandidateRecord,
     selection: ExecutionConnectorSelection,
     business_mssql_connection_string: NonEmptyTrimmedString | None = None,
     business_postgres_url: NonEmptyTrimmedString | None = None,
@@ -251,7 +257,7 @@ def execute_candidate_sql(
     cancellation_probe: CancellationProbe | None = None,
 ) -> ExecutionResult:
     _require_matching_selection(
-        candidate_source=candidate_source,
+        candidate_source=candidate.source,
         selection=selection,
     )
 
@@ -282,7 +288,7 @@ def execute_candidate_sql(
             query_runner=effective_query_runner,
             runtime_controls=runtime_controls,
             connection_string=business_mssql_connection_string,
-            canonical_sql=canonical_sql,
+            canonical_sql=candidate.canonical_sql,
         )
     elif selection.connector_id == "postgresql_readonly":
         if business_postgres_url is None:
@@ -296,7 +302,7 @@ def execute_candidate_sql(
             query_runner=effective_query_runner,
             runtime_controls=runtime_controls,
             database_url=business_postgres_url,
-            canonical_sql=canonical_sql,
+            canonical_sql=candidate.canonical_sql,
         )
     else:
         raise ExecutionConnectorSelectionError(
