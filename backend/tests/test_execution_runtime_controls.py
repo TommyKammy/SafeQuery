@@ -10,9 +10,16 @@ from app.features.execution.runtime import (
     DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY,
     DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY,
     ExecutableCandidateRecord,
+    ExecutionConnectorExecutionError,
     ExecutionRuntimeCancelledError,
+    ExecutionRuntimeSafetyState,
     ExecutionRuntimeControls,
     _default_mssql_query_runner,
+)
+from app.features.guard.deny_taxonomy import (
+    DENY_RUNTIME_CONCURRENCY_LIMIT,
+    DENY_RUNTIME_KILL_SWITCH,
+    DENY_RUNTIME_RATE_LIMIT,
 )
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
@@ -225,6 +232,121 @@ def test_execute_candidate_sql_caps_rows_to_source_bound_maximum() -> None:
     assert result.rows[-1] == {
         "row_number": DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY["postgresql"] - 1
     }
+
+
+def test_execute_candidate_sql_denies_source_kill_switch_before_runner() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    def fake_query_runner(*, database_url: str, canonical_sql: str) -> list[dict[str, Any]]:
+        raise AssertionError("query runner should not run when source is disabled")
+
+    with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+        execute_candidate_sql(
+            candidate=_candidate(
+                canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
+                source_id="approved-spend",
+                source_family="postgresql",
+                source_flavor="warehouse",
+            ),
+            selection=_selection(
+                source_id="approved-spend",
+                source_family="postgresql",
+                source_flavor="warehouse",
+                connector_id="postgresql_readonly",
+            ),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            query_runner=fake_query_runner,
+            runtime_safety_state=ExecutionRuntimeSafetyState(
+                disabled_source_ids=frozenset({"approved-spend"})
+            ),
+        )
+
+    assert exc_info.value.deny_code == DENY_RUNTIME_KILL_SWITCH
+
+
+def test_execute_candidate_sql_denies_source_rate_limit_before_runner() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+        execute_candidate_sql(
+            candidate=_candidate(
+                canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
+                source_id="approved-spend",
+                source_family="postgresql",
+                source_flavor="warehouse",
+            ),
+            selection=_selection(
+                source_id="approved-spend",
+                source_family="postgresql",
+                source_flavor="warehouse",
+                connector_id="postgresql_readonly",
+            ),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            query_runner=lambda **_: [{"vendor_name": "Acme"}],
+            runtime_safety_state=ExecutionRuntimeSafetyState(
+                rate_limited_source_ids=frozenset({"approved-spend"})
+            ),
+        )
+
+    assert exc_info.value.deny_code == DENY_RUNTIME_RATE_LIMIT
+
+
+def test_execute_candidate_sql_keeps_rate_limits_source_specific() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    result = execute_candidate_sql(
+        candidate=_candidate(
+            canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
+            source_id="approved-spend",
+            source_family="postgresql",
+            source_flavor="warehouse",
+        ),
+        selection=_selection(
+            source_id="approved-spend",
+            source_family="postgresql",
+            source_flavor="warehouse",
+            connector_id="postgresql_readonly",
+        ),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
+        query_runner=lambda **_: [{"vendor_name": "Acme"}],
+        runtime_safety_state=ExecutionRuntimeSafetyState(
+            rate_limited_source_ids=frozenset({"marketing-spend"})
+        ),
+    )
+
+    assert result.rows == [{"vendor_name": "Acme"}]
+
+
+def test_execute_candidate_sql_denies_source_concurrency_limit_before_runner() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+        execute_candidate_sql(
+            candidate=_candidate(
+                canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
+                source_id="approved-spend",
+                source_family="postgresql",
+                source_flavor="warehouse",
+            ),
+            selection=_selection(
+                source_id="approved-spend",
+                source_family="postgresql",
+                source_flavor="warehouse",
+                connector_id="postgresql_readonly",
+            ),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            query_runner=lambda **_: [{"vendor_name": "Acme"}],
+            runtime_safety_state=ExecutionRuntimeSafetyState(
+                active_executions_by_source_id={"approved-spend": 1},
+                max_concurrent_executions_by_source_id={"approved-spend": 1},
+            ),
+        )
+
+    assert exc_info.value.deny_code == DENY_RUNTIME_CONCURRENCY_LIMIT
 
 
 def test_default_mssql_query_runner_requires_timeout_support(

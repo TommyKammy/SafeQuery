@@ -10,6 +10,7 @@ from app.features.execution.runtime import (
     ExecutionConnectorExecutionError,
     ExecutionRuntimeCancelledError,
     ExecutionRuntimeControls,
+    ExecutionRuntimeSafetyState,
     ExecutionResult,
     execute_candidate_sql,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "ExecutionConnectorSelectionError",
     "ExecutionRuntimeCancelledError",
     "ExecutionRuntimeControls",
+    "ExecutionRuntimeSafetyState",
     "ExecutionResult",
     "execute_candidate_sql",
     "select_execution_connector",

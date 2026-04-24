@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Optional
 from urllib.parse import unquote, urlsplit
@@ -18,6 +19,9 @@ from app.features.execution.connector_selection import (
 )
 from app.features.guard.deny_taxonomy import (
     DENY_APPLICATION_POSTGRES_REUSE,
+    DENY_RUNTIME_CONCURRENCY_LIMIT,
+    DENY_RUNTIME_KILL_SWITCH,
+    DENY_RUNTIME_RATE_LIMIT,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_UNSUPPORTED_SOURCE_BINDING,
 )
@@ -44,6 +48,20 @@ class ExecutionRuntimeControls:
     timeout_seconds: int
     max_rows: int
     cancellation_probe: CancellationProbe | None = None
+
+
+@dataclass(frozen=True)
+class ExecutionRuntimeSafetyState:
+    disabled_source_ids: frozenset[str] = field(default_factory=frozenset)
+    disabled_source_families: frozenset[str] = field(default_factory=frozenset)
+    rate_limited_source_ids: frozenset[str] = field(default_factory=frozenset)
+    rate_limited_source_families: frozenset[str] = field(default_factory=frozenset)
+    active_executions_by_source_id: Mapping[str, int] = field(default_factory=dict)
+    active_executions_by_source_family: Mapping[str, int] = field(default_factory=dict)
+    max_concurrent_executions_by_source_id: Mapping[str, int] = field(default_factory=dict)
+    max_concurrent_executions_by_source_family: Mapping[str, int] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True)
@@ -134,6 +152,9 @@ def _source_flavor_matches(
 def _execution_denial_cause_for_code(deny_code: str) -> str:
     return {
         DENY_APPLICATION_POSTGRES_REUSE: "application_postgresql_reuse",
+        DENY_RUNTIME_KILL_SWITCH: "runtime_kill_switch",
+        DENY_RUNTIME_RATE_LIMIT: "runtime_rate_limit",
+        DENY_RUNTIME_CONCURRENCY_LIMIT: "runtime_concurrency_limit",
         DENY_SOURCE_BINDING_MISMATCH: "source_binding_mismatch",
         DENY_UNSUPPORTED_SOURCE_BINDING: "unsupported_source_binding",
     }.get(deny_code, "execution_denied")
@@ -210,7 +231,10 @@ def _build_execution_audit_events(
             candidate_source=candidate_source,
             audit_context=audit_context,
             primary_deny_code=(
-                primary_deny_code if event_type == "execution_denied" else None
+                primary_deny_code
+                if event_type
+                in {"execution_denied", "request_rate_limited", "concurrency_rejected"}
+                else None
             ),
             execution_row_count=(
                 execution_row_count if event_type == "execution_completed" else None
@@ -375,6 +399,85 @@ def _resolve_runtime_controls(
     )
 
 
+def _scope_contains(
+    *,
+    values: frozenset[str],
+    candidate_value: str,
+) -> bool:
+    return candidate_value.strip() in values
+
+
+def _concurrency_limit_exceeded(
+    *,
+    active_by_scope: Mapping[str, int],
+    max_by_scope: Mapping[str, int],
+    scope: str,
+) -> bool:
+    max_allowed = max_by_scope.get(scope)
+    if max_allowed is None:
+        return False
+    return active_by_scope.get(scope, 0) >= max_allowed
+
+
+def _require_runtime_safety_controls_allow_execution(
+    *,
+    candidate_source: SourceBoundCandidateMetadata,
+    runtime_safety_state: ExecutionRuntimeSafetyState | None,
+) -> None:
+    if runtime_safety_state is None:
+        return
+
+    source_id = candidate_source.source_id.strip()
+    source_family = candidate_source.source_family.strip()
+
+    if _scope_contains(
+        values=runtime_safety_state.disabled_source_ids,
+        candidate_value=source_id,
+    ) or _scope_contains(
+        values=runtime_safety_state.disabled_source_families,
+        candidate_value=source_family,
+    ):
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_RUNTIME_KILL_SWITCH,
+            message=(
+                "The backend-owned runtime kill switch is enabled for this "
+                "candidate-bound source."
+            ),
+        )
+
+    if _scope_contains(
+        values=runtime_safety_state.rate_limited_source_ids,
+        candidate_value=source_id,
+    ) or _scope_contains(
+        values=runtime_safety_state.rate_limited_source_families,
+        candidate_value=source_family,
+    ):
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_RUNTIME_RATE_LIMIT,
+            message=(
+                "The backend-owned runtime rate limit rejected this "
+                "candidate-bound source."
+            ),
+        )
+
+    if _concurrency_limit_exceeded(
+        active_by_scope=runtime_safety_state.active_executions_by_source_id,
+        max_by_scope=runtime_safety_state.max_concurrent_executions_by_source_id,
+        scope=source_id,
+    ) or _concurrency_limit_exceeded(
+        active_by_scope=runtime_safety_state.active_executions_by_source_family,
+        max_by_scope=runtime_safety_state.max_concurrent_executions_by_source_family,
+        scope=source_family,
+    ):
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_RUNTIME_CONCURRENCY_LIMIT,
+            message=(
+                "The backend-owned runtime concurrency limit rejected this "
+                "candidate-bound source."
+            ),
+        )
+
+
 def _raise_if_cancelled(
     *,
     runtime_controls: ExecutionRuntimeControls,
@@ -502,6 +605,7 @@ def execute_candidate_sql(
     application_postgres_url: NonEmptyTrimmedString | None = None,
     query_runner: QueryRunner | None = None,
     cancellation_probe: CancellationProbe | None = None,
+    runtime_safety_state: ExecutionRuntimeSafetyState | None = None,
     audit_context: ExecutionAuditContext | None = None,
 ) -> ExecutionResult:
     try:
@@ -524,6 +628,10 @@ def execute_candidate_sql(
         _raise_if_cancelled(
             runtime_controls=runtime_controls,
             message="Execution canceled before the backend-owned query runner started.",
+        )
+        _require_runtime_safety_controls_allow_execution(
+            candidate_source=candidate.source,
+            runtime_safety_state=runtime_safety_state,
         )
 
         if selection.connector_id == "mssql_readonly":
