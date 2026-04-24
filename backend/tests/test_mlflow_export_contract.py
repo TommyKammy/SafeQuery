@@ -198,15 +198,20 @@ def test_mlflow_export_payload_rejects_prohibited_data_classes(
         prohibited_field: "blocked",
     }
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc_info:
         MLflowExportPayload(**payload)
+
+    assert (
+        f"MLflow export payload includes prohibited field(s): {prohibited_field}"
+        in str(exc_info.value)
+    )
 
 
 def test_mlflow_export_payload_rejects_mlflow_as_audit_authority() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc_info:
         MLflowExportPayload(
             export_kind="audit_trace",
-            authority="authoritative_audit",
+            authority="engineering_observability",
             can_authorize_or_mutate_audit=True,
             safequery_audit_event_id=uuid4(),
             request_id="request-123",
@@ -217,6 +222,11 @@ def test_mlflow_export_payload_rejects_mlflow_as_audit_authority() -> None:
             schema_snapshot_version=7,
             execution_policy_version=2,
         )
+
+    assert any(
+        error["loc"] == ("can_authorize_or_mutate_audit",)
+        for error in exc_info.value.errors()
+    )
 
 
 @pytest.mark.parametrize(
