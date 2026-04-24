@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Literal, Optional, Protocol
 from uuid import UUID
 
@@ -94,6 +95,20 @@ class MLflowRedactedSample(BaseModel):
     redaction_profile: RedactionProfile
     value: NonEmptyTrimmedString
     source_metadata: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_prohibited_source_metadata(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        source_metadata = value.get("source_metadata")
+        prohibited = _prohibited_export_fields_in_mapping(source_metadata)
+        if prohibited:
+            raise ValueError(
+                "MLflow redacted sample metadata includes prohibited field(s): "
+                + ", ".join(prohibited)
+            )
+        return value
 
     @model_validator(mode="after")
     def _require_field_specific_profile(self) -> "MLflowRedactedSample":
@@ -580,4 +595,27 @@ def _suppression_reasons_for_samples(
     for sample in samples:
         if any(pattern.search(sample.value) for pattern in _PROHIBITED_SAMPLE_PATTERNS):
             reasons.append(f"prohibited_pattern_detected:{sample.source_field}")
+        metadata_fields = _prohibited_export_fields_in_mapping(sample.source_metadata)
+        if metadata_fields:
+            reasons.append(
+                "prohibited_metadata_field_detected:"
+                f"{sample.source_field}:{','.join(metadata_fields)}"
+            )
     return reasons
+
+
+def _prohibited_export_fields_in_mapping(value: object) -> tuple[str, ...]:
+    prohibited: set[str] = set()
+
+    def collect(candidate: object) -> None:
+        if isinstance(candidate, Mapping):
+            for key, nested_value in candidate.items():
+                if isinstance(key, str) and key in PROHIBITED_EXPORT_FIELDS:
+                    prohibited.add(key)
+                collect(nested_value)
+        elif isinstance(candidate, (list, tuple)):
+            for item in candidate:
+                collect(item)
+
+    collect(value)
+    return tuple(sorted(prohibited))
