@@ -25,6 +25,16 @@ It is a planning and review aid for connector, guard, and evaluation work.
 - A family or flavor does not become implementation-ready just because it appears in this matrix.
 - Every new family or flavor still requires approval of connector, guard, governance, and evaluation work.
 - The matrix complements the target source registry. It does not replace per-source registry records.
+- Future activation requires explicit positive, safety-deny,
+  connector-selection, lifecycle, runtime-control, audit reconstruction,
+  release-gate reconstruction, and operator-history coverage before a planned
+  entry can become active.
+- Release-gate evidence must come from SafeQuery-owned evaluation outcomes and
+  source-aware audit events. MLflow exports, search or analyst outputs, and
+  adapter traces are supplemental and cannot satisfy authoritative coverage.
+- Connector and dialect profile version drift must be represented as a
+  fail-closed evaluation comparison case for each family or flavor before
+  activation.
 - MySQL remains planned until a registry-owned `mysql` source profile, connector
   profile, dialect profile, guard profile, audit contract, and release-gate
   corpus are approved together.

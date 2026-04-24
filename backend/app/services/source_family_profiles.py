@@ -42,6 +42,10 @@ class AuditAndEvaluationRequirements(BaseModel):
     denial_events: tuple[str, ...]
     release_gate_fields: tuple[str, ...]
     evaluation_corpus_requirements: tuple[str, ...]
+    activation_required_coverage: tuple[str, ...]
+    deny_corpus_requirements: tuple[str, ...]
+    authoritative_release_gate_artifacts: tuple[str, ...]
+    supplemental_only_artifacts: tuple[str, ...]
 
 
 class SourceFamilyProfileRequirements(BaseModel):
@@ -83,6 +87,41 @@ class SourceFlavorProfileRequirements(BaseModel):
 
 
 ACTIVE_SOURCE_FAMILIES: tuple[str, ...] = ("mssql", "postgresql")
+
+FUTURE_FAMILY_ACTIVATION_REQUIRED_COVERAGE: tuple[str, ...] = (
+    "positive_scenarios",
+    "safety_deny_scenarios",
+    "connector_selection_scenarios",
+    "candidate_lifecycle_scenarios",
+    "runtime_control_scenarios",
+    "audit_artifact_reconstruction",
+    "release_gate_reconstruction",
+    "operator_history_implications",
+)
+
+FUTURE_FAMILY_DENY_CORPUS_REQUIREMENTS: tuple[str, ...] = (
+    "write_attempts",
+    "multi_statement_behavior",
+    "unsafe_functions",
+    "unbounded_reads",
+    "unsupported_syntax",
+    "stale_policy",
+    "entitlement_drift",
+    "lifecycle_replay",
+    "runtime_cancellation",
+    "connector_profile_mismatch",
+)
+
+FUTURE_FAMILY_AUTH_RELEASE_GATE_ARTIFACTS: tuple[str, ...] = (
+    "safequery_evaluation_outcomes",
+    "safequery_source_aware_audit_events",
+)
+
+FUTURE_FAMILY_SUPPLEMENTAL_ONLY_ARTIFACTS: tuple[str, ...] = (
+    "mlflow_exports",
+    "search_or_analyst_outputs",
+    "adapter_traces",
+)
 
 MYSQL_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
     source_family="mysql",
@@ -199,7 +238,12 @@ MYSQL_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
             "guard_deny_corpus",
             "connector_timeout_and_cancellation",
             "release_gate_reconstruction",
+            "profile_version_drift_fail_closed",
         ),
+        activation_required_coverage=FUTURE_FAMILY_ACTIVATION_REQUIRED_COVERAGE,
+        deny_corpus_requirements=FUTURE_FAMILY_DENY_CORPUS_REQUIREMENTS,
+        authoritative_release_gate_artifacts=FUTURE_FAMILY_AUTH_RELEASE_GATE_ARTIFACTS,
+        supplemental_only_artifacts=FUTURE_FAMILY_SUPPLEMENTAL_ONLY_ARTIFACTS,
     ),
 )
 
@@ -332,7 +376,12 @@ MARIADB_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
             "mariadb_delta_deny_fixtures",
             "connector_timeout_and_cancellation",
             "release_gate_reconstruction",
+            "profile_version_drift_fail_closed",
         ),
+        activation_required_coverage=FUTURE_FAMILY_ACTIVATION_REQUIRED_COVERAGE,
+        deny_corpus_requirements=FUTURE_FAMILY_DENY_CORPUS_REQUIREMENTS,
+        authoritative_release_gate_artifacts=FUTURE_FAMILY_AUTH_RELEASE_GATE_ARTIFACTS,
+        supplemental_only_artifacts=FUTURE_FAMILY_SUPPLEMENTAL_ONLY_ARTIFACTS,
     ),
 )
 
@@ -467,7 +516,12 @@ ORACLE_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
             "oracle_row_bounding_regressions",
             "connector_timeout_and_cancellation",
             "release_gate_reconstruction",
+            "profile_version_drift_fail_closed",
         ),
+        activation_required_coverage=FUTURE_FAMILY_ACTIVATION_REQUIRED_COVERAGE,
+        deny_corpus_requirements=FUTURE_FAMILY_DENY_CORPUS_REQUIREMENTS,
+        authoritative_release_gate_artifacts=FUTURE_FAMILY_AUTH_RELEASE_GATE_ARTIFACTS,
+        supplemental_only_artifacts=FUTURE_FAMILY_SUPPLEMENTAL_ONLY_ARTIFACTS,
     ),
 )
 
@@ -610,7 +664,12 @@ AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
             "aurora_postgresql_flavor_regressions",
             "connector_timeout_and_cancellation",
             "release_gate_reconstruction",
+            "profile_version_drift_fail_closed",
         ),
+        activation_required_coverage=FUTURE_FAMILY_ACTIVATION_REQUIRED_COVERAGE,
+        deny_corpus_requirements=FUTURE_FAMILY_DENY_CORPUS_REQUIREMENTS,
+        authoritative_release_gate_artifacts=FUTURE_FAMILY_AUTH_RELEASE_GATE_ARTIFACTS,
+        supplemental_only_artifacts=FUTURE_FAMILY_SUPPLEMENTAL_ONLY_ARTIFACTS,
     ),
 )
 
@@ -701,7 +760,12 @@ AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
             "aurora_mysql_flavor_regressions",
             "connector_timeout_and_cancellation",
             "release_gate_reconstruction",
+            "profile_version_drift_fail_closed",
         ),
+        activation_required_coverage=FUTURE_FAMILY_ACTIVATION_REQUIRED_COVERAGE,
+        deny_corpus_requirements=FUTURE_FAMILY_DENY_CORPUS_REQUIREMENTS,
+        authoritative_release_gate_artifacts=FUTURE_FAMILY_AUTH_RELEASE_GATE_ARTIFACTS,
+        supplemental_only_artifacts=FUTURE_FAMILY_SUPPLEMENTAL_ONLY_ARTIFACTS,
     ),
 )
 
