@@ -23,8 +23,8 @@ class AnalystResponseSourceSummary(BaseModel):
     source_id: SourceIdentifier
     source_family: SourceFamily
     source_flavor: Optional[SourceFlavor] = None
-    dataset_contract_version: Optional[PositiveInt] = None
-    schema_snapshot_version: Optional[PositiveInt] = None
+    dataset_contract_version: PositiveInt
+    schema_snapshot_version: PositiveInt
     execution_policy_version: Optional[PositiveInt] = None
 
 

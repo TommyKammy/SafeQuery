@@ -132,6 +132,26 @@ def test_source_summary_coverage_rejects_missing_source_identity() -> None:
         )
 
 
+def test_source_summary_requires_dataset_and_schema_versions() -> None:
+    with pytest.raises(ValidationError):
+        AnalystResponsePayload(
+            response_id="analyst-response-123",
+            request_id="request-123",
+            narrative="Source summaries must identify the concrete governed source versions.",
+            advisory_only=True,
+            can_authorize_execution=False,
+            analyst_mode_version="analyst-schema-v1",
+            source_summaries=[
+                {
+                    "source_id": "business-postgres-source",
+                    "source_family": "postgresql",
+                    "source_flavor": "warehouse",
+                }
+            ],
+            retrieval_citations=[_citation("business-postgres-source", "postgresql")],
+        )
+
+
 @pytest.mark.parametrize(
     "payload_overrides",
     [
