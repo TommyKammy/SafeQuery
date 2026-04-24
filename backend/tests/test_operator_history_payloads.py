@@ -155,6 +155,35 @@ def test_operator_history_run_summary_requires_primary_deny_code_when_execution_
         )
 
 
+def test_operator_history_payloads_can_represent_runtime_control_denials() -> None:
+    run = OperatorHistoryRunSummary(
+        request_id="request-123",
+        candidate_id="candidate-123",
+        run_id="run-123",
+        execution_status="execution_denied",
+        primary_deny_code="DENY_RUNTIME_RATE_LIMIT",
+        occurred_at=datetime.now(timezone.utc),
+        audit_event_id=uuid4(),
+        **_source_fields(),
+    )
+    result = OperatorHistoryResultSummary(
+        request_id="request-123",
+        candidate_id="candidate-123",
+        run_id="run-123",
+        result_state="execution_denied",
+        execution_status="execution_denied",
+        primary_deny_code="DENY_RUNTIME_RATE_LIMIT",
+        occurred_at=datetime.now(timezone.utc),
+        audit_event_id=uuid4(),
+        **_source_fields(),
+    )
+
+    assert run.primary_deny_code == "DENY_RUNTIME_RATE_LIMIT"
+    assert result.primary_deny_code == "DENY_RUNTIME_RATE_LIMIT"
+    assert "rows" not in run.model_dump(exclude_none=True)
+    assert "rows" not in result.model_dump(exclude_none=True)
+
+
 def test_operator_history_result_summary_rejects_raw_result_rows() -> None:
     with pytest.raises(ValidationError):
         OperatorHistoryResultSummary(

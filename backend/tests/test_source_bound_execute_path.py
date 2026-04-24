@@ -8,10 +8,15 @@ import pytest
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
 from app.features.guard.deny_taxonomy import (
+    DENY_RUNTIME_RATE_LIMIT,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_UNSUPPORTED_SOURCE_BINDING,
 )
-from app.features.execution.runtime import ExecutableCandidateRecord, ExecutionAuditContext
+from app.features.execution.runtime import (
+    ExecutableCandidateRecord,
+    ExecutionAuditContext,
+    ExecutionRuntimeSafetyState,
+)
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
@@ -214,6 +219,42 @@ def test_execute_candidate_sql_returns_source_aware_completion_audit_event() -> 
         "result_truncated": False,
     }.items() <= result.audit_event.model_dump(exclude_none=True).items()
     assert result.audit_event.model_dump(exclude_none=True).get("rows") is None
+
+
+def test_execute_candidate_sql_returns_source_aware_runtime_denial_audit_event() -> None:
+    from app.features.execution import (
+        ExecutionConnectorExecutionError,
+        execute_candidate_sql,
+    )
+
+    with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+        execute_candidate_sql(
+            candidate=_candidate(),
+            selection=_selection(),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            query_runner=lambda **_: [{"vendor_name": "Acme"}],
+            runtime_safety_state=ExecutionRuntimeSafetyState(
+                rate_limited_source_ids=frozenset({"approved-spend"})
+            ),
+            audit_context=_audit_context(),
+        )
+
+    assert exc_info.value.deny_code == DENY_RUNTIME_RATE_LIMIT
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_denied",
+    ]
+    assert {
+        "event_type": "execution_denied",
+        "source_id": "approved-spend",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "primary_deny_code": DENY_RUNTIME_RATE_LIMIT,
+        "denial_cause": "runtime_rate_limit",
+        "candidate_state": "denied",
+    }.items() <= exc_info.value.audit_event.model_dump(exclude_none=True).items()
+    assert exc_info.value.audit_event.model_dump(exclude_none=True).get("rows") is None
 
 
 def test_execute_candidate_sql_anchors_first_audit_event_to_previous_event() -> None:

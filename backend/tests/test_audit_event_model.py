@@ -40,6 +40,8 @@ def _source_aware_payload() -> dict[str, object]:
         "execution_started",
         "execution_completed",
         "execution_denied",
+        "request_rate_limited",
+        "concurrency_rejected",
         "candidate_invalidated",
     ],
 )
