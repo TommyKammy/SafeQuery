@@ -340,6 +340,46 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         self.assertEqual(audit["events"][3]["candidate_owner_subject"], "user:alice")
         self.assertEqual(audit["events"][3]["candidate_state"], "preview_ready")
 
+    def test_operator_workflow_snapshot_exposes_live_source_options_without_secrets(self) -> None:
+        self._seed_authoritative_source_governance(
+            source_id="sap-approved-spend",
+            source_posture=SourceActivationPosture.ACTIVE,
+        )
+        self._seed_authoritative_source_governance(
+            source_id="legacy-finance-archive",
+            source_posture=SourceActivationPosture.PAUSED,
+        )
+
+        response = self.client.get("/operator/workflow")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            [
+                {
+                    "sourceId": source["sourceId"],
+                    "displayLabel": source["displayLabel"],
+                    "activationPosture": source["activationPosture"],
+                }
+                for source in payload["sources"]
+            ],
+            [
+                {
+                    "sourceId": "legacy-finance-archive",
+                    "displayLabel": "legacy-finance-archive display",
+                    "activationPosture": "paused",
+                },
+                {
+                    "sourceId": "sap-approved-spend",
+                    "displayLabel": "sap-approved-spend display",
+                    "activationPosture": "active",
+                },
+            ],
+        )
+        self.assertEqual(payload["history"], [])
+        self.assertNotIn("connection_reference", response.text)
+        self.assertNotIn("vault:", response.text)
+
     def test_preview_submission_rejects_subject_matching_only_security_review_binding(self) -> None:
         self.app.dependency_overrides[require_authenticated_subject] = lambda: AuthenticatedSubject(
             subject_id="user:alice",

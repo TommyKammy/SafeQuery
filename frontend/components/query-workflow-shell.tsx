@@ -1,5 +1,10 @@
 import { HealthStatusCard } from "./health-status-card";
 import type { HealthSnapshot } from "../lib/health";
+import type {
+  OperatorHistoryItem,
+  OperatorWorkflowSnapshot,
+  SourceOption
+} from "../lib/operator-workflow";
 
 type WorkflowState =
   | "signin"
@@ -28,6 +33,7 @@ type CanonicalWorkflowState =
 type QueryWorkflowShellProps = {
   apiUrl: string;
   health: HealthSnapshot;
+  operatorWorkflow: OperatorWorkflowSnapshot;
   question: string;
   sourceId?: string;
   state: WorkflowState;
@@ -48,17 +54,15 @@ type WorkflowContext = {
   sourceIdentity: string;
 };
 
-type SourceOption = {
-  activationPosture: "active" | "paused";
-  description: string;
-  displayLabel: string;
-  sourceId: string;
-};
-
 type ResolvedSourceBinding = {
   blockedReason?: string;
   source?: SourceOption;
   state: CanonicalWorkflowState;
+};
+
+type WorkflowHrefContext = {
+  historyItemType?: OperatorHistoryItem["itemType"];
+  historyRecordId?: string;
 };
 
 const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
@@ -117,21 +121,6 @@ const workflowStateOrder: CanonicalWorkflowState[] = [
   "canceled"
 ];
 
-const previewSourceOptions: SourceOption[] = [
-  {
-    activationPosture: "active",
-    description: "Approved finance spend cube for governed preview and single-source execution.",
-    displayLabel: "SAP spend cube / approved_vendor_spend",
-    sourceId: "sap-approved-spend"
-  },
-  {
-    activationPosture: "paused",
-    description: "Historical archive is visible for posture review but not executable for preview.",
-    displayLabel: "Legacy finance archive",
-    sourceId: "legacy-finance-archive"
-  }
-];
-
 export function resolveWorkflowState(value?: string): CanonicalWorkflowState {
   if (!value) {
     return "query";
@@ -148,15 +137,19 @@ export function resolveWorkflowState(value?: string): CanonicalWorkflowState {
   return "query";
 }
 
-function findSourceOption(sourceId?: string): SourceOption | undefined {
-  return previewSourceOptions.find((source) => source.sourceId === sourceId);
+function findSourceOption(
+  sourceOptions: SourceOption[],
+  sourceId?: string
+): SourceOption | undefined {
+  return sourceOptions.find((source) => source.sourceId === sourceId);
 }
 
 function resolveSourceBinding(
+  sourceOptions: SourceOption[],
   state: CanonicalWorkflowState,
   sourceId?: string
 ): ResolvedSourceBinding {
-  const source = findSourceOption(sourceId);
+  const source = findSourceOption(sourceOptions, sourceId);
 
   if (state === "signin") {
     return {
@@ -166,6 +159,13 @@ function resolveSourceBinding(
   }
 
   if (state === "query") {
+    if (sourceOptions.length === 0) {
+      return {
+        blockedReason: "Live source registry data is unavailable, so preview submission remains blocked.",
+        state: "query"
+      };
+    }
+
     if (sourceId && source?.activationPosture !== "active") {
       return {
         blockedReason: "Select an executable source before preview can be requested.",
@@ -199,10 +199,83 @@ function resolveSourceBinding(
   };
 }
 
+function renderHistoryItem(item: OperatorHistoryItem) {
+  return (
+    <a
+      className="history-item"
+      href={buildStateHref(historyItemToState(item), item.label, item.sourceId, {
+        historyItemType: item.itemType,
+        historyRecordId: item.recordId
+      })}
+      key={`${item.itemType}:${item.recordId}`}
+    >
+      <span className="history-type">{item.itemType}</span>
+      <strong>{item.label}</strong>
+      <span>{item.sourceLabel}</span>
+      <span>{item.lifecycleState}</span>
+    </a>
+  );
+}
+
+function historyItemToState(item: OperatorHistoryItem): CanonicalWorkflowState {
+  const lifecycleState = item.lifecycleState.toLowerCase();
+  const runState = item.runState?.toLowerCase();
+  const guardStatus = item.guardStatus?.toLowerCase();
+
+  if (item.itemType === "request" || item.itemType === "candidate") {
+    if (
+      lifecycleState === "review_denied" ||
+      lifecycleState === "blocked" ||
+      lifecycleState === "invalidated" ||
+      guardStatus === "blocked" ||
+      guardStatus === "invalidated"
+    ) {
+      return "review_denied";
+    }
+
+    return "preview";
+  }
+
+  if (runState === "completed" || lifecycleState === "completed") {
+    return "completed";
+  }
+
+  if (runState === "empty" || lifecycleState === "empty") {
+    return "empty";
+  }
+
+  if (runState === "execution_denied" || lifecycleState === "execution_denied") {
+    return "execution_denied";
+  }
+
+  if (runState === "failed" || lifecycleState === "failed") {
+    return "failed";
+  }
+
+  if (runState === "canceled" || lifecycleState === "canceled") {
+    return "canceled";
+  }
+
+  return "preview";
+}
+
+function getWorkflowDataStatusCopy(status: OperatorWorkflowSnapshot["status"]): string {
+  if (status === "live") {
+    return "Source registry and history summary loaded from the backend workflow contract.";
+  }
+
+  if (status === "malformed") {
+    return "Backend workflow payload was malformed, so the source selector remains blocked.";
+  }
+
+  return "Backend workflow payload is unavailable, so the source selector remains blocked.";
+}
+
 function buildStateHref(
   state: CanonicalWorkflowState,
   question: string,
-  sourceId?: string
+  sourceId?: string,
+  context?: WorkflowHrefContext
 ): string {
   const params = new URLSearchParams({
     question,
@@ -211,6 +284,11 @@ function buildStateHref(
 
   if (sourceId) {
     params.set("source_id", sourceId);
+  }
+
+  if (context?.historyItemType && context.historyRecordId) {
+    params.set("history_item_type", context.historyItemType);
+    params.set("history_record_id", context.historyRecordId);
   }
 
   return `/?${params.toString()}`;
@@ -665,12 +743,13 @@ function renderStatePanel(
 export function QueryWorkflowShell({
   apiUrl,
   health,
+  operatorWorkflow,
   question,
   sourceId,
   state
 }: QueryWorkflowShellProps) {
   const requestedState = resolveWorkflowState(state);
-  const sourceBinding = resolveSourceBinding(requestedState, sourceId);
+  const sourceBinding = resolveSourceBinding(operatorWorkflow.sources, requestedState, sourceId);
   const normalizedState = sourceBinding.state;
   const sqlPreview = getSqlPreview(question);
   const activeState = workflowStates[normalizedState];
@@ -723,6 +802,37 @@ export function QueryWorkflowShell({
       </header>
 
       <section className="workspace-grid">
+        <aside className="history-column" aria-label="Operator history">
+          <section className="surface surface-secondary">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">History</p>
+                <h2 className="panel-title">Source-aware workflow history</h2>
+              </div>
+              <span
+                className={`surface-badge surface-badge-${
+                  operatorWorkflow.status === "live" ? "active" : "danger"
+                }`}
+              >
+                {operatorWorkflow.status}
+              </span>
+            </div>
+            <p className="section-copy">{getWorkflowDataStatusCopy(operatorWorkflow.status)}</p>
+            <div className="history-list">
+              {operatorWorkflow.history.length > 0 ? (
+                operatorWorkflow.history.map(renderHistoryItem)
+              ) : (
+                <div className="placeholder-block">
+                  <p className="placeholder-title">No live history rows</p>
+                  <p>
+                    The shell keeps history empty until the backend returns authoritative request,
+                    candidate, or run summaries.
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
+        </aside>
         <div className="primary-column">
           <section className="surface surface-primary">
             {renderStatePanel(normalizedState, question, boundSourceId)}
@@ -748,7 +858,7 @@ export function QueryWorkflowShell({
                   </label>
                   <select defaultValue={boundSourceId ?? ""} id="source_id" name="source_id" required>
                     <option value="">Select one source</option>
-                    {previewSourceOptions.map((source) => (
+                    {operatorWorkflow.sources.map((source) => (
                       <option
                         disabled={source.activationPosture !== "active"}
                         key={source.sourceId}
