@@ -130,7 +130,13 @@ export async function getOperatorWorkflowSnapshot(
       return unavailableSnapshot("unavailable");
     }
 
-    const payload = (await response.json()) as unknown;
+    let payload: unknown;
+    try {
+      payload = (await response.json()) as unknown;
+    } catch {
+      return unavailableSnapshot("malformed");
+    }
+
     if (!isObject(payload) || !Array.isArray(payload.sources) || !Array.isArray(payload.history)) {
       return unavailableSnapshot("malformed");
     }

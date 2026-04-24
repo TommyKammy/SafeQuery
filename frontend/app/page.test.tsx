@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage from "./page";
 import { resolveWorkflowState } from "../components/query-workflow-shell";
@@ -123,6 +123,102 @@ describe("HomePage", () => {
       "SAP spend cube / approved_vendor_spend"
     );
     expect(screen.getByLabelText(/operator history/i)).toHaveTextContent("previewed");
+  });
+
+  it("reopens history rows into anchored non-draft workflow states", async () => {
+    render(await HomePage({}));
+
+    const historyLink = within(screen.getByLabelText(/operator history/i)).getByRole("link", {
+      name: /approved vendor spend/i
+    });
+
+    expect(historyLink).toHaveAttribute("href", expect.stringContaining("state=preview"));
+    expect(historyLink).toHaveAttribute("href", expect.stringContaining("source_id=sap-approved-spend"));
+    expect(historyLink).toHaveAttribute("href", expect.stringContaining("history_item_type=request"));
+    expect(historyLink).toHaveAttribute("href", expect.stringContaining("history_record_id=request-123"));
+    expect(historyLink).not.toHaveAttribute("href", expect.stringContaining("state=query"));
+  });
+
+  it("reopens denied candidates and terminal runs into their lifecycle states", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    guardStatus: "blocked",
+                    itemType: "candidate",
+                    label: "Blocked candidate",
+                    lifecycleState: "blocked",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-123",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  },
+                  {
+                    itemType: "run",
+                    label: "Failed run",
+                    lifecycleState: "failed",
+                    occurredAt: "2026-04-21T14:35:00Z",
+                    recordId: "run-123",
+                    runState: "failed",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    const history = screen.getByLabelText(/operator history/i);
+    const deniedCandidateLink = within(history).getByRole("link", { name: /blocked candidate/i });
+    const failedRunLink = within(history).getByRole("link", { name: /failed run/i });
+
+    expect(deniedCandidateLink).toHaveAttribute("href", expect.stringContaining("state=review_denied"));
+    expect(deniedCandidateLink).toHaveAttribute(
+      "href",
+      expect.stringContaining("history_record_id=candidate-123")
+    );
+    expect(failedRunLink).toHaveAttribute("href", expect.stringContaining("state=failed"));
+    expect(failedRunLink).toHaveAttribute("href", expect.stringContaining("history_record_id=run-123"));
+  });
+
+  it("reports malformed workflow payloads separately from unavailable transport", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON"))
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByLabelText(/operator history/i)).toHaveTextContent("malformed");
+    expect(
+      screen.getByText(/backend workflow payload was malformed, so the source selector remains blocked/i)
+    ).toBeInTheDocument();
   });
 
   it("renders the shell before the health probe completes", async () => {

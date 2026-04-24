@@ -60,6 +60,11 @@ type ResolvedSourceBinding = {
   state: CanonicalWorkflowState;
 };
 
+type WorkflowHrefContext = {
+  historyItemType?: OperatorHistoryItem["itemType"];
+  historyRecordId?: string;
+};
+
 const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
   canceled: {
     description: "Execution started from a reviewed candidate but stopped before the run completed.",
@@ -198,7 +203,10 @@ function renderHistoryItem(item: OperatorHistoryItem) {
   return (
     <a
       className="history-item"
-      href={buildStateHref("query", item.label, item.sourceId)}
+      href={buildStateHref(historyItemToState(item), item.label, item.sourceId, {
+        historyItemType: item.itemType,
+        historyRecordId: item.recordId
+      })}
       key={`${item.itemType}:${item.recordId}`}
     >
       <span className="history-type">{item.itemType}</span>
@@ -207,6 +215,48 @@ function renderHistoryItem(item: OperatorHistoryItem) {
       <span>{item.lifecycleState}</span>
     </a>
   );
+}
+
+function historyItemToState(item: OperatorHistoryItem): CanonicalWorkflowState {
+  const lifecycleState = item.lifecycleState.toLowerCase();
+  const runState = item.runState?.toLowerCase();
+  const guardStatus = item.guardStatus?.toLowerCase();
+
+  if (item.itemType === "request" || item.itemType === "candidate") {
+    if (
+      lifecycleState === "review_denied" ||
+      lifecycleState === "blocked" ||
+      lifecycleState === "invalidated" ||
+      guardStatus === "blocked" ||
+      guardStatus === "invalidated"
+    ) {
+      return "review_denied";
+    }
+
+    return "preview";
+  }
+
+  if (runState === "completed" || lifecycleState === "completed") {
+    return "completed";
+  }
+
+  if (runState === "empty" || lifecycleState === "empty") {
+    return "empty";
+  }
+
+  if (runState === "execution_denied" || lifecycleState === "execution_denied") {
+    return "execution_denied";
+  }
+
+  if (runState === "failed" || lifecycleState === "failed") {
+    return "failed";
+  }
+
+  if (runState === "canceled" || lifecycleState === "canceled") {
+    return "canceled";
+  }
+
+  return "preview";
 }
 
 function getWorkflowDataStatusCopy(status: OperatorWorkflowSnapshot["status"]): string {
@@ -224,7 +274,8 @@ function getWorkflowDataStatusCopy(status: OperatorWorkflowSnapshot["status"]): 
 function buildStateHref(
   state: CanonicalWorkflowState,
   question: string,
-  sourceId?: string
+  sourceId?: string,
+  context?: WorkflowHrefContext
 ): string {
   const params = new URLSearchParams({
     question,
@@ -233,6 +284,11 @@ function buildStateHref(
 
   if (sourceId) {
     params.set("source_id", sourceId);
+  }
+
+  if (context?.historyItemType && context.historyRecordId) {
+    params.set("history_item_type", context.historyItemType);
+    params.set("history_record_id", context.historyRecordId);
   }
 
   return `/?${params.toString()}`;
