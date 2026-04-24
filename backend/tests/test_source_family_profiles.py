@@ -22,6 +22,69 @@ from app.services.source_family_profiles import (
 )
 
 
+def _future_family_requirements():
+    return (
+        MYSQL_FAMILY_PROFILE_REQUIREMENTS,
+        MARIADB_FAMILY_PROFILE_REQUIREMENTS,
+        ORACLE_FAMILY_PROFILE_REQUIREMENTS,
+        AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS,
+        AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS,
+    )
+
+
+def test_future_family_activation_checklist_requires_authoritative_coverage() -> None:
+    required_activation_coverage = {
+        "positive_scenarios",
+        "safety_deny_scenarios",
+        "connector_selection_scenarios",
+        "candidate_lifecycle_scenarios",
+        "runtime_control_scenarios",
+        "audit_artifact_reconstruction",
+        "release_gate_reconstruction",
+        "operator_history_implications",
+    }
+    required_deny_topics = {
+        "write_attempts",
+        "multi_statement_behavior",
+        "unsafe_functions",
+        "unbounded_reads",
+        "unsupported_syntax",
+        "stale_policy",
+        "entitlement_drift",
+        "lifecycle_replay",
+        "runtime_cancellation",
+        "connector_profile_mismatch",
+    }
+    supplemental_only = {
+        "mlflow_exports",
+        "search_or_analyst_outputs",
+        "adapter_traces",
+    }
+
+    for requirements in _future_family_requirements():
+        audit_and_evaluation = requirements.audit_and_evaluation
+
+        assert required_activation_coverage.issubset(
+            audit_and_evaluation.activation_required_coverage
+        )
+        assert required_deny_topics.issubset(
+            audit_and_evaluation.deny_corpus_requirements
+        )
+        assert "profile_version_drift_fail_closed" in (
+            audit_and_evaluation.evaluation_corpus_requirements
+        )
+        assert supplemental_only.issubset(
+            audit_and_evaluation.supplemental_only_artifacts
+        )
+        assert not supplemental_only.intersection(
+            audit_and_evaluation.authoritative_release_gate_artifacts
+        )
+        assert {
+            "safequery_evaluation_outcomes",
+            "safequery_source_aware_audit_events",
+        }.issubset(audit_and_evaluation.authoritative_release_gate_artifacts)
+
+
 def test_mysql_family_requirements_are_planned_and_backend_selected() -> None:
     requirements = get_planned_source_family_profile_requirements(" MySQL ")
 

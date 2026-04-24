@@ -74,6 +74,20 @@ The dialect profile defines:
 
 Future onboarding must happen by adding or approving profiles, not by redesigning the core SafeQuery control plane.
 
+Before any planned family or flavor is activated, its evaluation expansion must
+include positive, safety-deny, connector-selection, lifecycle, runtime-control,
+audit reconstruction, release-gate reconstruction, and operator-history
+coverage. Its deny corpus must cover write attempts, multi-statement behavior,
+unsafe functions, unbounded reads, unsupported syntax, stale policy,
+entitlement drift, lifecycle replay, runtime cancellation, and connector or
+profile mismatch where applicable. Connector and dialect profile version drift
+must compare fail-closed against the planned source-aware identity.
+
+MLflow exports, search or analyst outputs, and adapter traces remain
+supplemental engineering evidence. They do not satisfy authoritative evaluation,
+audit, or release-gate coverage; those gates must be reconstructable from
+SafeQuery-owned evaluation outcomes and source-aware audit events.
+
 ### Planned MySQL Family Requirements
 
 MySQL is approved as planned source-family metadata only. Listing the family does

@@ -37,6 +37,36 @@ The baseline taxonomy should distinguish at least:
 - schema-drift regression scenarios
 - replay or invalidation scenarios
 
+## Future Family Activation Checklist
+
+Future source families or flavors remain planned until the application-owned
+evaluation assets include source-aware scenarios for:
+
+- positive read-only outcomes
+- safety deny outcomes
+- connector-selection denies
+- candidate lifecycle revalidation
+- runtime timeout, cancellation, and kill-switch behavior
+- source-aware audit artifact reconstruction
+- release-gate reconstruction
+- operator-history implications
+
+Each scenario must carry source identity, source family, source flavor, dataset
+contract version, schema snapshot version, execution policy version, connector
+profile version, dialect profile version, expected outcome, and expected primary
+deny code when the outcome is a rejection.
+
+Dialect, connector, or profile version drift must be represented as an explicit
+evaluation scenario and must fail closed when the observed artifact no longer
+matches the planned profile version.
+
+MLflow exports, search or analyst outputs, and adapter traces are supplemental
+engineering artifacts. They may help explain a run, but they cannot satisfy
+authoritative evaluation coverage, audit coverage, or release-gate
+reconstruction for a future family or flavor. Release gates must remain
+reconstructable from SafeQuery-owned evaluation outcomes and source-aware audit
+events.
+
 ## Gold Answer Representation
 
 Gold answers may be represented through:

@@ -26,6 +26,8 @@ The baseline corpus must include representative scenarios for:
 - expired-candidate execution attempts
 - candidate replay or stale-policy execution attempts
 - candidate owner mismatch and entitlement-change attempts
+- connector or dialect profile mismatch attempts
+- runtime cancellation, timeout, or kill-switch denials
 
 ## Expected Outcomes
 
@@ -44,3 +46,11 @@ Critical deny corpus scenarios must pass at 100 percent for pilot entry.
 ## Relation to Evaluation Harness
 
 The evaluation harness should treat this corpus as a required safety subset rather than as optional examples.
+
+Future family or flavor activation must expand this corpus before execution is
+enabled. The expansion must cover write attempts, multi-statement behavior,
+unsafe functions, unbounded reads, unsupported syntax, stale policy,
+entitlement drift, lifecycle replay, runtime cancellation, and connector or
+profile mismatch where applicable. Shared family coverage may be inherited only
+when the planned profile explicitly says so; otherwise the family or flavor
+needs its own deny scenarios and expected deny codes.
