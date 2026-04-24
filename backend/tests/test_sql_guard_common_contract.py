@@ -74,3 +74,29 @@ def test_common_sql_guard_rejects_partial_source_binding_fail_closed() -> None:
             }
         ],
     }
+
+
+def test_common_sql_guard_rejects_mlflow_run_metadata_as_decision_input() -> None:
+    evaluation = evaluate_common_sql_guard(
+        {
+            "canonical_sql": "SELECT vendor_name FROM finance.approved_vendor_spend",
+            "source": {
+                "source_id": "sap-approved-spend",
+                "source_family": "postgresql",
+                "source_flavor": "warehouse",
+            },
+            "mlflow_run_id": "mlflow-run-123",
+            "sql_guard_decision": "allow",
+        }
+    )
+
+    assert evaluation.decision == "reject"
+    assert evaluation.canonical_sql is None
+    assert evaluation.source is None
+    assert {
+        (rejection.path, rejection.detail)
+        for rejection in evaluation.rejections
+    } == {
+        ("mlflow_run_id", "Extra inputs are not permitted"),
+        ("sql_guard_decision", "Extra inputs are not permitted"),
+    }

@@ -355,7 +355,13 @@ def test_mlflow_evaluation_export_rejects_inconsistent_token_counts() -> None:
         "controlled_corpus_body",
         "natural_language_request",
         "canonical_sql",
+        "candidate_state",
+        "execution_approval_state",
+        "guard_decision",
         "identity_claims",
+        "release_gate_status",
+        "runtime_safety_state",
+        "sql_guard_decision",
     ],
 )
 def test_mlflow_export_payload_rejects_prohibited_data_classes(

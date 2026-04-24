@@ -52,9 +52,19 @@ MLflow is not the authoritative system of record for:
 - SQL Guard decisions
 - candidate lifecycle and execution approval
 - authorization state
+- runtime safety state
+- release-gate decisions
 - authoritative audit retention
 
 PostgreSQL remains the authoritative application audit and persistence store. SafeQuery remains the trusted control plane.
+
+MLflow run identifiers may only reference SafeQuery-owned artifacts. They must
+not be accepted as replacements for source-aware audit events, evaluation
+outcome records, release-gate summaries, entitlement records, candidate
+lifecycle records, runtime safety controls, or SQL Guard evaluations. When an
+MLflow export is disabled, unavailable, malformed, or suppressed, SafeQuery must
+continue reconstructing audit and release-gate state from application-owned
+records alone.
 
 ## Export Contract
 
@@ -85,6 +95,7 @@ Retention and access rules:
 - MLflow retention must be equal to or shorter than the authoritative audit retention unless explicitly approved otherwise
 - access must be limited to approved engineering and operational roles
 - MLflow run identifiers may reference PostgreSQL audit records, but PostgreSQL remains the authoritative source for audit reconstruction and governance review
+- MLflow records must not carry candidate lifecycle state, SQL Guard decisions, entitlement state, runtime safety state, execution approval state, or release-gate authority
 
 ## Consequences
 

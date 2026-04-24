@@ -14,6 +14,7 @@ from app.features.evaluation.harness import (
     list_mssql_evaluation_scenarios,
     list_postgresql_evaluation_scenarios,
 )
+from app.features.mlflow_export import build_mlflow_export_from_evaluation_scenario
 
 
 def _all_scenarios() -> tuple[Union[MSSQLEvaluationScenario, PostgreSQLEvaluationScenario], ...]:
@@ -234,3 +235,55 @@ def test_release_gate_reports_structured_failure_for_non_mapping_artifact() -> N
     assert decision.failures[0].scenario_id is None
     assert decision.failures[0].scenario_category is None
     assert "<root>" in decision.failures[0].detail
+
+
+def test_release_gate_rejects_mlflow_exports_as_authoritative_evaluation_records() -> None:
+    scenario = list_mssql_evaluation_scenarios()[0]
+    mlflow_payload = build_mlflow_export_from_evaluation_scenario(
+        scenario,
+        enabled=True,
+        mlflow_run_id="mlflow-run-123",
+        evaluation_run_id="evaluation-run-123",
+        evaluation_outcome_id="evaluation-outcome-123",
+        validation_status="passed",
+    )
+    assert mlflow_payload is not None
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=(mlflow_payload.model_dump(exclude_none=True),),
+        audit_artifacts=_audit_artifacts_from_harness(),
+    )
+
+    assert decision.status == "fail"
+    assert decision.failure_count == 1
+    assert decision.failures[0].deny_code == "DENY_MALFORMED_EVALUATION_ARTIFACT"
+    assert decision.failures[0].source_id is None
+    assert decision.failures[0].scenario_id is None
+    assert "scenario_id" in decision.failures[0].detail
+    assert "outcome" in decision.failures[0].detail
+
+
+def test_release_gate_rejects_mlflow_exports_as_authoritative_audit_artifacts() -> None:
+    scenario = list_postgresql_evaluation_scenarios()[0]
+    mlflow_payload = build_mlflow_export_from_evaluation_scenario(
+        scenario,
+        enabled=True,
+        mlflow_run_id="mlflow-run-456",
+        evaluation_run_id="evaluation-run-123",
+        evaluation_outcome_id="evaluation-outcome-456",
+        validation_status="passed",
+    )
+    assert mlflow_payload is not None
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=_observed_records_from_harness(),
+        audit_artifacts=(mlflow_payload.model_dump(exclude_none=True),),
+    )
+
+    assert decision.status == "fail"
+    assert decision.failure_count == 1
+    assert decision.failures[0].deny_code == "DENY_MALFORMED_AUDIT_ARTIFACT"
+    assert decision.failures[0].source_id is None
+    assert decision.failures[0].scenario_id is None
+    assert "scenario_id" in decision.failures[0].detail
+    assert "event" in decision.failures[0].detail
