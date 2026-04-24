@@ -89,6 +89,22 @@ def test_mlflow_export_payload_serializes_source_aware_audit_metadata() -> None:
     assert serialized["safequery_audit_event_id"] != serialized["mlflow_run_id"]
 
 
+def test_mlflow_export_audit_builder_rejects_missing_source_versions() -> None:
+    audit_event = _execution_audit_event(
+        dataset_contract_version=None,
+        schema_snapshot_version=None,
+        execution_policy_version=None,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        build_mlflow_export_from_audit_event(audit_event, enabled=True)
+
+    assert str(exc_info.value) == (
+        "Cannot build MLflow audit export without required source version fields: "
+        "dataset_contract_version, schema_snapshot_version, execution_policy_version"
+    )
+
+
 def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metadata() -> None:
     mssql_scenario = list_mssql_evaluation_scenarios()[0]
     postgresql_scenario = list_postgresql_evaluation_scenarios()[0]

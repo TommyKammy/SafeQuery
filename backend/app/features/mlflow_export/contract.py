@@ -120,6 +120,20 @@ def build_mlflow_export_from_audit_event(
 ) -> Optional[MLflowExportPayload]:
     if not enabled:
         return None
+    missing_required = [
+        field_name
+        for field_name, field_value in (
+            ("dataset_contract_version", audit_event.dataset_contract_version),
+            ("schema_snapshot_version", audit_event.schema_snapshot_version),
+            ("execution_policy_version", audit_event.execution_policy_version),
+        )
+        if field_value is None
+    ]
+    if missing_required:
+        raise ValueError(
+            "Cannot build MLflow audit export without required source version fields: "
+            + ", ".join(missing_required)
+        )
     return MLflowExportPayload(
         export_kind="audit_trace",
         safequery_audit_event_id=audit_event.event_id,
