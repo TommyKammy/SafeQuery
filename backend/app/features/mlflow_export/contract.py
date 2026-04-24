@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from typing import Literal, Optional, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, NonNegativeInt, PositiveInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveInt, model_validator
 
 from app.features.audit.event_model import (
     NonEmptyTrimmedString,
@@ -13,6 +14,39 @@ from app.features.audit.event_model import (
     SourceIdentifier,
 )
 from app.features.evaluation.harness import EvaluationBoundary, EvaluationScenarioKind
+
+
+RedactionSourceField = Literal[
+    "natural_language_request",
+    "sql_snippet",
+    "explanation_sample",
+    "retrieved_asset_reference",
+    "evaluation_diagnostic",
+]
+RedactionProfile = Literal[
+    "nl_excerpt_v1",
+    "sql_snippet_v1",
+    "explanation_sample_v1",
+    "retrieved_asset_reference_v1",
+    "evaluation_diagnostic_v1",
+]
+AccessRole = Literal["engineering", "operations", "security"]
+
+_APPROVED_PROFILE_BY_FIELD: dict[str, str] = {
+    "natural_language_request": "nl_excerpt_v1",
+    "sql_snippet": "sql_snippet_v1",
+    "explanation_sample": "explanation_sample_v1",
+    "retrieved_asset_reference": "retrieved_asset_reference_v1",
+    "evaluation_diagnostic": "evaluation_diagnostic_v1",
+}
+
+_PROHIBITED_SAMPLE_PATTERNS = (
+    re.compile(r"\bpassword\s*=", re.IGNORECASE),
+    re.compile(r"\b(token|secret|api[_-]?key)\s*=", re.IGNORECASE),
+    re.compile(r"\bbearer\s+[a-z0-9._~+/-]+", re.IGNORECASE),
+    re.compile(r"\bserver\s*=.+\b(password|pwd)\s*=", re.IGNORECASE),
+    re.compile(r"\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b", re.IGNORECASE),
+)
 
 
 PROHIBITED_EXPORT_FIELDS = frozenset(
@@ -36,6 +70,45 @@ PROHIBITED_EXPORT_FIELDS = frozenset(
 )
 
 
+class MLflowRedactedSample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_field: RedactionSourceField
+    redaction_profile: RedactionProfile
+    value: NonEmptyTrimmedString
+    source_metadata: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _require_field_specific_profile(self) -> "MLflowRedactedSample":
+        expected_profile = _APPROVED_PROFILE_BY_FIELD[self.source_field]
+        if self.redaction_profile != expected_profile:
+            raise ValueError(
+                "Redacted MLflow sample uses profile "
+                f"{self.redaction_profile!r} for {self.source_field}; "
+                f"expected {expected_profile!r}."
+            )
+        return self
+
+
+class MLflowExportDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    payload: Optional["MLflowExportPayload"] = None
+    suppressed: bool = False
+    reasons: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
+    safequery_audit_event_id: Optional[UUID] = None
+    request_id: Optional[NonEmptyTrimmedString] = None
+    evaluation_scenario_id: Optional[NonEmptyTrimmedString] = None
+
+    @model_validator(mode="after")
+    def _require_reason_for_suppression(self) -> "MLflowExportDecision":
+        if self.suppressed and not self.reasons:
+            raise ValueError("Suppressed MLflow exports must include a machine-readable reason.")
+        if not self.suppressed and self.reasons:
+            raise ValueError("Unsuppressed MLflow exports must not include suppression reasons.")
+        return self
+
+
 class MLflowExportPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -43,6 +116,13 @@ class MLflowExportPayload(BaseModel):
     export_kind: Literal["audit_trace", "evaluation_record"]
     authority: Literal["engineering_observability"] = "engineering_observability"
     can_authorize_or_mutate_audit: Literal[False] = False
+    retention_days: PositiveInt = 30
+    authoritative_audit_retention_days: PositiveInt = 90
+    retention_extension_approval_id: Optional[NonEmptyTrimmedString] = None
+    access_posture: Literal["approved_engineering_operations"] = (
+        "approved_engineering_operations"
+    )
+    access_roles: tuple[AccessRole, ...] = ("engineering", "operations")
 
     safequery_audit_event_id: Optional[UUID] = None
     mlflow_run_id: Optional[NonEmptyTrimmedString] = None
@@ -71,6 +151,7 @@ class MLflowExportPayload(BaseModel):
     evaluation_scenario_id: Optional[NonEmptyTrimmedString] = None
     evaluation_kind: Optional[EvaluationScenarioKind] = None
     evaluation_boundary: Optional[EvaluationBoundary] = None
+    redacted_samples: tuple[MLflowRedactedSample, ...] = Field(default_factory=tuple)
 
     @model_validator(mode="before")
     @classmethod
@@ -86,7 +167,7 @@ class MLflowExportPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _require_kind_specific_identifiers(self) -> "MLflowExportPayload":
+    def _validate_export_contract(self) -> "MLflowExportPayload":
         if self.export_kind == "audit_trace":
             if self.safequery_audit_event_id is None:
                 raise ValueError("Audit trace exports must reference a SafeQuery audit event.")
@@ -99,6 +180,20 @@ class MLflowExportPayload(BaseModel):
                 raise ValueError("Evaluation exports must include an evaluation kind.")
             if self.evaluation_boundary is None:
                 raise ValueError("Evaluation exports must include an evaluation boundary.")
+        if (
+            self.retention_days > self.authoritative_audit_retention_days
+            and self.retention_extension_approval_id is None
+        ):
+            raise ValueError(
+                "MLflow retention must be equal to or shorter than authoritative audit "
+                "retention unless an explicit approval id is present."
+            )
+        sample_reasons = _suppression_reasons_for_samples(self.redacted_samples)
+        if sample_reasons:
+            raise ValueError(
+                "MLflow export payload includes unsafe redacted sample(s): "
+                + ", ".join(sample_reasons)
+            )
         return self
 
 
@@ -113,6 +208,11 @@ def build_mlflow_export_from_audit_event(
     audit_event: SourceAwareAuditEvent,
     *,
     enabled: bool,
+    retention_days: int = 30,
+    authoritative_audit_retention_days: int = 90,
+    retention_extension_approval_id: Optional[str] = None,
+    access_roles: tuple[AccessRole, ...] = ("engineering", "operations"),
+    redacted_samples: tuple[MLflowRedactedSample, ...] = (),
     latency_ms: Optional[int] = None,
     mlflow_run_id: Optional[str] = None,
     prompt_version: Optional[str] = None,
@@ -136,6 +236,10 @@ def build_mlflow_export_from_audit_event(
         )
     return MLflowExportPayload(
         export_kind="audit_trace",
+        retention_days=retention_days,
+        authoritative_audit_retention_days=authoritative_audit_retention_days,
+        retention_extension_approval_id=retention_extension_approval_id,
+        access_roles=access_roles,
         safequery_audit_event_id=audit_event.event_id,
         mlflow_run_id=mlflow_run_id,
         request_id=audit_event.request_id,
@@ -155,6 +259,67 @@ def build_mlflow_export_from_audit_event(
         model_version=model_version,
         application_version=audit_event.application_version,
         adapter_version=audit_event.adapter_version,
+        redacted_samples=redacted_samples,
+    )
+
+
+def prepare_mlflow_export_from_audit_event(
+    audit_event: SourceAwareAuditEvent,
+    *,
+    enabled: bool,
+    retention_days: int = 30,
+    authoritative_audit_retention_days: int = 90,
+    retention_extension_approval_id: Optional[str] = None,
+    access_roles: tuple[AccessRole, ...] = ("engineering", "operations"),
+    redacted_samples: tuple[MLflowRedactedSample, ...] = (),
+    latency_ms: Optional[int] = None,
+    mlflow_run_id: Optional[str] = None,
+    prompt_version: Optional[str] = None,
+    model_version: Optional[str] = None,
+) -> MLflowExportDecision:
+    if not enabled:
+        return MLflowExportDecision(
+            payload=None,
+            suppressed=False,
+            safequery_audit_event_id=audit_event.event_id,
+            request_id=audit_event.request_id,
+        )
+    reasons = _suppression_reasons_for_samples(redacted_samples)
+    if reasons:
+        return MLflowExportDecision(
+            payload=None,
+            suppressed=True,
+            reasons=tuple(reasons),
+            safequery_audit_event_id=audit_event.event_id,
+            request_id=audit_event.request_id,
+        )
+    try:
+        payload = build_mlflow_export_from_audit_event(
+            audit_event,
+            enabled=enabled,
+            retention_days=retention_days,
+            authoritative_audit_retention_days=authoritative_audit_retention_days,
+            retention_extension_approval_id=retention_extension_approval_id,
+            access_roles=access_roles,
+            redacted_samples=redacted_samples,
+            latency_ms=latency_ms,
+            mlflow_run_id=mlflow_run_id,
+            prompt_version=prompt_version,
+            model_version=model_version,
+        )
+    except ValueError as exc:
+        return MLflowExportDecision(
+            payload=None,
+            suppressed=True,
+            reasons=(f"invalid_export_contract:{exc.__class__.__name__}",),
+            safequery_audit_event_id=audit_event.event_id,
+            request_id=audit_event.request_id,
+        )
+    return MLflowExportDecision(
+        payload=payload,
+        suppressed=False,
+        safequery_audit_event_id=audit_event.event_id,
+        request_id=audit_event.request_id,
     )
 
 
@@ -162,6 +327,11 @@ def build_mlflow_export_from_evaluation_scenario(
     scenario: _EvaluationScenario,
     *,
     enabled: bool,
+    retention_days: int = 30,
+    authoritative_audit_retention_days: int = 90,
+    retention_extension_approval_id: Optional[str] = None,
+    access_roles: tuple[AccessRole, ...] = ("engineering", "operations"),
+    redacted_samples: tuple[MLflowRedactedSample, ...] = (),
     evaluation_run_id: Optional[str] = None,
     deny_code: Optional[str] = None,
     latency_ms: Optional[int] = None,
@@ -175,6 +345,10 @@ def build_mlflow_export_from_evaluation_scenario(
     source = scenario.source
     return MLflowExportPayload(
         export_kind="evaluation_record",
+        retention_days=retention_days,
+        authoritative_audit_retention_days=authoritative_audit_retention_days,
+        retention_extension_approval_id=retention_extension_approval_id,
+        access_roles=access_roles,
         evaluation_run_id=evaluation_run_id,
         source_id=source.source_id,
         source_family=source.source_family,
@@ -192,4 +366,77 @@ def build_mlflow_export_from_evaluation_scenario(
         evaluation_scenario_id=scenario.scenario_id,
         evaluation_kind=scenario.kind,
         evaluation_boundary=scenario.evaluation_boundary,
+        redacted_samples=redacted_samples,
     )
+
+
+def prepare_mlflow_export_from_evaluation_scenario(
+    scenario: _EvaluationScenario,
+    *,
+    enabled: bool,
+    retention_days: int = 30,
+    authoritative_audit_retention_days: int = 90,
+    retention_extension_approval_id: Optional[str] = None,
+    access_roles: tuple[AccessRole, ...] = ("engineering", "operations"),
+    redacted_samples: tuple[MLflowRedactedSample, ...] = (),
+    evaluation_run_id: Optional[str] = None,
+    deny_code: Optional[str] = None,
+    latency_ms: Optional[int] = None,
+    row_count: Optional[int] = None,
+    result_truncated: Optional[bool] = None,
+    prompt_version: Optional[str] = None,
+    model_version: Optional[str] = None,
+) -> MLflowExportDecision:
+    if not enabled:
+        return MLflowExportDecision(
+            payload=None,
+            suppressed=False,
+            evaluation_scenario_id=scenario.scenario_id,
+        )
+    reasons = _suppression_reasons_for_samples(redacted_samples)
+    if reasons:
+        return MLflowExportDecision(
+            payload=None,
+            suppressed=True,
+            reasons=tuple(reasons),
+            evaluation_scenario_id=scenario.scenario_id,
+        )
+    try:
+        payload = build_mlflow_export_from_evaluation_scenario(
+            scenario,
+            enabled=enabled,
+            retention_days=retention_days,
+            authoritative_audit_retention_days=authoritative_audit_retention_days,
+            retention_extension_approval_id=retention_extension_approval_id,
+            access_roles=access_roles,
+            redacted_samples=redacted_samples,
+            evaluation_run_id=evaluation_run_id,
+            deny_code=deny_code,
+            latency_ms=latency_ms,
+            row_count=row_count,
+            result_truncated=result_truncated,
+            prompt_version=prompt_version,
+            model_version=model_version,
+        )
+    except ValueError as exc:
+        return MLflowExportDecision(
+            payload=None,
+            suppressed=True,
+            reasons=(f"invalid_export_contract:{exc.__class__.__name__}",),
+            evaluation_scenario_id=scenario.scenario_id,
+        )
+    return MLflowExportDecision(
+        payload=payload,
+        suppressed=False,
+        evaluation_scenario_id=scenario.scenario_id,
+    )
+
+
+def _suppression_reasons_for_samples(
+    samples: tuple[MLflowRedactedSample, ...],
+) -> list[str]:
+    reasons: list[str] = []
+    for sample in samples:
+        if any(pattern.search(sample.value) for pattern in _PROHIBITED_SAMPLE_PATTERNS):
+            reasons.append(f"prohibited_pattern_detected:{sample.source_field}")
+    return reasons

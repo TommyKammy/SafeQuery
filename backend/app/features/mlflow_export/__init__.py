@@ -1,13 +1,21 @@
 """Optional MLflow export contract for engineering observability records."""
 
 from app.features.mlflow_export.contract import (
+    MLflowExportDecision,
     MLflowExportPayload,
+    MLflowRedactedSample,
     build_mlflow_export_from_audit_event,
     build_mlflow_export_from_evaluation_scenario,
+    prepare_mlflow_export_from_audit_event,
+    prepare_mlflow_export_from_evaluation_scenario,
 )
 
 __all__ = [
+    "MLflowExportDecision",
     "MLflowExportPayload",
+    "MLflowRedactedSample",
     "build_mlflow_export_from_audit_event",
     "build_mlflow_export_from_evaluation_scenario",
+    "prepare_mlflow_export_from_audit_event",
+    "prepare_mlflow_export_from_evaluation_scenario",
 ]

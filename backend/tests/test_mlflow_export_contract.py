@@ -13,7 +13,10 @@ from app.features.evaluation import (
     list_postgresql_evaluation_scenarios,
 )
 from app.features.mlflow_export import (
+    MLflowRedactedSample,
     MLflowExportPayload,
+    prepare_mlflow_export_from_audit_event,
+    prepare_mlflow_export_from_evaluation_scenario,
     build_mlflow_export_from_audit_event,
     build_mlflow_export_from_evaluation_scenario,
 )
@@ -64,6 +67,10 @@ def test_mlflow_export_payload_serializes_source_aware_audit_metadata() -> None:
         "export_kind": "audit_trace",
         "authority": "engineering_observability",
         "can_authorize_or_mutate_audit": False,
+        "retention_days": 30,
+        "authoritative_audit_retention_days": 90,
+        "access_posture": "approved_engineering_operations",
+        "access_roles": ("engineering", "operations"),
         "safequery_audit_event_id": audit_event.event_id,
         "mlflow_run_id": "mlflow-run-123",
         "request_id": "request-123",
@@ -82,6 +89,7 @@ def test_mlflow_export_payload_serializes_source_aware_audit_metadata() -> None:
         "model_version": "model-v1",
         "application_version": "app-v1",
         "adapter_version": "adapter-v1",
+        "redacted_samples": (),
     }
     assert "canonical_sql" not in serialized
     assert "raw_result_set" not in serialized
@@ -133,6 +141,10 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
         "export_kind": "evaluation_record",
         "authority": "engineering_observability",
         "can_authorize_or_mutate_audit": False,
+        "retention_days": 30,
+        "authoritative_audit_retention_days": 90,
+        "access_posture": "approved_engineering_operations",
+        "access_roles": ("engineering", "operations"),
         "evaluation_run_id": "evaluation-run-123",
         "source_id": "business-mssql-source",
         "source_family": "mssql",
@@ -147,12 +159,17 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
         "evaluation_scenario_id": mssql_scenario.scenario_id,
         "evaluation_kind": "positive",
         "evaluation_boundary": "execution",
+        "redacted_samples": (),
     }
     assert postgresql_payload.model_dump(exclude_none=True) == {
         "export_schema_version": 1,
         "export_kind": "evaluation_record",
         "authority": "engineering_observability",
         "can_authorize_or_mutate_audit": False,
+        "retention_days": 30,
+        "authoritative_audit_retention_days": 90,
+        "access_posture": "approved_engineering_operations",
+        "access_roles": ("engineering", "operations"),
         "evaluation_run_id": "evaluation-run-123",
         "source_id": "business-postgres-source",
         "source_family": "postgresql",
@@ -167,6 +184,7 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
         "evaluation_scenario_id": postgresql_scenario.scenario_id,
         "evaluation_kind": "positive",
         "evaluation_boundary": "execution",
+        "redacted_samples": (),
     }
 
 
@@ -229,6 +247,76 @@ def test_mlflow_export_payload_rejects_mlflow_as_audit_authority() -> None:
     )
 
 
+def test_mlflow_export_payload_rejects_retention_longer_than_audit_without_approval() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        MLflowExportPayload(
+            export_kind="audit_trace",
+            safequery_audit_event_id=uuid4(),
+            request_id="request-123",
+            source_id="business-mssql-source",
+            source_family="mssql",
+            source_flavor="sqlserver",
+            dataset_contract_version=3,
+            schema_snapshot_version=7,
+            execution_policy_version=2,
+            retention_days=120,
+            authoritative_audit_retention_days=90,
+        )
+
+    assert "MLflow retention must be equal to or shorter" in str(exc_info.value)
+
+
+def test_mlflow_export_rejects_unapproved_access_roles() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        MLflowExportPayload(
+            export_kind="audit_trace",
+            safequery_audit_event_id=uuid4(),
+            request_id="request-123",
+            source_id="business-mssql-source",
+            source_family="mssql",
+            source_flavor="sqlserver",
+            dataset_contract_version=3,
+            schema_snapshot_version=7,
+            execution_policy_version=2,
+            access_roles=("engineering", "public"),
+        )
+
+    assert any(error["loc"] == ("access_roles", 1) for error in exc_info.value.errors())
+
+
+def test_mlflow_export_preserves_safe_redacted_samples_and_source_metadata() -> None:
+    audit_event = _execution_audit_event()
+
+    payload = build_mlflow_export_from_audit_event(
+        audit_event,
+        enabled=True,
+        redacted_samples=(
+            MLflowRedactedSample(
+                source_field="sql_snippet",
+                redaction_profile="sql_snippet_v1",
+                value="SELECT vendor_name FROM approved_vendor_spend LIMIT 10",
+                source_metadata={
+                    "source_id": audit_event.source_id,
+                    "schema_snapshot_version": audit_event.schema_snapshot_version,
+                    "column_count": 1,
+                },
+            ),
+        ),
+    )
+
+    assert payload is not None
+    assert payload.redacted_samples[0].model_dump() == {
+        "source_field": "sql_snippet",
+        "redaction_profile": "sql_snippet_v1",
+        "value": "SELECT vendor_name FROM approved_vendor_spend LIMIT 10",
+        "source_metadata": {
+            "source_id": "business-mssql-source",
+            "schema_snapshot_version": 7,
+            "column_count": 1,
+        },
+    }
+
+
 @pytest.mark.parametrize(
     "builder",
     [
@@ -262,3 +350,48 @@ def test_mlflow_export_payload_keeps_audit_reference_typed() -> None:
 
     assert isinstance(payload.safequery_audit_event_id, UUID)
     assert payload.safequery_audit_event_id == audit_event_id
+
+
+def test_mlflow_export_suppresses_unredacted_sample_without_blocking_audit() -> None:
+    audit_event = _execution_audit_event()
+
+    decision = prepare_mlflow_export_from_audit_event(
+        audit_event,
+        enabled=True,
+        redacted_samples=[
+            MLflowRedactedSample(
+                source_field="natural_language_request",
+                redaction_profile="nl_excerpt_v1",
+                value="Show spend for alice@example.com with password=hunter2",
+                source_metadata={"request_id": audit_event.request_id},
+            )
+        ],
+    )
+
+    assert decision.payload is None
+    assert decision.suppressed is True
+    assert decision.reasons == ("prohibited_pattern_detected:natural_language_request",)
+    assert decision.safequery_audit_event_id == audit_event.event_id
+    assert decision.request_id == audit_event.request_id
+
+
+def test_mlflow_export_suppresses_unsafe_evaluation_diagnostic() -> None:
+    scenario = list_mssql_evaluation_scenarios()[0]
+
+    decision = prepare_mlflow_export_from_evaluation_scenario(
+        scenario,
+        enabled=True,
+        redacted_samples=(
+            MLflowRedactedSample(
+                source_field="evaluation_diagnostic",
+                redaction_profile="evaluation_diagnostic_v1",
+                value="connector failed with token=sample-token",
+                source_metadata={"scenario_id": scenario.scenario_id},
+            ),
+        ),
+    )
+
+    assert decision.payload is None
+    assert decision.suppressed is True
+    assert decision.reasons == ("prohibited_pattern_detected:evaluation_diagnostic",)
+    assert decision.evaluation_scenario_id == scenario.scenario_id
