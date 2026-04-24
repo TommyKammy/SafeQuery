@@ -140,7 +140,17 @@ def test_retrieval_completed_audit_event_preserves_source_labeled_citations() ->
     assert event.model_dump()["retrieved_citations"] == payload["retrieved_citations"]
 
 
-def test_retrieval_citation_audit_payload_rejects_execution_authority() -> None:
+@pytest.mark.parametrize(
+    ("authority", "can_authorize_execution"),
+    [
+        ("execution_evidence", False),
+        ("advisory_context", True),
+    ],
+)
+def test_retrieval_citation_audit_payload_rejects_execution_authority(
+    authority: str,
+    can_authorize_execution: bool,
+) -> None:
     payload = _source_aware_payload()
     payload.update(
         {
@@ -155,8 +165,8 @@ def test_retrieval_citation_audit_payload_rejects_execution_authority() -> None:
                     "source_flavor": "sqlserver-2022",
                     "dataset_contract_version": 7,
                     "schema_snapshot_version": 3,
-                    "authority": "execution_evidence",
-                    "can_authorize_execution": True,
+                    "authority": authority,
+                    "can_authorize_execution": can_authorize_execution,
                 },
             ],
         }

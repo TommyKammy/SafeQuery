@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -21,6 +22,7 @@ from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewSt
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
 from app.services.retrieval_corpus import (
+    RetrievalCitation,
     RetrievalCorpusGovernanceError,
     retrieve_governed_corpus_assets,
 )
@@ -216,6 +218,36 @@ def test_retrieval_citations_preserve_source_scope_when_asset_ids_match() -> Non
             "can_authorize_execution": False,
         },
     ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_id", "business/postgres/source"),
+        ("source_family", "mysql"),
+        ("source_flavor", "postgresql 16"),
+        ("dataset_contract_version", 0),
+        ("schema_snapshot_version", -1),
+    ],
+)
+def test_retrieval_citation_rejects_audit_incompatible_source_metadata(
+    field: str,
+    value: object,
+) -> None:
+    payload = {
+        "asset_id": "metric_definition",
+        "asset_kind": "metric_definition",
+        "citation_label": "business-postgres-source metric definition",
+        "source_id": "business-postgres-source",
+        "source_family": "postgresql",
+        "source_flavor": "postgresql-16",
+        "dataset_contract_version": 2,
+        "schema_snapshot_version": 5,
+    }
+    payload[field] = value
+
+    with pytest.raises(ValidationError):
+        RetrievalCitation(**payload)
 
 
 def test_retrieval_corpus_assets_are_source_labeled_filtered_and_advisory_only() -> None:

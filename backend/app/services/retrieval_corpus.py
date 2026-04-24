@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, PositiveInt, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing_extensions import Annotated
@@ -14,6 +14,7 @@ from app.db.models.retrieval_corpus import (
 )
 from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource
+from app.features.audit.event_model import SourceFamily, SourceFlavor, SourceIdentifier
 from app.features.auth.context import AuthenticatedSubject
 from app.services.source_entitlements import (
     SourceEntitlementError,
@@ -57,11 +58,11 @@ class RetrievalCitation(BaseModel):
     asset_id: NonEmptyTrimmedString
     asset_kind: NonEmptyTrimmedString
     citation_label: NonEmptyTrimmedString
-    source_id: NonEmptyTrimmedString
-    source_family: NonEmptyTrimmedString
-    source_flavor: Optional[NonEmptyTrimmedString] = None
-    dataset_contract_version: int
-    schema_snapshot_version: int
+    source_id: SourceIdentifier
+    source_family: SourceFamily
+    source_flavor: Optional[SourceFlavor] = None
+    dataset_contract_version: PositiveInt
+    schema_snapshot_version: PositiveInt
     authority: Literal["advisory_context"] = "advisory_context"
     can_authorize_execution: Literal[False] = False
 
