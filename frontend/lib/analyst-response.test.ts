@@ -37,6 +37,56 @@ function evidence(sourceId: string, sourceFamily: "mssql" | "postgresql") {
 }
 
 describe("parseAnalystResponsePayload", () => {
+  it("parses backend-produced analyst response payload field names", () => {
+    const parsed = parseAnalystResponsePayload({
+      responseId: "analyst-response-123",
+      requestId: "request-123",
+      narrative: "Backend-produced advisory response keeps source-labeled evidence intact.",
+      advisoryOnly: true,
+      canAuthorizeExecution: false,
+      analystModeVersion: "analyst-schema-v1",
+      confidence: "medium",
+      caveats: ["Narrative guidance is advisory only."],
+      sourceSummaries: [
+        {
+          sourceId: "business-postgres-source",
+          sourceFamily: "postgresql",
+          sourceFlavor: "warehouse",
+          datasetContractVersion: 2,
+          schemaSnapshotVersion: 5,
+          executionPolicyVersion: 3
+        }
+      ],
+      retrievalCitations: [citation("business-postgres-source", "postgresql")],
+      executedEvidence: [evidence("business-postgres-source", "postgresql")],
+      operatorHistoryHooks: {
+        auditEventId: "5dbcc36c-c6d6-4755-b307-5a3af5d6ec25",
+        historyRecordIds: ["request-123", "business-postgres-source-candidate-123"]
+      },
+      validationOutcome: {
+        status: "safe",
+        checks: [
+          "source_labeled_evidence_present",
+          "source_summary_coverage",
+          "narrative_execution_authority",
+          "narrative_execution_grounding",
+          "narrative_cross_source_execution"
+        ],
+        unsafeReasons: ["Manual review remains required before execution."]
+      }
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.responseId).toBe("analyst-response-123");
+    expect(parsed?.sourceSummaries[0]?.executionPolicyVersion).toBe(3);
+    expect(parsed?.retrievalCitations[0]?.sourceId).toBe("business-postgres-source");
+    expect(parsed?.executedEvidence[0]?.executionAuditEventType).toBe("execution_completed");
+    expect(parsed?.operatorHistoryHooks.historyRecordIds).toContain("request-123");
+    expect(parsed?.validationOutcome.unsafeReasons).toEqual([
+      "Manual review remains required before execution."
+    ]);
+  });
+
   it("preserves source-labeled advisory citations and executed evidence", () => {
     const parsed = parseAnalystResponsePayload({
       responseId: "analyst-response-123",

@@ -83,6 +83,53 @@ def test_analyst_response_payload_preserves_multi_source_advisory_labels() -> No
     assert "sql_execution_approved" not in dumped
 
 
+def test_analyst_response_payload_serializes_camel_case_wire_contract() -> None:
+    response = AnalystResponsePayload(
+        response_id="analyst-response-123",
+        request_id="request-123",
+        narrative="Backend-produced advisory response keeps source-labeled evidence intact.",
+        advisory_only=True,
+        can_authorize_execution=False,
+        analyst_mode_version="analyst-schema-v1",
+        confidence="medium",
+        caveats=["Narrative guidance is advisory only."],
+        source_summaries=[
+            {
+                "source_id": "business-postgres-source",
+                "source_family": "postgresql",
+                "source_flavor": "warehouse",
+                "dataset_contract_version": 2,
+                "schema_snapshot_version": 5,
+                "execution_policy_version": 3,
+            }
+        ],
+        retrieval_citations=[_citation("business-postgres-source", "postgresql")],
+        executed_evidence=[_executed_evidence("business-postgres-source", "postgresql")],
+        operator_history_hooks={
+            "audit_event_id": uuid4(),
+            "history_record_ids": ["request-123", "business-postgres-source-candidate-123"],
+        },
+    )
+
+    wire_payload = response.to_wire_payload()
+
+    assert wire_payload["responseId"] == "analyst-response-123"
+    assert wire_payload["advisoryOnly"] is True
+    assert wire_payload["canAuthorizeExecution"] is False
+    assert wire_payload["analystModeVersion"] == "analyst-schema-v1"
+    assert wire_payload["sourceSummaries"][0]["executionPolicyVersion"] == 3
+    assert wire_payload["retrievalCitations"][0]["sourceId"] == "business-postgres-source"
+    assert wire_payload["retrievalCitations"][0]["canAuthorizeExecution"] is False
+    assert wire_payload["executedEvidence"][0]["executionAuditEventType"] == "execution_completed"
+    assert wire_payload["operatorHistoryHooks"]["historyRecordIds"] == [
+        "request-123",
+        "business-postgres-source-candidate-123",
+    ]
+    assert wire_payload["validationOutcome"]["unsafeReasons"] == []
+    assert "response_id" not in wire_payload
+    assert "retrieval_citations" not in wire_payload
+
+
 def test_source_summary_coverage_uses_source_identity_not_execution_policy() -> None:
     response = AnalystResponsePayload(
         response_id="analyst-response-123",

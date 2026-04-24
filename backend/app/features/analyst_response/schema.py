@@ -13,6 +13,7 @@ from app.features.audit.event_model import (
     SourceFamily,
     SourceFlavor,
     SourceIdentifier,
+    to_camel,
 )
 
 AnalystConfidence = Literal["low", "medium", "high", "unknown"]
@@ -58,7 +59,12 @@ _CROSS_SOURCE_EXECUTION_PATTERN = re.compile(
 
 
 class AnalystResponseSourceSummary(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        extra="forbid",
+        frozen=True,
+        populate_by_name=True,
+    )
 
     source_id: SourceIdentifier
     source_family: SourceFamily
@@ -69,14 +75,24 @@ class AnalystResponseSourceSummary(BaseModel):
 
 
 class OperatorHistoryHooks(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        extra="forbid",
+        frozen=True,
+        populate_by_name=True,
+    )
 
     audit_event_id: Optional[UUID] = None
     history_record_ids: list[NonEmptyTrimmedString] = Field(default_factory=list)
 
 
 class AnalystResponseValidationOutcome(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        extra="forbid",
+        frozen=True,
+        populate_by_name=True,
+    )
 
     status: Literal["safe"] = "safe"
     checks: list[AnalystValidationCheck] = Field(
@@ -92,7 +108,12 @@ class AnalystResponseValidationOutcome(BaseModel):
 
 
 class AnalystResponsePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        extra="forbid",
+        frozen=True,
+        populate_by_name=True,
+    )
 
     response_id: NonEmptyTrimmedString
     request_id: NonEmptyTrimmedString
@@ -109,6 +130,9 @@ class AnalystResponsePayload(BaseModel):
     validation_outcome: AnalystResponseValidationOutcome = Field(
         default_factory=AnalystResponseValidationOutcome
     )
+
+    def to_wire_payload(self) -> dict[str, object]:
+        return self.model_dump(mode="json", by_alias=True)
 
     @model_validator(mode="after")
     def validate_source_summaries(self) -> "AnalystResponsePayload":

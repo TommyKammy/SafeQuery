@@ -8,6 +8,11 @@ from pydantic import BaseModel, ConfigDict, NonNegativeInt, PositiveInt, StringC
 from typing_extensions import Annotated
 
 
+def to_camel(value: str) -> str:
+    head, *tail = value.split("_")
+    return head + "".join(item.capitalize() for item in tail)
+
+
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 SourceIdentifier = Annotated[
     str,
@@ -49,7 +54,11 @@ SourceFamily = Literal["mssql", "postgresql"]
 
 
 class RetrievalCitationAuditPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        extra="forbid",
+        populate_by_name=True,
+    )
 
     asset_id: NonEmptyTrimmedString
     asset_kind: NonEmptyTrimmedString
@@ -64,7 +73,11 @@ class RetrievalCitationAuditPayload(BaseModel):
 
 
 class ExecutedEvidenceAuditPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        extra="forbid",
+        populate_by_name=True,
+    )
 
     type: Literal["executed_evidence"] = "executed_evidence"
     source_id: SourceIdentifier
