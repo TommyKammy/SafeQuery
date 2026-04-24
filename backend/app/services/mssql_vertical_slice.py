@@ -192,9 +192,11 @@ def _append_audit_event(
 def _build_execution_audit_context(
     *,
     audit_context: PreviewAuditContext,
+    previous_event_id: UUID,
 ) -> ExecutionAuditContext:
     return ExecutionAuditContext(
         event_id=uuid4(),
+        causation_event_id=previous_event_id,
         occurred_at=audit_context.occurred_at,
         request_id=audit_context.request_id,
         correlation_id=audit_context.correlation_id,
@@ -242,7 +244,7 @@ def run_mssql_core_vertical_slice(
     prepared_context = prepare_generation_context(
         request_id=audit_context.request_id,
         question=payload.question,
-        source_id=payload.source_id,
+        source_id=candidate_source.source_id,
         authenticated_subject=authenticated_subject,
         session=session,
     )
@@ -311,7 +313,10 @@ def run_mssql_core_vertical_slice(
         selection=selection,
         business_mssql_connection_string=normalized_business_mssql_connection_string,
         query_runner=query_runner,
-        audit_context=_build_execution_audit_context(audit_context=audit_context),
+        audit_context=_build_execution_audit_context(
+            audit_context=audit_context,
+            previous_event_id=audit_events[-1].event_id,
+        ),
     )
     audit_events.extend(execution.audit_events)
 

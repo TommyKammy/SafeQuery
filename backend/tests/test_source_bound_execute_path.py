@@ -78,6 +78,11 @@ def _audit_context() -> ExecutionAuditContext:
     )
 
 
+def _anchored_audit_context(previous_event_id) -> ExecutionAuditContext:
+    context = _audit_context()
+    return context.model_copy(update={"causation_event_id": previous_event_id})
+
+
 def test_execute_candidate_sql_requires_candidate_bound_record() -> None:
     from app.features.execution import execute_candidate_sql
 
@@ -209,3 +214,27 @@ def test_execute_candidate_sql_returns_source_aware_completion_audit_event() -> 
         "result_truncated": False,
     }.items() <= result.audit_event.model_dump(exclude_none=True).items()
     assert result.audit_event.model_dump(exclude_none=True).get("rows") is None
+
+
+def test_execute_candidate_sql_anchors_first_audit_event_to_previous_event() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    previous_event_id = uuid4()
+
+    result = execute_candidate_sql(
+        candidate=_candidate(),
+        selection=_selection(),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
+        query_runner=lambda **_: [{"vendor_name": "Acme"}],
+        audit_context=_anchored_audit_context(previous_event_id),
+    )
+
+    assert [event.event_type for event in result.audit_events] == [
+        "execution_requested",
+        "execution_started",
+        "execution_completed",
+    ]
+    assert result.audit_events[0].causation_event_id == previous_event_id
+    assert result.audit_events[1].causation_event_id == result.audit_events[0].event_id
+    assert result.audit_events[2].causation_event_id == result.audit_events[1].event_id

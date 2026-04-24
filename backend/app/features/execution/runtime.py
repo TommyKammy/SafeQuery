@@ -88,6 +88,7 @@ class ExecutionAuditContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event_id: UUID
+    causation_event_id: Optional[UUID] = None
     occurred_at: datetime
     request_id: str
     correlation_id: str
@@ -202,7 +203,7 @@ def _build_execution_audit_events(
         return []
 
     events: list[SourceAwareAuditEvent] = []
-    causation_event_id: UUID | None = None
+    causation_event_id = audit_context.causation_event_id
     for event_type in event_types:
         event = _build_execution_audit_event(
             event_type=event_type,

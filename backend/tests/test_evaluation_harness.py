@@ -403,6 +403,11 @@ def test_mssql_core_vertical_slice_submits_generates_guards_executes_and_audits(
         "execution_started",
         "execution_completed",
     ]
+    for index, event in enumerate(result.audit_events):
+        expected_causation_event_id = (
+            None if index == 0 else result.audit_events[index - 1].event_id
+        )
+        assert event.causation_event_id == expected_causation_event_id
 
     for event in result.audit_events:
         dumped = event.model_dump(exclude_none=True)
