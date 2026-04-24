@@ -37,7 +37,6 @@ class RetrievalCorpusAssetStatus(str, Enum):
 class RetrievalCorpusAsset(Base):
     __tablename__ = "retrieval_corpus_assets"
     __table_args__ = (
-        UniqueConstraint("asset_id"),
         UniqueConstraint("registered_source_id", "asset_id"),
     )
 

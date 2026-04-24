@@ -91,10 +91,6 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_retrieval_corpus_assets")),
         sa.UniqueConstraint(
-            "asset_id",
-            name=op.f("uq_retrieval_corpus_assets_asset_id"),
-        ),
-        sa.UniqueConstraint(
             "registered_source_id",
             "asset_id",
             name=op.f("uq_retrieval_corpus_assets_registered_source_id"),
