@@ -68,6 +68,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 - [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md): MLflow as observability, evaluation, and model-lifecycle plane within the current baseline
 - [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md): governed semantic retrieval and analyst-style orchestration in the current source-aware baseline
 - [design/evaluation-harness.md](./design/evaluation-harness.md): evaluation goals, datasets, and scoring for the current baseline
+- [pilot-safety-verification-checklist.md](./pilot-safety-verification-checklist.md): pilot-readiness verification checklist for the completed 2-source core path
 - [security/threat-model.md](./security/threat-model.md): threat model and residual risk summary for the current source-aware and UX-foundation baseline
 
 ### Approved Follow-on Direction
