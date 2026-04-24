@@ -171,6 +171,68 @@ def _seed_mssql_source(
     session.commit()
 
 
+def _seed_postgresql_source(
+    session: Session,
+    *,
+    scenario: PostgreSQLEvaluationScenario,
+    contract_version: int | None = None,
+    snapshot_version: int | None = None,
+) -> None:
+    source = RegisteredSource(
+        id=uuid4(),
+        source_id=scenario.source.source_id,
+        display_label=f"{scenario.source.source_id} display",
+        source_family=scenario.source.source_family,
+        source_flavor=scenario.source.source_flavor,
+        activation_posture=SourceActivationPosture.ACTIVE,
+        connector_profile_id=None,
+        dialect_profile_id=None,
+        dataset_contract_id=None,
+        schema_snapshot_id=None,
+        execution_policy_id=None,
+        connection_reference=f"vault:{scenario.source.source_id}",
+    )
+    session.add(source)
+    session.flush()
+
+    snapshot = SchemaSnapshot(
+        id=uuid4(),
+        registered_source_id=source.id,
+        snapshot_version=snapshot_version or scenario.source.schema_snapshot_version,
+        review_status=SchemaSnapshotReviewStatus.APPROVED,
+        reviewed_at=datetime.now(timezone.utc),
+    )
+    session.add(snapshot)
+    session.flush()
+
+    contract = DatasetContract(
+        id=uuid4(),
+        registered_source_id=source.id,
+        schema_snapshot_id=snapshot.id,
+        contract_version=contract_version or scenario.source.dataset_contract_version,
+        display_name=f"{scenario.source.source_id} contract",
+        owner_binding="group:finance-analysts",
+        security_review_binding=None,
+        exception_policy_binding=None,
+    )
+    session.add(contract)
+    session.flush()
+
+    session.add(
+        DatasetContractDataset(
+            id=uuid4(),
+            dataset_contract_id=contract.id,
+            schema_name="finance",
+            dataset_name="approved_vendor_spend",
+            dataset_kind=DatasetContractDatasetKind.TABLE,
+        )
+    )
+
+    source.dataset_contract_id = contract.id
+    source.schema_snapshot_id = snapshot.id
+    session.commit()
+
+
 def _lifecycle_candidate(
     *,
     scenario: MSSQLEvaluationScenario,
@@ -591,6 +653,172 @@ def test_postgresql_positive_evaluation_scenarios_allow_and_shape_execution_evid
     assert result.connector_id == evidence.connector_id
     assert result.ownership == evidence.ownership
     assert tuple(result.rows[0]) == evidence.row_shape
+
+
+def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_audits() -> None:
+    from app.services.postgresql_vertical_slice import run_postgresql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _postgresql_scenarios_by_id()[
+        "postgresql-positive-approved-vendor-spend-top-vendors"
+    ]
+    captured: dict[str, object] = {}
+
+    class RecordingAdapter:
+        def generate_sql(self, request):
+            captured["adapter_request"] = request
+            return scenario.expected.canonical_sql
+
+    def fake_query_runner(
+        *,
+        database_url: str,
+        canonical_sql: str,
+    ) -> list[dict[str, object]]:
+        captured["database_url"] = database_url
+        captured["canonical_sql"] = canonical_sql
+        return [{"vendor_name": "Northwind", "approved_amount": 4200}]
+
+    with _session_scope() as session:
+        _seed_postgresql_source(session, scenario=scenario)
+
+        result = run_postgresql_core_vertical_slice(
+            payload=PreviewSubmissionRequest(
+                question=scenario.prompt,
+                source_id=scenario.source.source_id,
+            ),
+            authenticated_subject=AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            session=session,
+            sql_generation_adapter=RecordingAdapter(),
+            business_postgres_url=POSTGRESQL_TEST_URL,
+            application_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
+            query_runner=fake_query_runner,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime.now(timezone.utc),
+                request_id="request-142",
+                correlation_id="correlation-142",
+                user_subject="user:alice",
+                session_id="session-142",
+                query_candidate_id="candidate-142",
+                candidate_owner_subject="user:alice",
+                guard_version="postgresql-guard-v1",
+                application_version="safequery-test",
+            ),
+        )
+
+    adapter_request = captured["adapter_request"]
+    adapter_payload = adapter_request.model_dump()
+    assert "connection_reference" not in str(adapter_payload)
+    assert "database_url" not in str(adapter_payload)
+    assert adapter_payload["source"] == {
+        "source_id": scenario.source.source_id,
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+    }
+    assert captured["database_url"] == POSTGRESQL_TEST_URL
+    assert captured["canonical_sql"] == scenario.expected.canonical_sql
+
+    assert result.preview.candidate.source_id == scenario.source.source_id
+    assert result.generated.canonical_sql == scenario.expected.canonical_sql
+    assert result.guard.decision == "allow"
+    assert result.execution.rows == [
+        {"vendor_name": "Northwind", "approved_amount": 4200}
+    ]
+    assert [event.event_type for event in result.audit_events] == [
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated",
+        "execution_requested",
+        "execution_started",
+        "execution_completed",
+    ]
+    for index, event in enumerate(result.audit_events):
+        expected_causation_event_id = (
+            None if index == 0 else result.audit_events[index - 1].event_id
+        )
+        assert event.causation_event_id == expected_causation_event_id
+
+    for event in result.audit_events:
+        dumped = event.model_dump(exclude_none=True)
+        assert {
+            "source_id": scenario.source.source_id,
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+            "dataset_contract_version": scenario.source.dataset_contract_version,
+            "schema_snapshot_version": scenario.source.schema_snapshot_version,
+            "execution_policy_version": scenario.source.execution_policy_version,
+            "connector_profile_version": scenario.source.connector_profile_version,
+        }.items() <= dumped.items()
+
+
+def test_postgresql_core_vertical_slice_denies_application_postgres_reuse_before_query() -> None:
+    from app.services.postgresql_vertical_slice import run_postgresql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _postgresql_scenarios_by_id()[
+        "postgresql-positive-approved-vendor-spend-top-vendors"
+    ]
+
+    class RecordingAdapter:
+        def generate_sql(self, request):
+            return scenario.expected.canonical_sql
+
+    def fake_query_runner(**_: object) -> list[dict[str, object]]:
+        raise AssertionError("PostgreSQL execution must not run for application reuse")
+
+    with _session_scope() as session:
+        _seed_postgresql_source(session, scenario=scenario)
+
+        with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+            run_postgresql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=RecordingAdapter(),
+                business_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
+                application_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
+                query_runner=fake_query_runner,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-142-application-reuse",
+                    correlation_id="correlation-142-application-reuse",
+                    user_subject="user:alice",
+                    session_id="session-142-application-reuse",
+                    query_candidate_id="candidate-142-application-reuse",
+                    candidate_owner_subject="user:alice",
+                    guard_version="postgresql-guard-v1",
+                    application_version="safequery-test",
+                ),
+            )
+
+    assert exc_info.value.deny_code == DENY_APPLICATION_POSTGRES_REUSE
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_denied",
+    ]
+    denial_event = exc_info.value.audit_event.model_dump(exclude_none=True)
+    assert {
+        "event_type": "execution_denied",
+        "source_id": scenario.source.source_id,
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "dataset_contract_version": scenario.source.dataset_contract_version,
+        "schema_snapshot_version": scenario.source.schema_snapshot_version,
+        "execution_policy_version": scenario.source.execution_policy_version,
+        "connector_profile_version": scenario.source.connector_profile_version,
+        "primary_deny_code": DENY_APPLICATION_POSTGRES_REUSE,
+        "denial_cause": "application_postgresql_reuse",
+        "candidate_state": "denied",
+    }.items() <= denial_event.items()
 
 
 @pytest.mark.parametrize(
