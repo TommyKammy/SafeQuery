@@ -63,6 +63,25 @@ class SourceFamilyProfileRequirements(BaseModel):
     audit_and_evaluation: AuditAndEvaluationRequirements
 
 
+class SourceFlavorProfileRequirements(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_family: str
+    source_flavor: str
+    rollout_status: Literal["planned_flavor"]
+    execution_enabled_by_default: bool
+    backend_selected: bool
+    adapter_inference_allowed: bool
+    shared_profile_basis: str
+    inherited_behavior: tuple[str, ...]
+    profile_deltas: tuple[str, ...]
+    required_profile_contract_fields: tuple[str, ...]
+    required_version_fields: tuple[str, ...]
+    connector: ConnectorProfileRequirements
+    dialect: DialectProfileRequirements
+    audit_and_evaluation: AuditAndEvaluationRequirements
+
+
 ACTIVE_SOURCE_FAMILIES: tuple[str, ...] = ("mssql", "postgresql")
 
 MYSQL_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
@@ -318,9 +337,250 @@ MARIADB_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
 )
 
 
+AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
+    source_family="postgresql",
+    source_flavor="aurora-postgresql",
+    rollout_status="planned_flavor",
+    execution_enabled_by_default=False,
+    backend_selected=True,
+    adapter_inference_allowed=False,
+    shared_profile_basis="postgresql.family.active.v1",
+    inherited_behavior=(
+        "postgresql_generation_profile",
+        "postgresql_canonicalization",
+        "postgresql_fail_closed_guard_profile",
+        "postgresql_row_bounding",
+        "postgresql_deny_corpus",
+    ),
+    profile_deltas=(
+        "aurora connector identity and secret reference must be explicit",
+        "cluster and instance endpoint posture must be recorded by the backend registry",
+        "timeout and cancellation expectations must be verified against Aurora PostgreSQL",
+        (
+            "audit metadata must preserve source_family=postgresql and "
+            "source_flavor=aurora-postgresql"
+        ),
+        (
+            "release-gate corpus must include Aurora PostgreSQL flavor "
+            "regressions before activation"
+        ),
+    ),
+    required_profile_contract_fields=(
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "execution_policy_version",
+        "connector_profile_version",
+        "dialect_profile_version",
+        "activation_posture",
+        "connection_reference",
+    ),
+    required_version_fields=(
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "execution_policy_version",
+        "connector_profile_version",
+        "dialect_profile_version",
+    ),
+    connector=ConnectorProfileRequirements(
+        profile_id="postgresql.aurora-readonly.planned.v1",
+        owner="backend",
+        read_only_posture="required",
+        secret_reference_pattern=(
+            "safequery/business/postgresql/<source_id>/reader"
+        ),  # noqa: S106 - reference template, not a credential
+        connection_identity_fields=(
+            "cluster_endpoint",
+            "port",
+            "database",
+            "username",
+            "tls_mode",
+            "engine_version",
+        ),
+        required_controls=(
+            "connect_timeout_seconds",
+            "statement_timeout_seconds",
+            "cancellation_probe",
+        ),
+        application_postgres_separation=(
+            "aurora postgresql source credentials and endpoints must be distinct from "
+            "the application PostgreSQL system of record"
+        ),
+    ),
+    dialect=DialectProfileRequirements(
+        profile_id="postgresql.aurora-flavor.planned.v1",
+        canonicalization_requirements=(
+            "single_statement_select_shape",
+            "postgresql_identifier_normalization",
+            "literal_preservation_before_guard",
+            "schema_qualified_identifier_normalization",
+        ),
+        identifier_quoting=(
+            "PostgreSQL double-quoted identifiers when quoting is required"
+        ),
+        row_bounding_strategy="append_or_tighten_limit_before_guard_preview_and_execution",
+        limit_behavior=(
+            "canonical SQL must preserve the PostgreSQL family bounded LIMIT behavior"
+        ),
+        read_only_statement_allowlist=("SELECT", "WITH_SELECT"),
+        fail_closed_denies=(
+            "multi_statement",
+            "write_operation",
+            "procedure_execution",
+            "dynamic_sql",
+            "external_data_access",
+            "system_catalog_access",
+            "cross_database_reference",
+            "temporary_object_mutation",
+            "unbounded_or_unsafe_limit",
+            "unsupported_sql_syntax",
+        ),
+    ),
+    audit_and_evaluation=AuditAndEvaluationRequirements(
+        reconstruction_fields=(
+            "source_id",
+            "source_family",
+            "source_flavor",
+            "dataset_contract_version",
+            "schema_snapshot_version",
+            "execution_policy_version",
+            "connector_profile_version",
+            "dialect_profile_version",
+            "guard_version",
+            "primary_deny_code",
+        ),
+        preview_events=("query_submitted", "generation_completed"),
+        guard_events=("guard_evaluated",),
+        execution_events=("execution_requested", "execution_started", "execution_completed"),
+        denial_events=("execution_denied", "candidate_invalidated"),
+        release_gate_fields=(
+            "scenario_id",
+            "source.source_id",
+            "source.source_family",
+            "source.source_flavor",
+            "source.dialect_profile",
+            "source.dialect_profile_version",
+            "source.connector_profile_version",
+            "source.dataset_contract_version",
+            "source.schema_snapshot_version",
+            "source.execution_policy_version",
+            "expected.primary_code",
+        ),
+        evaluation_corpus_requirements=(
+            "postgresql_positive_readonly_selects",
+            "postgresql_guard_deny_corpus",
+            "row_bounding_regressions",
+            "aurora_postgresql_flavor_regressions",
+            "connector_timeout_and_cancellation",
+            "release_gate_reconstruction",
+        ),
+    ),
+)
+
+
+AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
+    source_family="mysql",
+    source_flavor="aurora-mysql",
+    rollout_status="planned_flavor",
+    execution_enabled_by_default=False,
+    backend_selected=True,
+    adapter_inference_allowed=False,
+    shared_profile_basis="mysql.family.planned.v1",
+    inherited_behavior=(
+        "mysql_generation_profile",
+        "mysql_canonicalization",
+        "mysql_fail_closed_guard_profile",
+        "mysql_row_bounding",
+        "mysql_deny_corpus",
+    ),
+    profile_deltas=(
+        "aurora connector identity and secret reference must be explicit",
+        "cluster and instance endpoint posture must be recorded by the backend registry",
+        "timeout and cancellation expectations must be verified against Aurora MySQL",
+        "audit metadata must preserve source_family=mysql and source_flavor=aurora-mysql",
+        "release-gate corpus must include Aurora MySQL flavor regressions before activation",
+    ),
+    required_profile_contract_fields=(
+        MYSQL_FAMILY_PROFILE_REQUIREMENTS.required_profile_contract_fields
+    ),
+    required_version_fields=MYSQL_FAMILY_PROFILE_REQUIREMENTS.required_version_fields,
+    connector=ConnectorProfileRequirements(
+        profile_id="mysql.aurora-readonly.planned.v1",
+        owner="backend",
+        read_only_posture="required",
+        secret_reference_pattern=(
+            "safequery/business/mysql/<source_id>/reader"
+        ),  # noqa: S106 - reference template, not a credential
+        connection_identity_fields=(
+            "cluster_endpoint",
+            "port",
+            "database",
+            "username",
+            "tls_mode",
+            "engine_version",
+        ),
+        required_controls=(
+            "connect_timeout_seconds",
+            "statement_timeout_seconds",
+            "cancellation_probe",
+        ),
+        application_postgres_separation=(
+            "aurora mysql source credentials and endpoints must be distinct from "
+            "the application PostgreSQL system of record"
+        ),
+    ),
+    dialect=DialectProfileRequirements(
+        profile_id="mysql.aurora-flavor.planned.v1",
+        canonicalization_requirements=(
+            MYSQL_FAMILY_PROFILE_REQUIREMENTS.dialect.canonicalization_requirements
+        ),
+        identifier_quoting=MYSQL_FAMILY_PROFILE_REQUIREMENTS.dialect.identifier_quoting,
+        row_bounding_strategy=(
+            MYSQL_FAMILY_PROFILE_REQUIREMENTS.dialect.row_bounding_strategy
+        ),
+        limit_behavior=MYSQL_FAMILY_PROFILE_REQUIREMENTS.dialect.limit_behavior,
+        read_only_statement_allowlist=(
+            MYSQL_FAMILY_PROFILE_REQUIREMENTS.dialect.read_only_statement_allowlist
+        ),
+        fail_closed_denies=MYSQL_FAMILY_PROFILE_REQUIREMENTS.dialect.fail_closed_denies,
+    ),
+    audit_and_evaluation=AuditAndEvaluationRequirements(
+        reconstruction_fields=(
+            MYSQL_FAMILY_PROFILE_REQUIREMENTS.audit_and_evaluation.reconstruction_fields
+        ),
+        preview_events=MYSQL_FAMILY_PROFILE_REQUIREMENTS.audit_and_evaluation.preview_events,
+        guard_events=MYSQL_FAMILY_PROFILE_REQUIREMENTS.audit_and_evaluation.guard_events,
+        execution_events=(
+            MYSQL_FAMILY_PROFILE_REQUIREMENTS.audit_and_evaluation.execution_events
+        ),
+        denial_events=MYSQL_FAMILY_PROFILE_REQUIREMENTS.audit_and_evaluation.denial_events,
+        release_gate_fields=(
+            MYSQL_FAMILY_PROFILE_REQUIREMENTS.audit_and_evaluation.release_gate_fields
+        ),
+        evaluation_corpus_requirements=(
+            "positive_readonly_selects",
+            "row_bounding_regressions",
+            "guard_deny_corpus",
+            "aurora_mysql_flavor_regressions",
+            "connector_timeout_and_cancellation",
+            "release_gate_reconstruction",
+        ),
+    ),
+)
+
+
 PLANNED_SOURCE_FAMILY_PROFILE_REQUIREMENTS: tuple[
     SourceFamilyProfileRequirements, ...
 ] = (MYSQL_FAMILY_PROFILE_REQUIREMENTS, MARIADB_FAMILY_PROFILE_REQUIREMENTS)
+
+PLANNED_SOURCE_FLAVOR_PROFILE_REQUIREMENTS: tuple[
+    SourceFlavorProfileRequirements, ...
+] = (
+    AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS,
+    AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS,
+)
 
 
 def get_planned_source_family_profile_requirements(
@@ -329,5 +589,21 @@ def get_planned_source_family_profile_requirements(
     normalized_source_family = source_family.strip().lower()
     for requirements in PLANNED_SOURCE_FAMILY_PROFILE_REQUIREMENTS:
         if requirements.source_family == normalized_source_family:
+            return requirements
+    return None
+
+
+def get_planned_source_flavor_profile_requirements(
+    *,
+    source_family: str,
+    source_flavor: str,
+) -> SourceFlavorProfileRequirements | None:
+    normalized_source_family = source_family.strip().lower()
+    normalized_source_flavor = source_flavor.strip().lower()
+    for requirements in PLANNED_SOURCE_FLAVOR_PROFILE_REQUIREMENTS:
+        if (
+            requirements.source_family == normalized_source_family
+            and requirements.source_flavor == normalized_source_flavor
+        ):
             return requirements
     return None

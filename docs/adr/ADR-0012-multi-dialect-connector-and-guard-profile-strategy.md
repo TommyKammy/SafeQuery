@@ -156,6 +156,51 @@ operator-history reconstruction, and release-gate corpus are approved together.
 Client-supplied hints, driver names, connection URLs, hostnames, labels, or
 generated SQL text must not promote a source into MariaDB support.
 
+### Planned Aurora Flavor Profiles
+
+Aurora PostgreSQL and Aurora MySQL are planned source flavors, not source
+families. They must be selected from backend-owned source registry metadata and
+must never be supplied by a client, adapter, driver name, hostname, connection
+URL, source label, or generated SQL text.
+
+An Aurora PostgreSQL source profile must preserve:
+
+- `source_family=postgresql`
+- `source_flavor=aurora-postgresql`
+- the PostgreSQL generation profile
+- PostgreSQL canonicalization and identifier rules
+- the PostgreSQL fail-closed guard profile and deny corpus
+- PostgreSQL row-bounding behavior
+- audit fields for source id, family, flavor, dataset contract, schema snapshot,
+  execution policy, connector profile, dialect profile, guard version, and
+  primary deny code
+
+Aurora PostgreSQL overrides only the flavor-specific connector and operational
+posture: cluster or instance endpoint identity, backend-owned secret
+indirection, TLS posture, engine version, timeout behavior, cancellation probe
+behavior, and release-gate regressions that prove the Aurora flavor still
+behaves under the PostgreSQL family controls.
+
+An Aurora MySQL source profile must preserve:
+
+- `source_family=mysql`
+- `source_flavor=aurora-mysql`
+- the planned MySQL generation profile
+- MySQL canonicalization and identifier rules
+- the planned MySQL fail-closed guard profile and deny corpus
+- MySQL policy-bounded `LIMIT` behavior
+- audit fields for source id, family, flavor, dataset contract, schema snapshot,
+  execution policy, connector profile, dialect profile, guard version, and
+  primary deny code
+
+Aurora MySQL overrides only the flavor-specific connector and operational
+posture: cluster or instance endpoint identity, backend-owned secret
+indirection, TLS posture, engine version, timeout behavior, cancellation probe
+behavior, and release-gate regressions that prove the Aurora flavor still
+behaves under the MySQL family controls. Because MySQL is still planned
+metadata only, Aurora MySQL must not activate execution until the underlying
+MySQL family connector, guard, audit, and evaluation profiles are approved.
+
 ## Consequences
 
 Positive outcomes:

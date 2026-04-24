@@ -12,8 +12,11 @@ from app.features.guard.deny_taxonomy import DENY_UNSUPPORTED_SOURCE_BINDING
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 from app.services.source_family_profiles import (
     ACTIVE_SOURCE_FAMILIES,
+    AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS,
+    AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS,
     MARIADB_FAMILY_PROFILE_REQUIREMENTS,
     MYSQL_FAMILY_PROFILE_REQUIREMENTS,
+    get_planned_source_flavor_profile_requirements,
     get_planned_source_family_profile_requirements,
 )
 
@@ -65,6 +68,97 @@ def test_mariadb_profile_is_planned_mysql_delta_and_backend_selected() -> None:
     assert requirements.shared_profile_basis == "mysql.family.planned.v1"
     assert "mariadb-mode canonicalization must be explicit" in requirements.profile_deltas
     assert "sql_mode and version-specific parser drift" in requirements.profile_deltas
+
+
+def test_aurora_flavors_are_backend_selected_family_flavors() -> None:
+    aurora_postgresql = get_planned_source_flavor_profile_requirements(
+        source_family=" PostgreSQL ",
+        source_flavor=" Aurora-PostgreSQL ",
+    )
+    aurora_mysql = get_planned_source_flavor_profile_requirements(
+        source_family=" mysql ",
+        source_flavor=" aurora-mysql ",
+    )
+
+    assert aurora_postgresql == AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS
+    assert aurora_postgresql.source_family == "postgresql"
+    assert aurora_postgresql.source_flavor == "aurora-postgresql"
+    assert aurora_postgresql.rollout_status == "planned_flavor"
+    assert aurora_postgresql.backend_selected is True
+    assert aurora_postgresql.adapter_inference_allowed is False
+    assert aurora_postgresql.shared_profile_basis == "postgresql.family.active.v1"
+
+    assert aurora_mysql == AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS
+    assert aurora_mysql.source_family == "mysql"
+    assert aurora_mysql.source_flavor == "aurora-mysql"
+    assert aurora_mysql.rollout_status == "planned_flavor"
+    assert aurora_mysql.backend_selected is True
+    assert aurora_mysql.adapter_inference_allowed is False
+    assert aurora_mysql.shared_profile_basis == "mysql.family.planned.v1"
+
+
+def test_aurora_flavor_requirements_cover_inheritance_and_deltas() -> None:
+    aurora_postgresql = AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS
+    aurora_mysql = AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS
+
+    assert {
+        "postgresql_generation_profile",
+        "postgresql_canonicalization",
+        "postgresql_fail_closed_guard_profile",
+        "postgresql_row_bounding",
+        "postgresql_deny_corpus",
+    }.issubset(set(aurora_postgresql.inherited_behavior))
+    assert (
+        aurora_postgresql.connector.profile_id
+        == "postgresql.aurora-readonly.planned.v1"
+    )
+    assert aurora_postgresql.dialect.profile_id == "postgresql.aurora-flavor.planned.v1"
+    assert "cluster_endpoint" in aurora_postgresql.connector.connection_identity_fields
+    assert "engine_version" in aurora_postgresql.connector.connection_identity_fields
+    assert "connector_timeout_and_cancellation" in (
+        aurora_postgresql.audit_and_evaluation.evaluation_corpus_requirements
+    )
+    assert "aurora_postgresql_flavor_regressions" in (
+        aurora_postgresql.audit_and_evaluation.evaluation_corpus_requirements
+    )
+
+    assert {
+        "mysql_generation_profile",
+        "mysql_canonicalization",
+        "mysql_fail_closed_guard_profile",
+        "mysql_row_bounding",
+        "mysql_deny_corpus",
+    }.issubset(set(aurora_mysql.inherited_behavior))
+    assert aurora_mysql.connector.profile_id == "mysql.aurora-readonly.planned.v1"
+    assert aurora_mysql.dialect.profile_id == "mysql.aurora-flavor.planned.v1"
+    assert aurora_mysql.dialect.fail_closed_denies == (
+        MYSQL_FAMILY_PROFILE_REQUIREMENTS.dialect.fail_closed_denies
+    )
+    assert aurora_mysql.required_profile_contract_fields == (
+        MYSQL_FAMILY_PROFILE_REQUIREMENTS.required_profile_contract_fields
+    )
+    assert "cluster_endpoint" in aurora_mysql.connector.connection_identity_fields
+    assert "engine_version" in aurora_mysql.connector.connection_identity_fields
+    assert "aurora_mysql_flavor_regressions" in (
+        aurora_mysql.audit_and_evaluation.evaluation_corpus_requirements
+    )
+
+
+def test_aurora_flavor_lookup_rejects_family_mismatch_fail_closed() -> None:
+    assert (
+        get_planned_source_flavor_profile_requirements(
+            source_family="aurora-postgresql",
+            source_flavor="aurora-postgresql",
+        )
+        is None
+    )
+    assert (
+        get_planned_source_flavor_profile_requirements(
+            source_family="postgresql",
+            source_flavor="aurora-mysql",
+        )
+        is None
+    )
 
 
 def test_mysql_family_requirements_cover_connector_dialect_guard_and_audit() -> None:
