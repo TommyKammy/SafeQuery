@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Literal, Optional, Protocol
 from uuid import UUID
 
@@ -607,7 +608,7 @@ def _prohibited_export_fields_in_mapping(value: object) -> tuple[str, ...]:
     prohibited: set[str] = set()
 
     def collect(candidate: object) -> None:
-        if isinstance(candidate, dict):
+        if isinstance(candidate, Mapping):
             for key, nested_value in candidate.items():
                 if isinstance(key, str) and key in PROHIBITED_EXPORT_FIELDS:
                     prohibited.add(key)

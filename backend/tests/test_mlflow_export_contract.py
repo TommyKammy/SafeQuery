@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+from types import MappingProxyType
 from uuid import UUID, uuid4
 
 import pytest
@@ -493,6 +494,7 @@ def test_mlflow_export_preserves_safe_redacted_samples_and_source_metadata() -> 
         {"credentials": {"api_key": "sample-key"}},
         {"query": {"canonical_sql": "SELECT * FROM payroll"}},
         {"control_plane": {"candidate_lifecycle_state": "approved"}},
+        {"metadata": MappingProxyType({"connection_string": "Server=warehouse"})},
     ],
 )
 def test_mlflow_redacted_sample_rejects_prohibited_source_metadata(
@@ -575,7 +577,9 @@ def test_mlflow_export_suppresses_unsafe_sample_metadata_without_blocking_audit(
         source_field="sql_snippet",
         redaction_profile="sql_snippet_v1",
         value="SELECT vendor_name FROM approved_vendor_spend LIMIT 10",
-        source_metadata={"metadata": {"connection_string": "Server=warehouse"}},
+        source_metadata={
+            "metadata": MappingProxyType({"connection_string": "Server=warehouse"})
+        },
     )
 
     decision = prepare_mlflow_export_from_audit_event(
