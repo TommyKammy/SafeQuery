@@ -132,3 +132,35 @@ MySQL capability flags are advisory until activation. Runtime allow decisions
 must come from the authoritative registry record plus the approved connector and
 guard profiles, not from adapter hints, request metadata, source labels,
 connection string shape, or generated SQL.
+
+## Planned Aurora Flavor Profiles
+
+Aurora source onboarding must preserve the source-family boundary:
+
+- Aurora PostgreSQL registry records use `source_family=postgresql` and
+  `source_flavor=aurora-postgresql`.
+- Aurora MySQL registry records use `source_family=mysql` and
+  `source_flavor=aurora-mysql`.
+
+The flavor value is authoritative only when it is stored on the backend-owned
+registry record. SafeQuery must reject any attempt to derive Aurora support from
+client request fields, adapter hints, driver names, connection URLs, hostnames,
+source labels, or generated SQL text.
+
+Aurora PostgreSQL inherits PostgreSQL generation, canonicalization, SQL Guard,
+row-bounding, and deny-corpus behavior. Its profile-specific deltas are the
+Aurora PostgreSQL connector identity, cluster or instance endpoint posture, TLS
+posture, engine version, timeout and cancellation verification, and flavor
+regression coverage.
+
+Aurora MySQL inherits the planned MySQL generation, canonicalization, SQL Guard,
+row-bounding, and deny-corpus behavior. Its profile-specific deltas are the
+Aurora MySQL connector identity, cluster or instance endpoint posture, TLS
+posture, engine version, timeout and cancellation verification, and flavor
+regression coverage. Aurora MySQL remains planned metadata until the underlying
+MySQL family activation work is approved.
+
+Both Aurora flavors must preserve audit and release-gate reconstruction fields
+for source id, source family, source flavor, dataset contract, schema snapshot,
+execution policy, connector profile, dialect profile, guard version, and primary
+deny code.
