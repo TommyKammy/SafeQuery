@@ -315,6 +315,26 @@ def test_execute_candidate_sql_derives_source_labeled_executed_evidence(
     assert "rows" not in result.executed_evidence.model_dump(exclude_none=True)
 
 
+def test_execution_result_omits_executed_evidence_for_negative_audit_row_count() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    result = execute_candidate_sql(
+        candidate=_candidate(),
+        selection=_selection(),
+        query_runner=lambda **_: [{"vendor_name": "Acme"}],
+        audit_context=_audit_context(),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
+    )
+
+    assert result.audit_event is not None
+    result._audit_event = result.audit_event.model_copy(
+        update={"execution_row_count": -1}
+    )
+
+    assert result.executed_evidence is None
+
+
 def test_execution_result_rejects_client_supplied_executed_evidence() -> None:
     with pytest.raises(ValidationError):
         ExecutionResult(

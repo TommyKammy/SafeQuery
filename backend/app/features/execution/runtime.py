@@ -108,6 +108,7 @@ class ExecutionResult(BaseModel):
             or audit_event.dataset_contract_version is None
             or audit_event.schema_snapshot_version is None
             or audit_event.execution_row_count is None
+            or audit_event.execution_row_count < 0
             or audit_event.result_truncated is None
         ):
             return None
