@@ -13,6 +13,7 @@ from app.features.evaluation import (
     list_postgresql_evaluation_scenarios,
 )
 from app.features.mlflow_export import (
+    MLflowEvaluationArtifactLink,
     MLflowRedactedSample,
     MLflowExportPayload,
     prepare_mlflow_export_from_audit_event,
@@ -120,7 +121,9 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
     mssql_payload = build_mlflow_export_from_evaluation_scenario(
         mssql_scenario,
         enabled=True,
+        mlflow_run_id="mlflow-run-123",
         evaluation_run_id="evaluation-run-123",
+        evaluation_outcome_id="mssql-outcome-123",
         latency_ms=55,
         row_count=10,
         result_truncated=False,
@@ -128,7 +131,9 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
     postgresql_payload = build_mlflow_export_from_evaluation_scenario(
         postgresql_scenario,
         enabled=True,
+        mlflow_run_id="mlflow-run-456",
         evaluation_run_id="evaluation-run-123",
+        evaluation_outcome_id="postgresql-outcome-123",
         deny_code="DENY_TEST",
         latency_ms=20,
         result_truncated=True,
@@ -145,7 +150,9 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
         "authoritative_audit_retention_days": 90,
         "access_posture": "approved_engineering_operations",
         "access_roles": ("engineering", "operations"),
+        "mlflow_run_id": "mlflow-run-123",
         "evaluation_run_id": "evaluation-run-123",
+        "evaluation_outcome_id": "mssql-outcome-123",
         "source_id": "business-mssql-source",
         "source_family": "mssql",
         "source_flavor": "sqlserver",
@@ -159,6 +166,19 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
         "evaluation_scenario_id": mssql_scenario.scenario_id,
         "evaluation_kind": "positive",
         "evaluation_boundary": "execution",
+        "evaluation_artifact_link": {
+            "mlflow_run_id": "mlflow-run-123",
+            "evaluation_run_id": "evaluation-run-123",
+            "evaluation_scenario_id": mssql_scenario.scenario_id,
+            "evaluation_outcome_id": "mssql-outcome-123",
+            "source_id": "business-mssql-source",
+            "source_family": "mssql",
+            "source_flavor": "sqlserver",
+            "dataset_contract_version": 3,
+            "schema_snapshot_version": 7,
+            "execution_policy_version": 2,
+            "connector_profile_version": 1,
+        },
         "redacted_samples": (),
     }
     assert postgresql_payload.model_dump(exclude_none=True) == {
@@ -170,7 +190,9 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
         "authoritative_audit_retention_days": 90,
         "access_posture": "approved_engineering_operations",
         "access_roles": ("engineering", "operations"),
+        "mlflow_run_id": "mlflow-run-456",
         "evaluation_run_id": "evaluation-run-123",
+        "evaluation_outcome_id": "postgresql-outcome-123",
         "source_id": "business-postgres-source",
         "source_family": "postgresql",
         "source_flavor": "warehouse",
@@ -184,8 +206,144 @@ def test_mlflow_export_payload_serializes_mssql_and_postgresql_evaluation_metada
         "evaluation_scenario_id": postgresql_scenario.scenario_id,
         "evaluation_kind": "positive",
         "evaluation_boundary": "execution",
+        "evaluation_artifact_link": {
+            "mlflow_run_id": "mlflow-run-456",
+            "evaluation_run_id": "evaluation-run-123",
+            "evaluation_scenario_id": postgresql_scenario.scenario_id,
+            "evaluation_outcome_id": "postgresql-outcome-123",
+            "source_id": "business-postgres-source",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+            "dataset_contract_version": 4,
+            "schema_snapshot_version": 9,
+            "execution_policy_version": 3,
+            "connector_profile_version": 1,
+        },
         "redacted_samples": (),
     }
+
+
+def test_mlflow_evaluation_export_links_run_to_authoritative_artifacts() -> None:
+    scenario = list_mssql_evaluation_scenarios()[0]
+    audit_event_id = uuid4()
+
+    payload = build_mlflow_export_from_evaluation_scenario(
+        scenario,
+        enabled=True,
+        mlflow_run_id="mlflow-run-123",
+        evaluation_run_id="evaluation-run-123",
+        evaluation_outcome_id="outcome-123",
+        safequery_audit_event_id=audit_event_id,
+        release_gate_summary_id="release-gate-summary-123",
+        validation_status="passed",
+        latency_ms=55,
+        prompt_token_count=100,
+        completion_token_count=20,
+        total_token_count=120,
+        row_count=10,
+        result_truncated=False,
+    )
+
+    assert payload is not None
+    serialized = payload.model_dump(exclude_none=True)
+    assert serialized["mlflow_run_id"] == "mlflow-run-123"
+    assert serialized["evaluation_run_id"] == "evaluation-run-123"
+    assert serialized["safequery_audit_event_id"] == audit_event_id
+    assert serialized["evaluation_outcome_id"] == "outcome-123"
+    assert serialized["release_gate_summary_id"] == "release-gate-summary-123"
+    assert serialized["validation_status"] == "passed"
+    assert serialized["prompt_token_count"] == 100
+    assert serialized["completion_token_count"] == 20
+    assert serialized["total_token_count"] == 120
+    assert serialized["evaluation_artifact_link"] == {
+        "mlflow_run_id": "mlflow-run-123",
+        "evaluation_run_id": "evaluation-run-123",
+        "evaluation_scenario_id": scenario.scenario_id,
+        "evaluation_outcome_id": "outcome-123",
+        "safequery_audit_event_id": audit_event_id,
+        "release_gate_summary_id": "release-gate-summary-123",
+        "source_id": "business-mssql-source",
+        "source_family": "mssql",
+        "source_flavor": "sqlserver",
+        "dataset_contract_version": 3,
+        "schema_snapshot_version": 7,
+        "execution_policy_version": 2,
+        "connector_profile_version": 1,
+    }
+    assert serialized["can_authorize_or_mutate_audit"] is False
+
+
+def test_mlflow_evaluation_export_rejects_missing_run_linkage() -> None:
+    scenario = list_mssql_evaluation_scenarios()[0]
+
+    with pytest.raises(ValidationError) as exc_info:
+        build_mlflow_export_from_evaluation_scenario(
+            scenario,
+            enabled=True,
+            evaluation_run_id="evaluation-run-123",
+            evaluation_outcome_id="outcome-123",
+        )
+
+    assert "Evaluation exports must include an MLflow run id." in str(exc_info.value)
+
+
+def test_mlflow_evaluation_export_rejects_mismatched_artifact_link_source() -> None:
+    scenario = list_mssql_evaluation_scenarios()[0]
+
+    with pytest.raises(ValidationError) as exc_info:
+        MLflowExportPayload(
+            export_kind="evaluation_record",
+            mlflow_run_id="mlflow-run-123",
+            evaluation_run_id="evaluation-run-123",
+            evaluation_outcome_id="outcome-123",
+            source_id="business-mssql-source",
+            source_family="mssql",
+            source_flavor="sqlserver",
+            dataset_contract_version=3,
+            schema_snapshot_version=7,
+            execution_policy_version=2,
+            connector_profile_version=1,
+            evaluation_scenario_id=scenario.scenario_id,
+            evaluation_kind=scenario.kind,
+            evaluation_boundary=scenario.evaluation_boundary,
+            evaluation_artifact_link=MLflowEvaluationArtifactLink(
+                mlflow_run_id="mlflow-run-123",
+                evaluation_run_id="evaluation-run-123",
+                evaluation_scenario_id=scenario.scenario_id,
+                evaluation_outcome_id="outcome-123",
+                source_id="business-postgres-source",
+                source_family="postgresql",
+                source_flavor="warehouse",
+                dataset_contract_version=4,
+                schema_snapshot_version=9,
+                execution_policy_version=3,
+                connector_profile_version=1,
+            ),
+        )
+
+    assert "Evaluation artifact link does not match export payload" in str(exc_info.value)
+    assert "source_id" in str(exc_info.value)
+    assert "dataset_contract_version" in str(exc_info.value)
+
+
+def test_mlflow_evaluation_export_rejects_inconsistent_token_counts() -> None:
+    scenario = list_mssql_evaluation_scenarios()[0]
+
+    with pytest.raises(ValidationError) as exc_info:
+        build_mlflow_export_from_evaluation_scenario(
+            scenario,
+            enabled=True,
+            mlflow_run_id="mlflow-run-123",
+            evaluation_run_id="evaluation-run-123",
+            evaluation_outcome_id="outcome-123",
+            prompt_token_count=100,
+            completion_token_count=20,
+            total_token_count=119,
+        )
+
+    assert "Total token count must equal prompt and completion token counts." in str(
+        exc_info.value
+    )
 
 
 @pytest.mark.parametrize(
