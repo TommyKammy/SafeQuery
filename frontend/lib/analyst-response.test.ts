@@ -213,4 +213,78 @@ describe("parseAnalystResponsePayload", () => {
       })
     ).toBeNull();
   });
+
+  it("rejects cross-source execution narratives", () => {
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "PostgreSQL and MSSQL rows were joined across sources and executed together.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        retrievalCitations: [
+          citation("business-postgres-source", "postgresql"),
+          citation("business-mssql-source", "mssql")
+        ],
+        executedEvidence: [
+          evidence("business-postgres-source", "postgresql"),
+          evidence("business-mssql-source", "mssql")
+        ]
+      })
+    ).toBeNull();
+  });
+
+  it("rejects execution claims without executed evidence", () => {
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "The completed backend execution showed 12 matching rows.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        retrievalCitations: [citation("business-postgres-source", "postgresql")],
+        executedEvidence: []
+      })
+    ).toBeNull();
+  });
+
+  it("rejects execution approval narratives", () => {
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "The analyst response approves SQL execution for this candidate.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        retrievalCitations: [citation("business-postgres-source", "postgresql")],
+        executedEvidence: [evidence("business-postgres-source", "postgresql")]
+      })
+    ).toBeNull();
+  });
+
+  it("exposes a safe validation outcome for advisory composition", () => {
+    const parsed = parseAnalystResponsePayload({
+      responseId: "analyst-response-123",
+      requestId: "request-123",
+      narrative:
+        "PostgreSQL citation and MSSQL citation provide advisory context. Backend executed evidence remains candidate-bound per source.",
+      advisoryOnly: true,
+      canAuthorizeExecution: false,
+      analystModeVersion: "analyst-schema-v1",
+      retrievalCitations: [
+        citation("business-postgres-source", "postgresql"),
+        citation("business-mssql-source", "mssql")
+      ],
+      executedEvidence: [
+        evidence("business-postgres-source", "postgresql"),
+        evidence("business-mssql-source", "mssql")
+      ]
+    });
+
+    expect(parsed?.validationOutcome.status).toBe("safe");
+    expect(parsed?.validationOutcome.unsafeReasons).toEqual([]);
+  });
 });
