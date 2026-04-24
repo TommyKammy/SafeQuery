@@ -5,6 +5,7 @@ import inspect
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
 from app.features.guard.deny_taxonomy import (
@@ -15,6 +16,7 @@ from app.features.guard.deny_taxonomy import (
 from app.features.execution.runtime import (
     ExecutableCandidateRecord,
     ExecutionAuditContext,
+    ExecutionResult,
     ExecutionRuntimeSafetyState,
 )
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
@@ -219,6 +221,141 @@ def test_execute_candidate_sql_returns_source_aware_completion_audit_event() -> 
         "result_truncated": False,
     }.items() <= result.audit_event.model_dump(exclude_none=True).items()
     assert result.audit_event.model_dump(exclude_none=True).get("rows") is None
+
+
+@pytest.mark.parametrize(
+    (
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "connector_id",
+        "execution_kwargs",
+    ),
+    [
+        (
+            "approved-spend",
+            "postgresql",
+            "warehouse",
+            "postgresql_readonly",
+            {
+                "business_postgres_url": BUSINESS_POSTGRES_URL,
+                "application_postgres_url": APPLICATION_POSTGRES_URL,
+            },
+        ),
+        (
+            "orders-ledger",
+            "mssql",
+            "sqlserver",
+            "mssql_readonly",
+            {
+                "business_mssql_connection_string": (
+                    "Driver={ODBC Driver 18 for SQL Server};"
+                    "Server=business-mssql-source;"
+                    "Database=orders;"
+                    "Authentication=ActiveDirectoryMsi;"
+                ),
+            },
+        ),
+    ],
+)
+def test_execute_candidate_sql_derives_source_labeled_executed_evidence(
+    source_id: str,
+    source_family: str,
+    source_flavor: str,
+    connector_id: str,
+    execution_kwargs: dict[str, str],
+) -> None:
+    from app.features.execution import execute_candidate_sql
+
+    candidate = ExecutableCandidateRecord(
+        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1",
+        source=SourceBoundCandidateMetadata(
+            source_id=source_id,
+            source_family=source_family,
+            source_flavor=source_flavor,
+            dataset_contract_version=3,
+            schema_snapshot_version=7,
+        ),
+    )
+    selection = ExecutionConnectorSelection(
+        source_id=source_id,
+        source_family=source_family,
+        source_flavor=source_flavor,
+        connector_id=connector_id,
+        ownership="backend",
+    )
+    result = execute_candidate_sql(
+        candidate=candidate,
+        selection=selection,
+        query_runner=lambda **_: [{"vendor_name": "Acme"}],
+        audit_context=_audit_context(),
+        **execution_kwargs,
+    )
+
+    assert result.executed_evidence is not None
+    assert result.executed_evidence.model_dump(exclude_none=True) == {
+        "type": "executed_evidence",
+        "source_id": source_id,
+        "source_family": source_family,
+        "source_flavor": source_flavor,
+        "dataset_contract_version": 3,
+        "schema_snapshot_version": 7,
+        "connector_profile_version": 11,
+        "candidate_id": "candidate-123",
+        "execution_audit_event_id": result.audit_event.event_id,
+        "execution_audit_event_type": "execution_completed",
+        "row_count": 1,
+        "result_truncated": False,
+        "authority": "backend_execution_result",
+        "can_authorize_execution": False,
+    }
+    assert "retrieved_citations" not in result.executed_evidence.model_dump(
+        exclude_none=True
+    )
+    assert "rows" not in result.executed_evidence.model_dump(exclude_none=True)
+
+
+def test_execution_result_omits_executed_evidence_for_negative_audit_row_count() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    result = execute_candidate_sql(
+        candidate=_candidate(),
+        selection=_selection(),
+        query_runner=lambda **_: [{"vendor_name": "Acme"}],
+        audit_context=_audit_context(),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
+    )
+
+    assert result.audit_event is not None
+    result._audit_event = result.audit_event.model_copy(
+        update={"execution_row_count": -1}
+    )
+
+    assert result.executed_evidence is None
+
+
+def test_execution_result_rejects_client_supplied_executed_evidence() -> None:
+    with pytest.raises(ValidationError):
+        ExecutionResult(
+            source_id="approved-spend",
+            connector_id="postgresql_readonly",
+            ownership="backend",
+            rows=[],
+            executed_evidence={
+                "type": "executed_evidence",
+                "source_id": "approved-spend",
+                "source_family": "postgresql",
+                "dataset_contract_version": 3,
+                "schema_snapshot_version": 7,
+                "candidate_id": "candidate-123",
+                "execution_audit_event_id": uuid4(),
+                "row_count": 0,
+                "result_truncated": False,
+                "authority": "backend_execution_result",
+                "can_authorize_execution": False,
+            },
+        )
 
 
 def test_execute_candidate_sql_returns_source_aware_runtime_denial_audit_event() -> None:

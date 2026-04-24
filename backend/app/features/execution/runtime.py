@@ -11,7 +11,10 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, PrivateAttr, StringConstraints
 from typing_extensions import Annotated
 
-from app.features.audit.event_model import SourceAwareAuditEvent
+from app.features.audit.event_model import (
+    ExecutedEvidenceAuditPayload,
+    SourceAwareAuditEvent,
+)
 from app.features.execution.connector_selection import (
     ExecutionConnectorSelection,
     ExecutionConnectorSelectionError,
@@ -93,6 +96,36 @@ class ExecutionResult(BaseModel):
     @property
     def audit_events(self) -> list[SourceAwareAuditEvent]:
         return list(self._audit_events)
+
+    @property
+    def executed_evidence(self) -> Optional[ExecutedEvidenceAuditPayload]:
+        audit_event = self.audit_event
+        if (
+            audit_event is None
+            or audit_event.event_type != "execution_completed"
+            or self.ownership != "backend"
+            or audit_event.query_candidate_id is None
+            or audit_event.dataset_contract_version is None
+            or audit_event.schema_snapshot_version is None
+            or audit_event.execution_row_count is None
+            or audit_event.execution_row_count < 0
+            or audit_event.result_truncated is None
+        ):
+            return None
+
+        return ExecutedEvidenceAuditPayload(
+            source_id=audit_event.source_id,
+            source_family=audit_event.source_family,
+            source_flavor=audit_event.source_flavor,
+            dataset_contract_version=audit_event.dataset_contract_version,
+            schema_snapshot_version=audit_event.schema_snapshot_version,
+            execution_policy_version=audit_event.execution_policy_version,
+            connector_profile_version=audit_event.connector_profile_version,
+            candidate_id=audit_event.query_candidate_id,
+            execution_audit_event_id=audit_event.event_id,
+            row_count=audit_event.execution_row_count,
+            result_truncated=audit_event.result_truncated,
+        )
 
 
 class ExecutableCandidateRecord(BaseModel):

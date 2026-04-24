@@ -140,6 +140,58 @@ def test_retrieval_completed_audit_event_preserves_source_labeled_citations() ->
     assert event.model_dump()["retrieved_citations"] == payload["retrieved_citations"]
 
 
+def test_analyst_response_audit_event_keeps_executed_evidence_separate_from_citations() -> None:
+    payload = _source_aware_payload()
+    execution_audit_event_id = uuid4()
+    payload.update(
+        {
+            "event_type": "analyst_response_rendered",
+            "retrieved_citations": [
+                {
+                    "asset_id": "metric_definition",
+                    "asset_kind": "metric_definition",
+                    "citation_label": "business-postgres-source metric definition",
+                    "source_id": "business-postgres-source",
+                    "source_family": "postgresql",
+                    "source_flavor": "postgresql-16",
+                    "dataset_contract_version": 2,
+                    "schema_snapshot_version": 5,
+                    "authority": "advisory_context",
+                    "can_authorize_execution": False,
+                }
+            ],
+            "executed_evidence": [
+                {
+                    "type": "executed_evidence",
+                    "source_id": "business-postgres-source",
+                    "source_family": "postgresql",
+                    "source_flavor": "warehouse",
+                    "dataset_contract_version": 2,
+                    "schema_snapshot_version": 5,
+                    "execution_policy_version": 3,
+                    "connector_profile_version": 11,
+                    "candidate_id": "candidate-123",
+                    "execution_audit_event_id": execution_audit_event_id,
+                    "execution_audit_event_type": "execution_completed",
+                    "row_count": 12,
+                    "result_truncated": False,
+                    "authority": "backend_execution_result",
+                    "can_authorize_execution": False,
+                }
+            ],
+        }
+    )
+
+    event = SourceAwareAuditEvent(**payload)
+    dumped = event.model_dump()
+
+    assert dumped["retrieved_citations"][0]["authority"] == "advisory_context"
+    assert dumped["executed_evidence"][0]["type"] == "executed_evidence"
+    assert dumped["executed_evidence"][0]["authority"] == "backend_execution_result"
+    assert "citation_label" not in dumped["executed_evidence"][0]
+    assert "rows" not in dumped["executed_evidence"][0]
+
+
 @pytest.mark.parametrize(
     ("authority", "can_authorize_execution"),
     [
@@ -168,6 +220,36 @@ def test_retrieval_citation_audit_payload_rejects_execution_authority(
                     "authority": authority,
                     "can_authorize_execution": can_authorize_execution,
                 },
+            ],
+        }
+    )
+
+    with pytest.raises(ValidationError):
+        SourceAwareAuditEvent(**payload)
+
+
+def test_executed_evidence_rejects_retrieval_citation_shape() -> None:
+    payload = _source_aware_payload()
+    payload.update(
+        {
+            "event_type": "analyst_response_rendered",
+            "executed_evidence": [
+                {
+                    "type": "retrieval_citation",
+                    "asset_id": "metric_definition",
+                    "asset_kind": "metric_definition",
+                    "citation_label": "business-postgres-source metric definition",
+                    "source_id": "business-postgres-source",
+                    "source_family": "postgresql",
+                    "dataset_contract_version": 2,
+                    "schema_snapshot_version": 5,
+                    "candidate_id": "candidate-123",
+                    "execution_audit_event_id": uuid4(),
+                    "row_count": 12,
+                    "result_truncated": False,
+                    "authority": "advisory_context",
+                    "can_authorize_execution": False,
+                }
             ],
         }
     )
