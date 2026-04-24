@@ -136,7 +136,15 @@ class ExecutionConnectorExecutionError(PermissionError):
 
 
 class ExecutionRuntimeCancelledError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        audit_events: list[SourceAwareAuditEvent] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.audit_events = list(audit_events or [])
+        self.audit_event = self.audit_events[-1] if self.audit_events else None
 
 
 def _source_flavor_matches(
@@ -166,6 +174,7 @@ def _build_execution_audit_event(
     candidate_source: SourceBoundCandidateMetadata,
     audit_context: ExecutionAuditContext | None,
     primary_deny_code: str | None = None,
+    candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
 ) -> SourceAwareAuditEvent | None:
@@ -205,7 +214,11 @@ def _build_execution_audit_event(
             if primary_deny_code is not None
             else None
         ),
-        candidate_state="denied" if primary_deny_code is not None else None,
+        candidate_state=(
+            candidate_state
+            if candidate_state is not None
+            else "denied" if primary_deny_code is not None else None
+        ),
         execution_row_count=execution_row_count,
         result_truncated=result_truncated,
     )
@@ -217,6 +230,7 @@ def _build_execution_audit_events(
     candidate_source: SourceBoundCandidateMetadata,
     audit_context: ExecutionAuditContext | None,
     primary_deny_code: str | None = None,
+    candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
 ) -> list[SourceAwareAuditEvent]:
@@ -235,6 +249,9 @@ def _build_execution_audit_events(
                 if event_type
                 in {"execution_denied", "request_rate_limited", "concurrency_rejected"}
                 else None
+            ),
+            candidate_state=(
+                candidate_state if event_type == "execution_failed" else None
             ),
             execution_row_count=(
                 execution_row_count if event_type == "execution_completed" else None
@@ -269,6 +286,25 @@ def _attach_execution_denial_audit_event(
             candidate_source=candidate_source,
             audit_context=audit_context,
             primary_deny_code=error.deny_code,
+        ),
+    )
+
+
+def _attach_cancellation_audit_event(
+    *,
+    error: ExecutionRuntimeCancelledError,
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: ExecutionAuditContext | None,
+) -> ExecutionRuntimeCancelledError:
+    if error.audit_event is not None or audit_context is None:
+        return error
+    return ExecutionRuntimeCancelledError(
+        str(error),
+        audit_events=_build_execution_audit_events(
+            event_types=["execution_requested", "execution_failed"],
+            candidate_source=candidate_source,
+            audit_context=audit_context,
+            candidate_state="canceled",
         ),
     )
 
@@ -680,6 +716,12 @@ def execute_candidate_sql(
                     f"'{selection.connector_id}'."
                 ),
             )
+    except ExecutionRuntimeCancelledError as exc:
+        raise _attach_cancellation_audit_event(
+            error=exc,
+            candidate_source=candidate.source,
+            audit_context=audit_context,
+        ) from exc
     except (ExecutionConnectorExecutionError, ExecutionConnectorSelectionError) as exc:
         raise _attach_execution_denial_audit_event(
             error=exc,

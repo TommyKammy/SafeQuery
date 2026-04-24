@@ -11,9 +11,11 @@ from app.features.audit.event_model import AuditEventType, SourceAwareAuditEvent
 from app.features.auth.context import AuthenticatedSubject
 from app.features.execution import execute_candidate_sql, select_execution_connector
 from app.features.execution.runtime import (
+    CancellationProbe,
     ExecutableCandidateRecord,
     ExecutionAuditContext,
     ExecutionResult,
+    ExecutionRuntimeSafetyState,
     NonEmptyTrimmedString,
     QueryRunner,
 )
@@ -255,6 +257,8 @@ def run_mssql_core_vertical_slice(
     sql_generation_adapter: SQLGenerationAdapter,
     business_mssql_connection_string: NonEmptyTrimmedString,
     query_runner: QueryRunner | None = None,
+    cancellation_probe: CancellationProbe | None = None,
+    runtime_safety_state: ExecutionRuntimeSafetyState | None = None,
     audit_context: PreviewAuditContext,
     candidate_lifecycle: CandidateLifecycleRecord | None = None,
 ) -> MSSQLCoreVerticalSliceResult:
@@ -378,6 +382,8 @@ def run_mssql_core_vertical_slice(
         selection=selection,
         business_mssql_connection_string=normalized_business_mssql_connection_string,
         query_runner=query_runner,
+        cancellation_probe=cancellation_probe,
+        runtime_safety_state=runtime_safety_state,
         audit_context=_build_execution_audit_context(
             audit_context=audit_context,
             previous_event_id=audit_events[-1].event_id,
