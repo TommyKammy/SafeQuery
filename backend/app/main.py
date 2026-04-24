@@ -32,6 +32,10 @@ from app.services.request_preview import (
     PreviewSubmissionResponse,
     submit_preview_request,
 )
+from app.services.operator_workflow import (
+    OperatorWorkflowSnapshot,
+    get_operator_workflow_snapshot,
+)
 
 configure_logging()
 
@@ -196,6 +200,12 @@ def create_app() -> FastAPI:
             )
         except PreviewSubmissionContractError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/operator/workflow", response_model=OperatorWorkflowSnapshot)
+    def read_operator_workflow(
+        session: Session = Depends(require_preview_submission_session),
+    ) -> OperatorWorkflowSnapshot:
+        return get_operator_workflow_snapshot(session)
 
     return app
 

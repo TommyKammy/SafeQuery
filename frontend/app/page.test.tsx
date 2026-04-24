@@ -3,12 +3,57 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage from "./page";
 import { resolveWorkflowState } from "../components/query-workflow-shell";
 
+function workflowPayload(sourceLabel = "SAP spend cube / approved_vendor_spend") {
+  return {
+    history: [
+      {
+        itemType: "request",
+        label: "Approved vendor spend",
+        lifecycleState: "previewed",
+        occurredAt: "2026-04-21T14:18:00Z",
+        recordId: "request-123",
+        sourceId: "sap-approved-spend",
+        sourceLabel
+      }
+    ],
+    sources: [
+      {
+        activationPosture: "active",
+        description: "Approved finance spend cube for governed preview and single-source execution.",
+        displayLabel: sourceLabel,
+        sourceId: "sap-approved-spend"
+      },
+      {
+        activationPosture: "paused",
+        description: "Historical archive is visible for posture review but not executable for preview.",
+        displayLabel: "Legacy finance archive",
+        sourceId: "legacy-finance-archive"
+      }
+    ]
+  };
+}
+
+function stubWorkflowFetch() {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = input.toString();
+
+    if (url.endsWith("/operator/workflow")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(workflowPayload())
+      });
+    }
+
+    return new Promise(() => {});
+  });
+}
+
 describe("HomePage", () => {
   beforeEach(() => {
     process.env.API_INTERNAL_BASE_URL = "http://127.0.0.1:8000";
     process.env.NEXT_PUBLIC_API_BASE_URL = "http://127.0.0.1:8000";
 
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    vi.stubGlobal("fetch", stubWorkflowFetch());
   });
 
   afterEach(() => {
@@ -34,8 +79,54 @@ describe("HomePage", () => {
     expect(screen.queryByText(/awaiting analyst review/i)).not.toBeInTheDocument();
   });
 
+  it("renders source options from the live operator workflow payload", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [],
+                sources: [
+                  {
+                    activationPosture: "active",
+                    description: "Live source returned by the backend contract.",
+                    displayLabel: "ERP approved spend / live contract",
+                    sourceId: "erp-approved-spend"
+                  }
+                ]
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(
+      screen.getByRole("option", { name: "ERP approved spend / live contract" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /SAP spend cube/i })).not.toBeInTheDocument();
+  });
+
+  it("renders source-aware history rows from the live operator workflow payload", async () => {
+    render(await HomePage({}));
+
+    expect(screen.getByLabelText(/operator history/i)).toHaveTextContent("Approved vendor spend");
+    expect(screen.getByLabelText(/operator history/i)).toHaveTextContent(
+      "SAP spend cube / approved_vendor_spend"
+    );
+    expect(screen.getByLabelText(/operator history/i)).toHaveTextContent("previewed");
+  });
+
   it("renders the shell before the health probe completes", async () => {
-    const fetchMock = vi.fn(() => new Promise(() => {}));
+    const fetchMock = stubWorkflowFetch();
     vi.stubGlobal("fetch", fetchMock);
 
     render(await HomePage({}));
@@ -46,7 +137,7 @@ describe("HomePage", () => {
     ).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/health", expect.any(Object));
     });
   });
 

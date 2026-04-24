@@ -51,6 +51,7 @@ a {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -207,11 +208,12 @@ button:focus-visible {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.95fr);
+  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 1.65fr) minmax(320px, 0.95fr);
   gap: 24px;
   margin-top: 24px;
 }
 
+.history-column,
 .primary-column,
 .support-column {
   display: grid;
@@ -292,10 +294,33 @@ button:focus-visible {
 .signin-actions,
 .action-row,
 .guard-list,
+.history-list,
 .result-table,
 .placeholder-block {
   display: grid;
   gap: 12px;
+}
+
+.history-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: rgba(7, 11, 20, 0.38);
+  color: var(--text-secondary);
+}
+
+.history-item strong {
+  color: var(--text-primary);
+}
+
+.history-type {
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .action-row,
@@ -361,10 +386,9 @@ button {
   font-weight: 600;
 }
 
+select,
 textarea {
   width: 100%;
-  min-height: 168px;
-  resize: vertical;
   padding: 18px;
   border: 1px solid var(--border-strong);
   border-radius: 18px;
@@ -374,10 +398,20 @@ textarea {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
+select {
+  min-height: 56px;
+}
+
+textarea {
+  min-height: 168px;
+  resize: vertical;
+}
+
 textarea::placeholder {
   color: var(--text-muted);
 }
 
+select:focus-visible,
 textarea:focus-visible,
 button:focus-visible,
 .state-nav-link:focus-visible,
