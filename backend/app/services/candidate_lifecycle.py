@@ -36,6 +36,8 @@ class SourceBoundCandidateMetadata(BaseModel):
     source_flavor: Optional[str] = None
     dataset_contract_version: int
     schema_snapshot_version: int
+    execution_policy_version: Optional[int] = None
+    connector_profile_version: Optional[int] = None
 
 
 class CandidateLifecycleRecord(BaseModel):

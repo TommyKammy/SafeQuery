@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
-from app.db.models.dataset_contract import DatasetContract
+from app.db.models.dataset_contract import (
+    DatasetContract,
+    DatasetContractDataset,
+    DatasetContractDatasetKind,
+)
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
@@ -151,6 +155,16 @@ def _seed_mssql_source(
     )
     session.add(contract)
     session.flush()
+
+    session.add(
+        DatasetContractDataset(
+            id=uuid4(),
+            dataset_contract_id=contract.id,
+            schema_name="dbo",
+            dataset_name="approved_vendor_spend",
+            dataset_kind=DatasetContractDatasetKind.TABLE,
+        )
+    )
 
     source.dataset_contract_id = contract.id
     source.schema_snapshot_id = snapshot.id
@@ -310,6 +324,163 @@ def test_mssql_positive_evaluation_scenarios_allow_and_shape_execution_evidence(
     assert result.connector_id == evidence.connector_id
     assert result.ownership == evidence.ownership
     assert tuple(result.rows[0]) == evidence.row_shape
+
+
+def test_mssql_core_vertical_slice_submits_generates_guards_executes_and_audits() -> None:
+    from app.services.mssql_vertical_slice import run_mssql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _mssql_scenarios_by_id()["mssql-positive-approved-vendor-spend-top-vendors"]
+    captured: dict[str, object] = {}
+
+    class RecordingAdapter:
+        def generate_sql(self, request):
+            captured["adapter_request"] = request
+            return scenario.expected.canonical_sql
+
+    def fake_query_runner(
+        *,
+        connection_string: str,
+        canonical_sql: str,
+    ) -> list[dict[str, object]]:
+        captured["connection_string"] = connection_string
+        captured["canonical_sql"] = canonical_sql
+        return [{"vendor_name": "Northwind", "approved_amount": 4200}]
+
+    with _session_scope() as session:
+        _seed_mssql_source(session, scenario=scenario)
+
+        result = run_mssql_core_vertical_slice(
+            payload=PreviewSubmissionRequest(
+                question=scenario.prompt,
+                source_id=scenario.source.source_id,
+            ),
+            authenticated_subject=AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            session=session,
+            sql_generation_adapter=RecordingAdapter(),
+            business_mssql_connection_string=MSSQL_TEST_CONNECTION_STRING,
+            query_runner=fake_query_runner,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime.now(timezone.utc),
+                request_id="request-141",
+                correlation_id="correlation-141",
+                user_subject="user:alice",
+                session_id="session-141",
+                query_candidate_id="candidate-141",
+                candidate_owner_subject="user:alice",
+                guard_version="mssql-guard-v1",
+                application_version="safequery-test",
+            ),
+        )
+
+    adapter_request = captured["adapter_request"]
+    adapter_payload = adapter_request.model_dump()
+    assert "connection_reference" not in str(adapter_payload)
+    assert "connection_string" not in str(adapter_payload)
+    assert adapter_payload["source"] == {
+        "source_id": scenario.source.source_id,
+        "source_family": "mssql",
+        "source_flavor": "sqlserver",
+    }
+    assert captured["connection_string"] == MSSQL_TEST_CONNECTION_STRING
+    assert captured["canonical_sql"] == scenario.expected.canonical_sql
+
+    assert result.preview.candidate.source_id == scenario.source.source_id
+    assert result.generated.canonical_sql == scenario.expected.canonical_sql
+    assert result.guard.decision == "allow"
+    assert result.execution.rows == [
+        {"vendor_name": "Northwind", "approved_amount": 4200}
+    ]
+    assert [event.event_type for event in result.audit_events] == [
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated",
+        "execution_requested",
+        "execution_started",
+        "execution_completed",
+    ]
+
+    for event in result.audit_events:
+        dumped = event.model_dump(exclude_none=True)
+        assert {
+            "source_id": scenario.source.source_id,
+            "source_family": "mssql",
+            "source_flavor": "sqlserver",
+            "dataset_contract_version": scenario.source.dataset_contract_version,
+            "schema_snapshot_version": scenario.source.schema_snapshot_version,
+            "execution_policy_version": scenario.source.execution_policy_version,
+            "connector_profile_version": scenario.source.connector_profile_version,
+        }.items() <= dumped.items()
+
+
+def test_mssql_core_vertical_slice_denies_guard_rejection_before_execution() -> None:
+    from app.features.guard.deny_taxonomy import DENY_RESOURCE_ABUSE
+    from app.services.mssql_vertical_slice import (
+        MSSQLVerticalSliceDenied,
+        run_mssql_core_vertical_slice,
+    )
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _mssql_scenarios_by_id()["mssql-safety-guard-denies-waitfor-delay"]
+
+    class DeniedAdapter:
+        def generate_sql(self, request):
+            return scenario.canonical_sql
+
+    def fake_query_runner(**_: object) -> list[dict[str, object]]:
+        raise AssertionError("MSSQL execution must not run after a guard rejection")
+
+    with _session_scope() as session:
+        _seed_mssql_source(session, scenario=scenario)
+
+        with pytest.raises(MSSQLVerticalSliceDenied) as exc_info:
+            run_mssql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=DeniedAdapter(),
+                business_mssql_connection_string=MSSQL_TEST_CONNECTION_STRING,
+                query_runner=fake_query_runner,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-141-denied",
+                    correlation_id="correlation-141-denied",
+                    user_subject="user:alice",
+                    session_id="session-141-denied",
+                    query_candidate_id="candidate-141-denied",
+                    candidate_owner_subject="user:alice",
+                    guard_version="mssql-guard-v1",
+                    application_version="safequery-test",
+                ),
+            )
+
+    assert exc_info.value.deny_code == DENY_RESOURCE_ABUSE
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated",
+    ]
+    guard_event = exc_info.value.audit_events[-1].model_dump(exclude_none=True)
+    assert {
+        "event_type": "guard_evaluated",
+        "primary_deny_code": DENY_RESOURCE_ABUSE,
+        "denial_cause": "guard_rejected",
+        "candidate_state": "denied",
+        "source_id": scenario.source.source_id,
+        "execution_policy_version": scenario.source.execution_policy_version,
+        "connector_profile_version": scenario.source.connector_profile_version,
+    }.items() <= guard_event.items()
 
 
 @pytest.mark.parametrize(
