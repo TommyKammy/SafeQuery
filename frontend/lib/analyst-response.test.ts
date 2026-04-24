@@ -285,6 +285,13 @@ describe("parseAnalystResponsePayload", () => {
     });
 
     expect(parsed?.validationOutcome.status).toBe("safe");
+    expect(parsed?.validationOutcome.checks).toEqual([
+      "source_labeled_evidence_present",
+      "source_summary_coverage",
+      "narrative_execution_authority",
+      "narrative_execution_grounding",
+      "narrative_cross_source_execution"
+    ]);
     expect(parsed?.validationOutcome.unsafeReasons).toEqual([]);
   });
 });

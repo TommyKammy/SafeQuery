@@ -36,6 +36,7 @@ export type AnalystValidationOutcome = {
   status: "safe";
   checks: [
     "source_labeled_evidence_present",
+    "source_summary_coverage",
     "narrative_execution_authority",
     "narrative_execution_grounding",
     "narrative_cross_source_execution"
@@ -272,6 +273,7 @@ function validationOutcome(): AnalystValidationOutcome {
     status: "safe",
     checks: [
       "source_labeled_evidence_present",
+      "source_summary_coverage",
       "narrative_execution_authority",
       "narrative_execution_grounding",
       "narrative_cross_source_execution"
