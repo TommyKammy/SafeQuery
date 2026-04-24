@@ -39,6 +39,7 @@ RedactionProfile = Literal[
     "evaluation_diagnostic_v1",
 ]
 AccessRole = Literal["engineering", "operations", "security"]
+EvaluationValidationStatus = Literal["passed", "failed", "skipped", "error"]
 
 _APPROVED_PROFILE_BY_FIELD: dict[str, str] = {
     "natural_language_request": "nl_excerpt_v1",
@@ -135,6 +136,8 @@ class MLflowExportPayload(BaseModel):
     safequery_audit_event_id: Optional[UUID] = None
     mlflow_run_id: Optional[NonEmptyTrimmedString] = None
     evaluation_run_id: Optional[NonEmptyTrimmedString] = None
+    evaluation_outcome_id: Optional[NonEmptyTrimmedString] = None
+    release_gate_summary_id: Optional[NonEmptyTrimmedString] = None
 
     request_id: Optional[NonEmptyTrimmedString] = None
     candidate_id: Optional[NonEmptyTrimmedString] = None
@@ -147,7 +150,11 @@ class MLflowExportPayload(BaseModel):
     connector_profile_version: Optional[PositiveInt] = None
 
     deny_code: Optional[NonEmptyTrimmedString] = None
+    validation_status: Optional[EvaluationValidationStatus] = None
     latency_ms: Optional[NonNegativeInt] = None
+    prompt_token_count: Optional[NonNegativeInt] = None
+    completion_token_count: Optional[NonNegativeInt] = None
+    total_token_count: Optional[NonNegativeInt] = None
     row_count: Optional[NonNegativeInt] = None
     result_truncated: Optional[bool] = None
 
@@ -159,6 +166,7 @@ class MLflowExportPayload(BaseModel):
     evaluation_scenario_id: Optional[NonEmptyTrimmedString] = None
     evaluation_kind: Optional[EvaluationScenarioKind] = None
     evaluation_boundary: Optional[EvaluationBoundary] = None
+    evaluation_artifact_link: Optional["MLflowEvaluationArtifactLink"] = None
     redacted_samples: tuple[MLflowRedactedSample, ...] = Field(default_factory=tuple)
 
     @model_validator(mode="before")
@@ -182,12 +190,35 @@ class MLflowExportPayload(BaseModel):
             if self.request_id is None:
                 raise ValueError("Audit trace exports must include a request identifier.")
         if self.export_kind == "evaluation_record":
+            if self.mlflow_run_id is None:
+                raise ValueError("Evaluation exports must include an MLflow run id.")
             if self.evaluation_scenario_id is None:
                 raise ValueError("Evaluation exports must include an evaluation scenario id.")
             if self.evaluation_kind is None:
                 raise ValueError("Evaluation exports must include an evaluation kind.")
             if self.evaluation_boundary is None:
                 raise ValueError("Evaluation exports must include an evaluation boundary.")
+            if self.evaluation_run_id is None:
+                raise ValueError("Evaluation exports must include a SafeQuery evaluation run id.")
+            if self.evaluation_outcome_id is None:
+                raise ValueError("Evaluation exports must include a SafeQuery outcome id.")
+            if self.evaluation_artifact_link is None:
+                raise ValueError("Evaluation exports must include an artifact linkage record.")
+            mismatches = self.evaluation_artifact_link.mismatches_for_payload(self)
+            if mismatches:
+                raise ValueError(
+                    "Evaluation artifact link does not match export payload: "
+                    + ", ".join(mismatches)
+                )
+            if self.total_token_count is not None and (
+                self.prompt_token_count is not None
+                and self.completion_token_count is not None
+                and self.total_token_count
+                != self.prompt_token_count + self.completion_token_count
+            ):
+                raise ValueError(
+                    "Total token count must equal prompt and completion token counts."
+                )
         if (
             self.retention_days > self.authoritative_audit_retention_days
             and self.retention_extension_approval_id is None
@@ -203,6 +234,46 @@ class MLflowExportPayload(BaseModel):
                 + ", ".join(sample_reasons)
             )
         return self
+
+
+class MLflowEvaluationArtifactLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mlflow_run_id: NonEmptyTrimmedString
+    evaluation_run_id: NonEmptyTrimmedString
+    evaluation_scenario_id: NonEmptyTrimmedString
+    evaluation_outcome_id: NonEmptyTrimmedString
+    safequery_audit_event_id: Optional[UUID] = None
+    release_gate_summary_id: Optional[NonEmptyTrimmedString] = None
+    source_id: SourceIdentifier
+    source_family: SourceFamily
+    source_flavor: Optional[SourceFlavor] = None
+    dataset_contract_version: PositiveInt
+    schema_snapshot_version: PositiveInt
+    execution_policy_version: PositiveInt
+    connector_profile_version: Optional[PositiveInt] = None
+
+    def mismatches_for_payload(self, payload: MLflowExportPayload) -> tuple[str, ...]:
+        expected_values = {
+            "mlflow_run_id": payload.mlflow_run_id,
+            "evaluation_run_id": payload.evaluation_run_id,
+            "evaluation_scenario_id": payload.evaluation_scenario_id,
+            "evaluation_outcome_id": payload.evaluation_outcome_id,
+            "safequery_audit_event_id": payload.safequery_audit_event_id,
+            "release_gate_summary_id": payload.release_gate_summary_id,
+            "source_id": payload.source_id,
+            "source_family": payload.source_family,
+            "source_flavor": payload.source_flavor,
+            "dataset_contract_version": payload.dataset_contract_version,
+            "schema_snapshot_version": payload.schema_snapshot_version,
+            "execution_policy_version": payload.execution_policy_version,
+            "connector_profile_version": payload.connector_profile_version,
+        }
+        return tuple(
+            field_name
+            for field_name, expected_value in expected_values.items()
+            if getattr(self, field_name) != expected_value
+        )
 
 
 class _EvaluationScenario(Protocol):
@@ -340,9 +411,17 @@ def build_mlflow_export_from_evaluation_scenario(
     retention_extension_approval_id: Optional[str] = None,
     access_roles: tuple[AccessRole, ...] = ("engineering", "operations"),
     redacted_samples: tuple[MLflowRedactedSample, ...] = (),
+    mlflow_run_id: Optional[str] = None,
     evaluation_run_id: Optional[str] = None,
+    evaluation_outcome_id: Optional[str] = None,
+    safequery_audit_event_id: Optional[UUID] = None,
+    release_gate_summary_id: Optional[str] = None,
     deny_code: Optional[str] = None,
+    validation_status: Optional[EvaluationValidationStatus] = None,
     latency_ms: Optional[int] = None,
+    prompt_token_count: Optional[int] = None,
+    completion_token_count: Optional[int] = None,
+    total_token_count: Optional[int] = None,
     row_count: Optional[int] = None,
     result_truncated: Optional[bool] = None,
     prompt_version: Optional[str] = None,
@@ -351,13 +430,38 @@ def build_mlflow_export_from_evaluation_scenario(
     if not enabled:
         return None
     source = scenario.source
+    artifact_link = (
+        MLflowEvaluationArtifactLink(
+            mlflow_run_id=mlflow_run_id,
+            evaluation_run_id=evaluation_run_id,
+            evaluation_scenario_id=scenario.scenario_id,
+            evaluation_outcome_id=evaluation_outcome_id,
+            safequery_audit_event_id=safequery_audit_event_id,
+            release_gate_summary_id=release_gate_summary_id,
+            source_id=source.source_id,
+            source_family=source.source_family,
+            source_flavor=source.source_flavor,
+            dataset_contract_version=source.dataset_contract_version,
+            schema_snapshot_version=source.schema_snapshot_version,
+            execution_policy_version=source.execution_policy_version,
+            connector_profile_version=source.connector_profile_version,
+        )
+        if mlflow_run_id is not None
+        and evaluation_run_id is not None
+        and evaluation_outcome_id is not None
+        else None
+    )
     return MLflowExportPayload(
         export_kind="evaluation_record",
         retention_days=retention_days,
         authoritative_audit_retention_days=authoritative_audit_retention_days,
         retention_extension_approval_id=retention_extension_approval_id,
         access_roles=access_roles,
+        safequery_audit_event_id=safequery_audit_event_id,
+        mlflow_run_id=mlflow_run_id,
         evaluation_run_id=evaluation_run_id,
+        evaluation_outcome_id=evaluation_outcome_id,
+        release_gate_summary_id=release_gate_summary_id,
         source_id=source.source_id,
         source_family=source.source_family,
         source_flavor=source.source_flavor,
@@ -366,7 +470,11 @@ def build_mlflow_export_from_evaluation_scenario(
         execution_policy_version=source.execution_policy_version,
         connector_profile_version=source.connector_profile_version,
         deny_code=deny_code,
+        validation_status=validation_status,
         latency_ms=latency_ms,
+        prompt_token_count=prompt_token_count,
+        completion_token_count=completion_token_count,
+        total_token_count=total_token_count,
         row_count=row_count,
         result_truncated=result_truncated,
         prompt_version=prompt_version,
@@ -374,6 +482,7 @@ def build_mlflow_export_from_evaluation_scenario(
         evaluation_scenario_id=scenario.scenario_id,
         evaluation_kind=scenario.kind,
         evaluation_boundary=scenario.evaluation_boundary,
+        evaluation_artifact_link=artifact_link,
         redacted_samples=redacted_samples,
     )
 
@@ -387,9 +496,17 @@ def prepare_mlflow_export_from_evaluation_scenario(
     retention_extension_approval_id: Optional[str] = None,
     access_roles: tuple[AccessRole, ...] = ("engineering", "operations"),
     redacted_samples: tuple[MLflowRedactedSample, ...] = (),
+    mlflow_run_id: Optional[str] = None,
     evaluation_run_id: Optional[str] = None,
+    evaluation_outcome_id: Optional[str] = None,
+    safequery_audit_event_id: Optional[UUID] = None,
+    release_gate_summary_id: Optional[str] = None,
     deny_code: Optional[str] = None,
+    validation_status: Optional[EvaluationValidationStatus] = None,
     latency_ms: Optional[int] = None,
+    prompt_token_count: Optional[int] = None,
+    completion_token_count: Optional[int] = None,
+    total_token_count: Optional[int] = None,
     row_count: Optional[int] = None,
     result_truncated: Optional[bool] = None,
     prompt_version: Optional[str] = None,
@@ -418,9 +535,17 @@ def prepare_mlflow_export_from_evaluation_scenario(
             retention_extension_approval_id=retention_extension_approval_id,
             access_roles=access_roles,
             redacted_samples=redacted_samples,
+            mlflow_run_id=mlflow_run_id,
             evaluation_run_id=evaluation_run_id,
+            evaluation_outcome_id=evaluation_outcome_id,
+            safequery_audit_event_id=safequery_audit_event_id,
+            release_gate_summary_id=release_gate_summary_id,
             deny_code=deny_code,
+            validation_status=validation_status,
             latency_ms=latency_ms,
+            prompt_token_count=prompt_token_count,
+            completion_token_count=completion_token_count,
+            total_token_count=total_token_count,
             row_count=row_count,
             result_truncated=result_truncated,
             prompt_version=prompt_version,
