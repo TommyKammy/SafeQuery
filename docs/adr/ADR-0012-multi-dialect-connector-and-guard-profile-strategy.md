@@ -123,6 +123,39 @@ used: `source_id`, `source_family`, `source_flavor`, dataset contract version,
 schema snapshot version, execution policy version, connector profile version,
 dialect profile version, guard version, and primary deny code.
 
+### Planned MariaDB Delta Profile
+
+MariaDB is classified as a planned MySQL-delta profile, not an active MySQL
+flavor and not an adapter-inferred alias. SafeQuery may share the MySQL-family
+baseline for read-only connector posture, single-statement canonicalization,
+policy-bounded `LIMIT` handling, timeout and cancellation controls, audit
+fields, and release-gate reconstruction fields, but MariaDB remains a distinct
+backend-owned `source_family=mariadb` registry decision.
+
+A MariaDB source profile must be registered by the backend with the same core
+contract fields required for MySQL: `source_id`, `source_family`, `source_flavor`,
+dataset contract version, schema snapshot version, execution policy version,
+connector profile version, dialect profile version, activation posture, and
+connection reference. Its planned connector profile is
+`mariadb.readonly.planned.v1`, with backend-owned secret indirection such as
+`safequery/business/mariadb/<source_id>/reader`.
+
+The MariaDB delta profile must not reuse the MySQL guard profile silently. Before
+activation, the approved profile must explicitly cover:
+
+- MariaDB mode and version-specific canonicalization drift
+- unsafe `sql_mode` assumptions
+- information schema and system catalog deny fixtures
+- optimizer hints and executable comments
+- timeout, cancellation, and read-only credential behavior
+- a separate MariaDB release-gate corpus, even when scenarios overlap MySQL
+
+MariaDB execution remains disabled until the registry profile, connector
+profile, dialect profile, guard profile, deny fixtures, audit mapping,
+operator-history reconstruction, and release-gate corpus are approved together.
+Client-supplied hints, driver names, connection URLs, hostnames, labels, or
+generated SQL text must not promote a source into MariaDB support.
+
 ## Consequences
 
 Positive outcomes:
