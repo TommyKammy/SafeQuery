@@ -343,18 +343,12 @@ function parseOperatorHistoryHooks(value: unknown): AnalystOperatorHistoryHooks 
   };
 }
 
-function sourceKey(item: AnalystRetrievalCitation | AnalystExecutedEvidence): string {
-  return `${item.sourceFamily}:${item.sourceId}`;
-}
-
 function validateNarrativeAuthority(
   narrative: string,
   retrievalCitations: AnalystRetrievalCitation[],
   executedEvidence: AnalystExecutedEvidence[]
 ): boolean {
-  const sourceCount = new Set([...retrievalCitations, ...executedEvidence].map(sourceKey)).size;
-
-  if (sourceCount > 1 && crossSourceExecutionPattern.test(narrative)) {
+  if (crossSourceExecutionPattern.test(narrative)) {
     return false;
   }
 

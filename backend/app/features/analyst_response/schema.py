@@ -172,12 +172,8 @@ class AnalystResponsePayload(BaseModel):
     @model_validator(mode="after")
     def validate_narrative_authority(self) -> "AnalystResponsePayload":
         narrative = self.narrative
-        cited_sources = {
-            (item.source_id, item.source_family)
-            for item in [*self.retrieval_citations, *self.executed_evidence]
-        }
 
-        if len(cited_sources) > 1 and _CROSS_SOURCE_EXECUTION_PATTERN.search(narrative):
+        if _CROSS_SOURCE_EXECUTION_PATTERN.search(narrative):
             raise ValueError(
                 "Analyst narrative must not imply cross-source execution authority."
             )
