@@ -417,6 +417,55 @@ def test_mssql_core_vertical_slice_submits_generates_guards_executes_and_audits(
         }.items() <= dumped.items()
 
 
+def test_mssql_core_vertical_slice_rejects_blank_backend_connection_string_before_generation() -> None:
+    from app.services.mssql_vertical_slice import run_mssql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _mssql_scenarios_by_id()["mssql-positive-approved-vendor-spend-top-vendors"]
+
+    class UnexpectedAdapter:
+        def generate_sql(self, request):
+            raise AssertionError(
+                "SQL generation must not run without a valid backend credential"
+            )
+
+    def fake_query_runner(**_: object) -> list[dict[str, object]]:
+        raise AssertionError("MSSQL execution must not run without a valid backend credential")
+
+    with _session_scope() as session:
+        _seed_mssql_source(session, scenario=scenario)
+
+        with pytest.raises(
+            RuntimeError,
+            match="non-empty backend-owned business MSSQL connection string",
+        ):
+            run_mssql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=UnexpectedAdapter(),
+                business_mssql_connection_string=" \t\n ",
+                query_runner=fake_query_runner,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-141-blank-credential",
+                    correlation_id="correlation-141-blank-credential",
+                    user_subject="user:alice",
+                    session_id="session-141-blank-credential",
+                    query_candidate_id="candidate-141-blank-credential",
+                    candidate_owner_subject="user:alice",
+                    guard_version="mssql-guard-v1",
+                    application_version="safequery-test",
+                ),
+            )
+
+
 def test_mssql_core_vertical_slice_denies_guard_rejection_before_execution() -> None:
     from app.features.guard.deny_taxonomy import DENY_RESOURCE_ABUSE
     from app.services.mssql_vertical_slice import (

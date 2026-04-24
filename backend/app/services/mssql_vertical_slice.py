@@ -13,6 +13,7 @@ from app.features.execution.runtime import (
     ExecutableCandidateRecord,
     ExecutionAuditContext,
     ExecutionResult,
+    NonEmptyTrimmedString,
     QueryRunner,
 )
 from app.features.guard import SQLGuardEvaluation, evaluate_mssql_sql_guard
@@ -34,6 +35,19 @@ from app.services.sql_generation_adapter import (
 MSSQL_DIALECT_PROFILE_VERSION = 1
 MSSQL_EXECUTION_POLICY_VERSION = 2
 MSSQL_CONNECTOR_PROFILE_VERSION = 1
+
+
+def _normalize_business_mssql_connection_string(
+    connection_string: str,
+) -> NonEmptyTrimmedString:
+    normalized = connection_string.strip()
+    if not normalized:
+        raise RuntimeError(
+            "A non-empty backend-owned business MSSQL connection string is required "
+            "before the MSSQL vertical slice can execute."
+        )
+
+    return cast(NonEmptyTrimmedString, normalized)
 
 
 class GeneratedMSSQLCandidate(BaseModel):
@@ -199,10 +213,14 @@ def run_mssql_core_vertical_slice(
     authenticated_subject: AuthenticatedSubject,
     session: Session,
     sql_generation_adapter: SQLGenerationAdapter,
-    business_mssql_connection_string: str,
+    business_mssql_connection_string: NonEmptyTrimmedString,
     query_runner: QueryRunner | None = None,
     audit_context: PreviewAuditContext,
 ) -> MSSQLCoreVerticalSliceResult:
+    normalized_business_mssql_connection_string = (
+        _normalize_business_mssql_connection_string(business_mssql_connection_string)
+    )
+
     preview = submit_preview_request(
         payload,
         authenticated_subject,
@@ -291,7 +309,7 @@ def run_mssql_core_vertical_slice(
             source=candidate_source,
         ),
         selection=selection,
-        business_mssql_connection_string=business_mssql_connection_string,
+        business_mssql_connection_string=normalized_business_mssql_connection_string,
         query_runner=query_runner,
         audit_context=_build_execution_audit_context(audit_context=audit_context),
     )
