@@ -33,16 +33,22 @@ from app.features.evaluation import (
 from app.features.execution import (
     ExecutionConnectorExecutionError,
     ExecutionConnectorSelectionError,
+    ExecutionRuntimeCancelledError,
     execute_candidate_sql,
     select_execution_connector,
 )
 from app.features.execution.connector_selection import ExecutionConnectorSelection
-from app.features.execution.runtime import ExecutableCandidateRecord
+from app.features.execution.runtime import (
+    ExecutableCandidateRecord,
+    ExecutionRuntimeSafetyState,
+)
 from app.features.guard import evaluate_mssql_sql_guard
 from app.features.guard.deny_taxonomy import (
     DENY_APPLICATION_POSTGRES_REUSE,
     DENY_APPROVAL_EXPIRED,
     DENY_POLICY_VERSION_STALE,
+    DENY_RUNTIME_KILL_SWITCH,
+    DENY_RUNTIME_RATE_LIMIT,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_UNSUPPORTED_SOURCE_BINDING,
 )
@@ -599,6 +605,128 @@ def test_mssql_core_vertical_slice_denies_guard_rejection_before_execution() -> 
     }.items() <= guard_event.items()
 
 
+def test_mssql_core_vertical_slice_applies_runtime_kill_switch_before_execution() -> None:
+    from app.services.mssql_vertical_slice import run_mssql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _mssql_scenarios_by_id()["mssql-positive-approved-vendor-spend-top-vendors"]
+
+    class RecordingAdapter:
+        def generate_sql(self, request):
+            return scenario.expected.canonical_sql
+
+    def fake_query_runner(**_: object) -> list[dict[str, object]]:
+        raise AssertionError("MSSQL execution must not run after runtime denial")
+
+    with _session_scope() as session:
+        _seed_mssql_source(session, scenario=scenario)
+
+        with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+            run_mssql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=RecordingAdapter(),
+                business_mssql_connection_string=MSSQL_TEST_CONNECTION_STRING,
+                query_runner=fake_query_runner,
+                runtime_safety_state=ExecutionRuntimeSafetyState(
+                    disabled_source_families=frozenset({"mssql"})
+                ),
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-141-runtime-denied",
+                    correlation_id="correlation-141-runtime-denied",
+                    user_subject="user:alice",
+                    session_id="session-141-runtime-denied",
+                    query_candidate_id="candidate-141-runtime-denied",
+                    candidate_owner_subject="user:alice",
+                    guard_version="mssql-guard-v1",
+                    application_version="safequery-test",
+                ),
+            )
+
+    assert exc_info.value.deny_code == DENY_RUNTIME_KILL_SWITCH
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_denied",
+    ]
+    denial_event = exc_info.value.audit_event.model_dump(exclude_none=True)
+    assert {
+        "event_type": "execution_denied",
+        "source_id": scenario.source.source_id,
+        "source_family": "mssql",
+        "primary_deny_code": DENY_RUNTIME_KILL_SWITCH,
+        "denial_cause": "runtime_kill_switch",
+        "candidate_state": "denied",
+    }.items() <= denial_event.items()
+
+
+def test_mssql_core_vertical_slice_cancellation_probe_blocks_before_execution() -> None:
+    from app.services.mssql_vertical_slice import run_mssql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _mssql_scenarios_by_id()["mssql-positive-approved-vendor-spend-top-vendors"]
+
+    class RecordingAdapter:
+        def generate_sql(self, request):
+            return scenario.expected.canonical_sql
+
+    def fake_query_runner(**_: object) -> list[dict[str, object]]:
+        raise AssertionError("MSSQL execution must not run after cancellation")
+
+    with _session_scope() as session:
+        _seed_mssql_source(session, scenario=scenario)
+
+        with pytest.raises(
+            ExecutionRuntimeCancelledError,
+            match=r"Execution canceled before the backend-owned query runner started\.",
+        ) as exc_info:
+            run_mssql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=RecordingAdapter(),
+                business_mssql_connection_string=MSSQL_TEST_CONNECTION_STRING,
+                query_runner=fake_query_runner,
+                cancellation_probe=lambda: True,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-141-canceled",
+                    correlation_id="correlation-141-canceled",
+                    user_subject="user:alice",
+                    session_id="session-141-canceled",
+                    query_candidate_id="candidate-141-canceled",
+                    candidate_owner_subject="user:alice",
+                    guard_version="mssql-guard-v1",
+                    application_version="safequery-test",
+                ),
+            )
+
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_failed",
+    ]
+    canceled_event = exc_info.value.audit_event.model_dump(exclude_none=True)
+    assert {
+        "event_type": "execution_failed",
+        "source_id": scenario.source.source_id,
+        "source_family": "mssql",
+        "candidate_state": "canceled",
+    }.items() <= canceled_event.items()
+
+
 @pytest.mark.parametrize(
     "scenario_id",
     (
@@ -819,6 +947,134 @@ def test_postgresql_core_vertical_slice_denies_application_postgres_reuse_before
         "denial_cause": "application_postgresql_reuse",
         "candidate_state": "denied",
     }.items() <= denial_event.items()
+
+
+def test_postgresql_core_vertical_slice_applies_runtime_rate_limit_before_execution() -> None:
+    from app.services.postgresql_vertical_slice import run_postgresql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _postgresql_scenarios_by_id()[
+        "postgresql-positive-approved-vendor-spend-top-vendors"
+    ]
+
+    class RecordingAdapter:
+        def generate_sql(self, request):
+            return scenario.expected.canonical_sql
+
+    def fake_query_runner(**_: object) -> list[dict[str, object]]:
+        raise AssertionError("PostgreSQL execution must not run after runtime denial")
+
+    with _session_scope() as session:
+        _seed_postgresql_source(session, scenario=scenario)
+
+        with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+            run_postgresql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=RecordingAdapter(),
+                business_postgres_url=POSTGRESQL_TEST_URL,
+                application_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
+                query_runner=fake_query_runner,
+                runtime_safety_state=ExecutionRuntimeSafetyState(
+                    rate_limited_source_ids=frozenset({scenario.source.source_id})
+                ),
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-142-runtime-denied",
+                    correlation_id="correlation-142-runtime-denied",
+                    user_subject="user:alice",
+                    session_id="session-142-runtime-denied",
+                    query_candidate_id="candidate-142-runtime-denied",
+                    candidate_owner_subject="user:alice",
+                    guard_version="postgresql-guard-v1",
+                    application_version="safequery-test",
+                ),
+            )
+
+    assert exc_info.value.deny_code == DENY_RUNTIME_RATE_LIMIT
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_denied",
+    ]
+    denial_event = exc_info.value.audit_event.model_dump(exclude_none=True)
+    assert {
+        "event_type": "execution_denied",
+        "source_id": scenario.source.source_id,
+        "source_family": "postgresql",
+        "primary_deny_code": DENY_RUNTIME_RATE_LIMIT,
+        "denial_cause": "runtime_rate_limit",
+        "candidate_state": "denied",
+    }.items() <= denial_event.items()
+
+
+def test_postgresql_core_vertical_slice_cancellation_probe_blocks_before_execution() -> None:
+    from app.services.postgresql_vertical_slice import run_postgresql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _postgresql_scenarios_by_id()[
+        "postgresql-positive-approved-vendor-spend-top-vendors"
+    ]
+
+    class RecordingAdapter:
+        def generate_sql(self, request):
+            return scenario.expected.canonical_sql
+
+    def fake_query_runner(**_: object) -> list[dict[str, object]]:
+        raise AssertionError("PostgreSQL execution must not run after cancellation")
+
+    with _session_scope() as session:
+        _seed_postgresql_source(session, scenario=scenario)
+
+        with pytest.raises(
+            ExecutionRuntimeCancelledError,
+            match=r"Execution canceled before the backend-owned query runner started\.",
+        ) as exc_info:
+            run_postgresql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=RecordingAdapter(),
+                business_postgres_url=POSTGRESQL_TEST_URL,
+                application_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
+                query_runner=fake_query_runner,
+                cancellation_probe=lambda: True,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-142-canceled",
+                    correlation_id="correlation-142-canceled",
+                    user_subject="user:alice",
+                    session_id="session-142-canceled",
+                    query_candidate_id="candidate-142-canceled",
+                    candidate_owner_subject="user:alice",
+                    guard_version="postgresql-guard-v1",
+                    application_version="safequery-test",
+                ),
+            )
+
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_failed",
+    ]
+    canceled_event = exc_info.value.audit_event.model_dump(exclude_none=True)
+    assert {
+        "event_type": "execution_failed",
+        "source_id": scenario.source.source_id,
+        "source_family": "postgresql",
+        "candidate_state": "canceled",
+    }.items() <= canceled_event.items()
 
 
 @pytest.mark.parametrize(
