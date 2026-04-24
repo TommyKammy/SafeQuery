@@ -51,11 +51,27 @@ class RetrievedCorpusAsset(BaseModel):
     can_authorize_execution: Literal[False] = False
 
 
+class RetrievalCitation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: NonEmptyTrimmedString
+    asset_kind: NonEmptyTrimmedString
+    citation_label: NonEmptyTrimmedString
+    source_id: NonEmptyTrimmedString
+    source_family: NonEmptyTrimmedString
+    source_flavor: Optional[NonEmptyTrimmedString] = None
+    dataset_contract_version: int
+    schema_snapshot_version: int
+    authority: Literal["advisory_context"] = "advisory_context"
+    can_authorize_execution: Literal[False] = False
+
+
 class RetrievalCorpusAuditHook(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     corpus_version: NonEmptyTrimmedString
     retrieved_asset_ids: list[NonEmptyTrimmedString]
+    citations: list[RetrievalCitation]
 
 
 class GovernedRetrievalResult(BaseModel):
@@ -128,6 +144,21 @@ def _to_retrieved_asset(asset: RetrievalCorpusAsset) -> RetrievedCorpusAsset:
     )
 
 
+def _to_retrieval_citation(asset: RetrievedCorpusAsset) -> RetrievalCitation:
+    return RetrievalCitation(
+        asset_id=asset.asset_id,
+        asset_kind=asset.asset_kind,
+        citation_label=asset.citation_label,
+        source_id=asset.source.source_id,
+        source_family=asset.source.source_family,
+        source_flavor=asset.source.source_flavor,
+        dataset_contract_version=asset.source.dataset_contract_version,
+        schema_snapshot_version=asset.source.schema_snapshot_version,
+        authority=asset.authority,
+        can_authorize_execution=asset.can_authorize_execution,
+    )
+
+
 def _load_governed_source(
     *,
     session: Session,
@@ -163,7 +194,7 @@ def retrieve_governed_corpus_assets(
     statement = (
         select(RetrievalCorpusAsset)
         .where(RetrievalCorpusAsset.status == RetrievalCorpusAssetStatus.APPROVED)
-        .order_by(RetrievalCorpusAsset.asset_id.asc())
+        .order_by(RetrievalCorpusAsset.source_id.asc(), RetrievalCorpusAsset.asset_id.asc())
     )
 
     governed_sources: dict[str, tuple[RegisteredSource, DatasetContract, SchemaSnapshot]] = {}
@@ -203,11 +234,13 @@ def retrieve_governed_corpus_assets(
         retrieved_assets.append(_to_retrieved_asset(asset))
 
     retrieved_asset_ids = [asset.asset_id for asset in retrieved_assets]
+    citations = [_to_retrieval_citation(asset) for asset in retrieved_assets]
     return GovernedRetrievalResult(
         query_text=normalized_query,
         assets=retrieved_assets,
         audit=RetrievalCorpusAuditHook(
             corpus_version="source-aware-v1",
             retrieved_asset_ids=retrieved_asset_ids,
+            citations=citations,
         ),
     )

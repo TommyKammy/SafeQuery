@@ -48,6 +48,21 @@ AuditEventType = Literal[
 SourceFamily = Literal["mssql", "postgresql"]
 
 
+class RetrievalCitationAuditPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: NonEmptyTrimmedString
+    asset_kind: NonEmptyTrimmedString
+    citation_label: NonEmptyTrimmedString
+    source_id: SourceIdentifier
+    source_family: SourceFamily
+    source_flavor: Optional[SourceFlavor] = None
+    dataset_contract_version: PositiveInt
+    schema_snapshot_version: PositiveInt
+    authority: Literal["advisory_context"] = "advisory_context"
+    can_authorize_execution: Literal[False] = False
+
+
 class SourceAwareAuditEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -67,6 +82,7 @@ class SourceAwareAuditEvent(BaseModel):
     application_version: Optional[NonEmptyTrimmedString] = None
     retrieval_corpus_version: Optional[NonEmptyTrimmedString] = None
     retrieved_asset_ids: Optional[list[NonEmptyTrimmedString]] = None
+    retrieved_citations: Optional[list[RetrievalCitationAuditPayload]] = None
     analyst_mode_version: Optional[NonEmptyTrimmedString] = None
 
     source_id: SourceIdentifier

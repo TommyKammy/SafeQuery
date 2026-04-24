@@ -97,3 +97,70 @@ def test_source_aware_audit_event_rejects_missing_required_source_metadata(
 
     with pytest.raises(ValidationError):
         SourceAwareAuditEvent(**payload)
+
+
+def test_retrieval_completed_audit_event_preserves_source_labeled_citations() -> None:
+    payload = _source_aware_payload()
+    payload.update(
+        {
+            "event_type": "retrieval_completed",
+            "retrieval_corpus_version": "source-aware-v1",
+            "retrieved_asset_ids": ["metric_definition", "metric_definition"],
+            "retrieved_citations": [
+                {
+                    "asset_id": "metric_definition",
+                    "asset_kind": "metric_definition",
+                    "citation_label": "business-mssql-source metric definition",
+                    "source_id": "business-mssql-source",
+                    "source_family": "mssql",
+                    "source_flavor": "sqlserver-2022",
+                    "dataset_contract_version": 7,
+                    "schema_snapshot_version": 3,
+                    "authority": "advisory_context",
+                    "can_authorize_execution": False,
+                },
+                {
+                    "asset_id": "metric_definition",
+                    "asset_kind": "metric_definition",
+                    "citation_label": "business-postgres-source metric definition",
+                    "source_id": "business-postgres-source",
+                    "source_family": "postgresql",
+                    "source_flavor": "postgresql-16",
+                    "dataset_contract_version": 2,
+                    "schema_snapshot_version": 5,
+                    "authority": "advisory_context",
+                    "can_authorize_execution": False,
+                },
+            ],
+        }
+    )
+
+    event = SourceAwareAuditEvent(**payload)
+
+    assert event.model_dump()["retrieved_citations"] == payload["retrieved_citations"]
+
+
+def test_retrieval_citation_audit_payload_rejects_execution_authority() -> None:
+    payload = _source_aware_payload()
+    payload.update(
+        {
+            "event_type": "retrieval_completed",
+            "retrieved_citations": [
+                {
+                    "asset_id": "metric_definition",
+                    "asset_kind": "metric_definition",
+                    "citation_label": "business-mssql-source metric definition",
+                    "source_id": "business-mssql-source",
+                    "source_family": "mssql",
+                    "source_flavor": "sqlserver-2022",
+                    "dataset_contract_version": 7,
+                    "schema_snapshot_version": 3,
+                    "authority": "execution_evidence",
+                    "can_authorize_execution": True,
+                },
+            ],
+        }
+    )
+
+    with pytest.raises(ValidationError):
+        SourceAwareAuditEvent(**payload)

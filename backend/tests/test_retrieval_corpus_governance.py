@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -35,6 +36,17 @@ def _session_scope() -> Iterator[Session]:
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
+
+
+def test_retrieval_corpus_asset_identifier_is_source_scoped() -> None:
+    unique_constraints = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in RetrievalCorpusAsset.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert ("registered_source_id", "asset_id") in unique_constraints
+    assert ("asset_id",) not in unique_constraints
 
 
 def _seed_source(
@@ -123,6 +135,87 @@ def _seed_asset(
     )
     session.add(asset)
     return asset
+
+
+def test_retrieval_citations_preserve_source_scope_when_asset_ids_match() -> None:
+    with _session_scope() as session:
+        mssql_source, mssql_contract, mssql_snapshot = _seed_source(
+            session,
+            source_id="business-mssql-source",
+            source_family="mssql",
+            source_flavor="sqlserver-2022",
+            owner_binding="group:shared-analysts",
+            contract_version=7,
+            snapshot_version=3,
+        )
+        postgres_source, postgres_contract, postgres_snapshot = _seed_source(
+            session,
+            source_id="business-postgres-source",
+            source_family="postgresql",
+            source_flavor="postgresql-16",
+            owner_binding="group:shared-analysts",
+            contract_version=2,
+            snapshot_version=5,
+        )
+        _seed_asset(
+            session,
+            asset_id="metric_definition",
+            source=mssql_source,
+            contract=mssql_contract,
+            snapshot=mssql_snapshot,
+            visibility_binding="group:shared-analysts",
+            text="Gross margin uses net revenue minus cost of goods sold.",
+        )
+        _seed_asset(
+            session,
+            asset_id="metric_definition",
+            source=postgres_source,
+            contract=postgres_contract,
+            snapshot=postgres_snapshot,
+            visibility_binding="group:shared-analysts",
+            text="Headcount is measured from the active employee roster.",
+        )
+        session.commit()
+
+        retrieved = retrieve_governed_corpus_assets(
+            query_text="show governed metric definitions",
+            authenticated_subject=AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:shared-analysts"}),
+            ),
+            session=session,
+        )
+
+    assert [asset.asset_id for asset in retrieved.assets] == [
+        "metric_definition",
+        "metric_definition",
+    ]
+    assert retrieved.audit.model_dump()["citations"] == [
+        {
+            "asset_id": "metric_definition",
+            "asset_kind": "metric_definition",
+            "citation_label": "business-mssql-source metric definition",
+            "source_id": "business-mssql-source",
+            "source_family": "mssql",
+            "source_flavor": "sqlserver-2022",
+            "dataset_contract_version": 7,
+            "schema_snapshot_version": 3,
+            "authority": "advisory_context",
+            "can_authorize_execution": False,
+        },
+        {
+            "asset_id": "metric_definition",
+            "asset_kind": "metric_definition",
+            "citation_label": "business-postgres-source metric definition",
+            "source_id": "business-postgres-source",
+            "source_family": "postgresql",
+            "source_flavor": "postgresql-16",
+            "dataset_contract_version": 2,
+            "schema_snapshot_version": 5,
+            "authority": "advisory_context",
+            "can_authorize_execution": False,
+        },
+    ]
 
 
 def test_retrieval_corpus_assets_are_source_labeled_filtered_and_advisory_only() -> None:
