@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -17,7 +18,13 @@ from app.features.execution.runtime import (
     QueryRunner,
 )
 from app.features.guard import SQLGuardEvaluation, evaluate_postgresql_sql_guard
-from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
+from app.services.candidate_lifecycle import (
+    CandidateLifecycleAuditContext,
+    CandidateLifecycleRecord,
+    CandidateLifecycleRevalidationError,
+    SourceBoundCandidateMetadata,
+    revalidate_candidate_lifecycle,
+)
 from app.services.generation_context import prepare_generation_context
 from app.services.request_preview import (
     PreviewAuditContext,
@@ -222,6 +229,37 @@ def _build_execution_audit_context(
     )
 
 
+def _build_default_candidate_lifecycle(
+    *,
+    candidate_source: SourceBoundCandidateMetadata,
+    authenticated_subject: AuthenticatedSubject,
+    audit_context: PreviewAuditContext,
+) -> CandidateLifecycleRecord:
+    return CandidateLifecycleRecord(
+        owner_subject_id=authenticated_subject.normalized_subject_id(),
+        approved_at=audit_context.occurred_at,
+        approval_expires_at=audit_context.occurred_at + timedelta(minutes=5),
+        invalidated_at=None,
+        source=candidate_source,
+    )
+
+
+def _build_candidate_lifecycle_audit_context(
+    *,
+    audit_context: PreviewAuditContext,
+) -> CandidateLifecycleAuditContext:
+    return CandidateLifecycleAuditContext(
+        event_id=uuid4(),
+        occurred_at=audit_context.occurred_at,
+        request_id=audit_context.request_id,
+        correlation_id=audit_context.correlation_id,
+        user_subject=audit_context.user_subject,
+        session_id=audit_context.session_id,
+        query_candidate_id=audit_context.query_candidate_id,
+        candidate_owner_subject=audit_context.candidate_owner_subject,
+    )
+
+
 def run_postgresql_core_vertical_slice(
     *,
     payload: PreviewSubmissionRequest,
@@ -232,6 +270,7 @@ def run_postgresql_core_vertical_slice(
     application_postgres_url: NonEmptyTrimmedString,
     query_runner: QueryRunner | None = None,
     audit_context: PreviewAuditContext,
+    candidate_lifecycle: CandidateLifecycleRecord | None = None,
 ) -> PostgreSQLCoreVerticalSliceResult:
     normalized_business_postgres_url = _normalize_business_postgres_url(
         business_postgres_url
@@ -322,6 +361,32 @@ def run_postgresql_core_vertical_slice(
         event_type="guard_evaluated",
         candidate_state="preview_ready",
     )
+
+    lifecycle_record = candidate_lifecycle or _build_default_candidate_lifecycle(
+        candidate_source=candidate_source,
+        authenticated_subject=authenticated_subject,
+        audit_context=audit_context,
+    )
+    try:
+        revalidate_candidate_lifecycle(
+            candidate=lifecycle_record,
+            authenticated_subject=authenticated_subject,
+            session=session,
+            as_of=audit_context.occurred_at,
+            selected_source_id=candidate_source.source_id,
+            audit_context=_build_candidate_lifecycle_audit_context(
+                audit_context=audit_context,
+            ),
+        )
+    except CandidateLifecycleRevalidationError as exc:
+        if exc.audit_event is not None:
+            audit_events.append(exc.audit_event)
+        raise PostgreSQLVerticalSliceDenied(
+            deny_code=exc.deny_code,
+            message=str(exc),
+            guard=guard,
+            audit_events=audit_events,
+        ) from exc
 
     selection = select_execution_connector(candidate_source=candidate_source)
     execution = execute_candidate_sql(
