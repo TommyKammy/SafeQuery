@@ -43,6 +43,7 @@ required_patterns=(
   "backend/tests/test_execution_runtime_controls.py"
   "backend/tests/test_mssql_execution_connector.py"
   "backend/tests/test_postgresql_execution_connector.py"
+  "pilot baseline coverage"
   "optional search, analyst, and MLflow extension tracks are not required"
 )
 
@@ -52,6 +53,17 @@ for pattern in "${required_patterns[@]}"; do
     exit 1
   fi
 done
+
+if grep -Eq "postgresql.*approved follow-on|approved follow-on.*postgresql" "$checklist"; then
+  echo "$checklist must not describe PostgreSQL as follow-on for the 2-source core path" >&2
+  exit 1
+fi
+
+dialect_matrix="docs/design/dialect-capability-matrix.md"
+if ! grep -Eq '^\| `postgresql` \|.*\| active baseline \|$' "$dialect_matrix"; then
+  echo "$dialect_matrix must mark PostgreSQL as active baseline for the 2-source core path" >&2
+  exit 1
+fi
 
 for entrypoint in docs/README.md docs/01_READING_ORDER.md; do
   if ! grep -Fq "pilot-safety-verification-checklist.md" "$entrypoint"; then

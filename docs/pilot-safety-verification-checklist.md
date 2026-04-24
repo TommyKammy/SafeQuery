@@ -73,9 +73,9 @@ Inspection points:
   business PostgreSQL, and business MSSQL as separate roles.
 - `infra/docker-compose.yml` still declares separate `app-postgres`,
   `business-postgres-source`, and `business-mssql-source` services.
-- `docs/design/dialect-capability-matrix.md` still marks `mssql` as active
-  baseline and `postgresql` as an approved follow-on source family with a
-  required positive and deny corpus.
+- `docs/design/dialect-capability-matrix.md` reflects the current 2-source
+  pilot baseline coverage and required positive and deny corpus expectations for
+  both `mssql` and `postgresql`.
 - `docs/design/evaluation-harness.md` still requires 100 percent critical deny
   corpus pass rate and release blocking for unresolved threshold misses.
 - `backend/tests/test_release_gate.py` still proves source-aware release gate
