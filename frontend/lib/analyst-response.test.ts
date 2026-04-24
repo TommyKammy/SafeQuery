@@ -119,6 +119,23 @@ describe("parseAnalystResponsePayload", () => {
       parseAnalystResponsePayload({
         responseId: "analyst-response-123",
         requestId: "request-123",
+        narrative: "Advisory text with malformed citation flavor.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        retrievalCitations: [
+          {
+            ...citation("business-postgres-source", "postgresql"),
+            sourceFlavor: "warehouse east"
+          }
+        ]
+      })
+    ).toBeNull();
+
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
         narrative: "Advisory text with malformed evidence source.",
         advisoryOnly: true,
         canAuthorizeExecution: false,
@@ -129,6 +146,70 @@ describe("parseAnalystResponsePayload", () => {
             sourceFamily: "mysql"
           }
         ]
+      })
+    ).toBeNull();
+
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "Advisory text with malformed evidence flavor.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        executedEvidence: [
+          {
+            ...evidence("business-postgres-source", "postgresql"),
+            sourceFlavor: "warehouse east"
+          }
+        ]
+      })
+    ).toBeNull();
+  });
+
+  it("rejects malformed executed evidence audit event identifiers", () => {
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "Executed evidence must reference a real audit event.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        executedEvidence: [
+          {
+            ...evidence("business-postgres-source", "postgresql"),
+            executionAuditEventId: "not-an-audit-event-id"
+          }
+        ]
+      })
+    ).toBeNull();
+  });
+
+  it("rejects malformed present arrays instead of defaulting them to empty", () => {
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "Malformed caveats cannot be coerced away.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        caveats: "none",
+        retrievalCitations: [citation("business-postgres-source", "postgresql")]
+      })
+    ).toBeNull();
+
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "Malformed citation arrays cannot be coerced away.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        retrievalCitations: "business-postgres-source",
+        executedEvidence: [evidence("business-postgres-source", "postgresql")]
       })
     ).toBeNull();
   });

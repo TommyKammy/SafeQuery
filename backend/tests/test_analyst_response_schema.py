@@ -83,6 +83,55 @@ def test_analyst_response_payload_preserves_multi_source_advisory_labels() -> No
     assert "sql_execution_approved" not in dumped
 
 
+def test_source_summary_coverage_uses_source_identity_not_execution_policy() -> None:
+    response = AnalystResponsePayload(
+        response_id="analyst-response-123",
+        request_id="request-123",
+        narrative="A single source can have advisory citations and executed evidence.",
+        advisory_only=True,
+        can_authorize_execution=False,
+        analyst_mode_version="analyst-schema-v1",
+        source_summaries=[
+            {
+                "source_id": "business-postgres-source",
+                "source_family": "postgresql",
+                "source_flavor": "warehouse",
+                "dataset_contract_version": 2,
+                "schema_snapshot_version": 5,
+            }
+        ],
+        retrieval_citations=[_citation("business-postgres-source", "postgresql")],
+        executed_evidence=[_executed_evidence("business-postgres-source", "postgresql")],
+    )
+
+    assert response.source_summaries[0].execution_policy_version is None
+
+
+def test_source_summary_coverage_rejects_missing_source_identity() -> None:
+    with pytest.raises(ValidationError):
+        AnalystResponsePayload(
+            response_id="analyst-response-123",
+            request_id="request-123",
+            narrative="All cited sources must be summarized when summaries are supplied.",
+            advisory_only=True,
+            can_authorize_execution=False,
+            analyst_mode_version="analyst-schema-v1",
+            source_summaries=[
+                {
+                    "source_id": "business-postgres-source",
+                    "source_family": "postgresql",
+                    "source_flavor": "warehouse",
+                    "dataset_contract_version": 2,
+                    "schema_snapshot_version": 5,
+                }
+            ],
+            retrieval_citations=[
+                _citation("business-postgres-source", "postgresql"),
+                _citation("business-mssql-source", "mssql"),
+            ],
+        )
+
+
 @pytest.mark.parametrize(
     "payload_overrides",
     [

@@ -47,7 +47,9 @@ export type AnalystResponsePayload = {
 
 type RawObject = Record<string, unknown>;
 
-const sourceIdPattern = /^[a-z0-9][a-z0-9._-]*$/;
+const sourceTokenPattern = /^[a-z0-9][a-z0-9._-]*$/;
+const executionAuditEventIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isObject(value: unknown): value is RawObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -61,17 +63,22 @@ function readRequiredString(value: unknown): string | null {
   return value;
 }
 
-function readOptionalString(value: unknown): string | null {
+function readSourceToken(value: unknown): string | null {
+  const token = readRequiredString(value);
+  return token !== null && sourceTokenPattern.test(token) ? token : null;
+}
+
+function readOptionalSourceToken(value: unknown): string | null | undefined {
   if (value === null || value === undefined) {
     return null;
   }
 
-  return readRequiredString(value);
+  return readSourceToken(value) ?? undefined;
 }
 
-function readSourceId(value: unknown): string | null {
-  const sourceId = readRequiredString(value);
-  return sourceId !== null && sourceIdPattern.test(sourceId) ? sourceId : null;
+function readExecutionAuditEventId(value: unknown): string | null {
+  const eventId = readRequiredString(value);
+  return eventId !== null && executionAuditEventIdPattern.test(eventId) ? eventId : null;
 }
 
 function readSourceFamily(value: unknown): SourceFamily | null {
@@ -95,8 +102,12 @@ function readConfidence(value: unknown): AnalystConfidence | null {
 }
 
 function parseCaveats(value: unknown): string[] | null {
-  if (!Array.isArray(value)) {
+  if (value === undefined) {
     return [];
+  }
+
+  if (!Array.isArray(value)) {
+    return null;
   }
 
   const caveats = value.map(readRequiredString);
@@ -111,9 +122,9 @@ function parseRetrievalCitation(value: unknown): AnalystRetrievalCitation | null
   const assetId = readRequiredString(value.assetId);
   const assetKind = readRequiredString(value.assetKind);
   const citationLabel = readRequiredString(value.citationLabel);
-  const sourceId = readSourceId(value.sourceId);
+  const sourceId = readSourceToken(value.sourceId);
   const sourceFamily = readSourceFamily(value.sourceFamily);
-  const sourceFlavor = readOptionalString(value.sourceFlavor);
+  const sourceFlavor = readOptionalSourceToken(value.sourceFlavor);
   const datasetContractVersion = readPositiveInteger(value.datasetContractVersion);
   const schemaSnapshotVersion = readPositiveInteger(value.schemaSnapshotVersion);
 
@@ -123,6 +134,7 @@ function parseRetrievalCitation(value: unknown): AnalystRetrievalCitation | null
     !citationLabel ||
     !sourceId ||
     !sourceFamily ||
+    sourceFlavor === undefined ||
     !datasetContractVersion ||
     !schemaSnapshotVersion ||
     value.authority !== "advisory_context" ||
@@ -150,21 +162,22 @@ function parseExecutedEvidence(value: unknown): AnalystExecutedEvidence | null {
     return null;
   }
 
-  const sourceId = readSourceId(value.sourceId);
+  const sourceId = readSourceToken(value.sourceId);
   const sourceFamily = readSourceFamily(value.sourceFamily);
-  const sourceFlavor = readOptionalString(value.sourceFlavor);
+  const sourceFlavor = readOptionalSourceToken(value.sourceFlavor);
   const datasetContractVersion = readPositiveInteger(value.datasetContractVersion);
   const schemaSnapshotVersion = readPositiveInteger(value.schemaSnapshotVersion);
   const executionPolicyVersion = readPositiveInteger(value.executionPolicyVersion);
   const connectorProfileVersion = readPositiveInteger(value.connectorProfileVersion);
   const candidateId = readRequiredString(value.candidateId);
-  const executionAuditEventId = readRequiredString(value.executionAuditEventId);
+  const executionAuditEventId = readExecutionAuditEventId(value.executionAuditEventId);
   const rowCount = readNonNegativeInteger(value.rowCount);
 
   if (
     value.type !== "executed_evidence" ||
     !sourceId ||
     !sourceFamily ||
+    sourceFlavor === undefined ||
     !datasetContractVersion ||
     !schemaSnapshotVersion ||
     !candidateId ||
@@ -198,8 +211,12 @@ function parseExecutedEvidence(value: unknown): AnalystExecutedEvidence | null {
 }
 
 function parseArray<T>(value: unknown, parser: (item: unknown) => T | null): T[] | null {
-  if (!Array.isArray(value)) {
+  if (value === undefined) {
     return [];
+  }
+
+  if (!Array.isArray(value)) {
+    return null;
   }
 
   const parsed = value.map(parser);

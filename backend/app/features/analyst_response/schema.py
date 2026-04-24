@@ -65,7 +65,6 @@ class AnalystResponsePayload(BaseModel):
                 item.source_flavor,
                 item.dataset_contract_version,
                 item.schema_snapshot_version,
-                getattr(item, "execution_policy_version", None),
             )
             for item in [*self.retrieval_citations, *self.executed_evidence]
         }
@@ -76,7 +75,6 @@ class AnalystResponsePayload(BaseModel):
                 item.source_flavor,
                 item.dataset_contract_version,
                 item.schema_snapshot_version,
-                item.execution_policy_version,
             )
             for item in self.source_summaries
         }
