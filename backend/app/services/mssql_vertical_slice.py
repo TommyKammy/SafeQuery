@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from app.features.audit.event_model import AuditEventType, SourceAwareAuditEvent
+from app.features.audit.event_model import AuditEventType, SourceAwareAuditEvent, SourceFamily
 from app.features.auth.context import AuthenticatedSubject
 from app.features.execution import execute_candidate_sql, select_execution_connector
 from app.features.execution.runtime import (
@@ -134,7 +135,7 @@ def _audit_base(
         ),
         application_version=audit_context.application_version,
         source_id=candidate_source.source_id,
-        source_family=candidate_source.source_family,  # type: ignore[arg-type]
+        source_family=cast(SourceFamily, candidate_source.source_family),
         source_flavor=candidate_source.source_flavor,
         dialect_profile_version=MSSQL_DIALECT_PROFILE_VERSION,
         dataset_contract_version=candidate_source.dataset_contract_version,
