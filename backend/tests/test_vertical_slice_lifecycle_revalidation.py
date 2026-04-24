@@ -291,7 +291,8 @@ def test_mssql_vertical_slice_denies_owner_mismatch_before_execution() -> None:
     assert exc_info.value.deny_code == DENY_SUBJECT_MISMATCH
     assert {
         "event_type": "execution_denied",
-        "candidate_owner_subject": "user:alice",
+        "user_subject": "user:alice",
+        "candidate_owner_subject": "user:bob",
         "source_id": "business-mssql-source",
         "primary_deny_code": DENY_SUBJECT_MISMATCH,
         "denial_cause": "subject_mismatch",
@@ -352,6 +353,57 @@ def test_postgresql_vertical_slice_denies_invalidated_candidate_before_execution
         "primary_deny_code": DENY_CANDIDATE_INVALIDATED,
         "denial_cause": "candidate_invalidated",
         "candidate_state": "invalidated",
+    }.items() <= denial.items()
+
+
+def test_postgresql_vertical_slice_denies_owner_mismatch_before_execution() -> None:
+    with _session_scope() as session:
+        _seed_source(
+            session,
+            source_id="business-postgres-source",
+            source_family="postgresql",
+            source_flavor="warehouse",
+            contract_version=4,
+            snapshot_version=9,
+            schema_name="finance",
+        )
+
+        with pytest.raises(PostgreSQLVerticalSliceDenied) as exc_info:
+            run_postgresql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question="Show approved vendors.",
+                    source_id="business-postgres-source",
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=_PostgreSQLAdapter(),
+                business_postgres_url=POSTGRESQL_TEST_URL,
+                application_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
+                query_runner=_unexpected_query_runner,
+                audit_context=_audit_context(prefix="postgres-owner"),
+                candidate_lifecycle=_candidate(
+                    source_id="business-postgres-source",
+                    source_family="postgresql",
+                    source_flavor="warehouse",
+                    contract_version=4,
+                    snapshot_version=9,
+                    execution_policy_version=3,
+                    owner_subject_id="user:bob",
+                ),
+            )
+
+    denial = exc_info.value.audit_events[-1].model_dump(exclude_none=True)
+    assert exc_info.value.deny_code == DENY_SUBJECT_MISMATCH
+    assert {
+        "event_type": "execution_denied",
+        "user_subject": "user:alice",
+        "candidate_owner_subject": "user:bob",
+        "source_id": "business-postgres-source",
+        "primary_deny_code": DENY_SUBJECT_MISMATCH,
+        "denial_cause": "subject_mismatch",
     }.items() <= denial.items()
 
 

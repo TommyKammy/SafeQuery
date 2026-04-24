@@ -236,6 +236,7 @@ def _build_default_candidate_lifecycle(
 def _build_candidate_lifecycle_audit_context(
     *,
     audit_context: PreviewAuditContext,
+    lifecycle_record: CandidateLifecycleRecord,
 ) -> CandidateLifecycleAuditContext:
     return CandidateLifecycleAuditContext(
         event_id=uuid4(),
@@ -245,7 +246,7 @@ def _build_candidate_lifecycle_audit_context(
         user_subject=audit_context.user_subject,
         session_id=audit_context.session_id,
         query_candidate_id=audit_context.query_candidate_id,
-        candidate_owner_subject=audit_context.candidate_owner_subject,
+        candidate_owner_subject=lifecycle_record.owner_subject_id,
     )
 
 
@@ -361,6 +362,7 @@ def run_mssql_core_vertical_slice(
             selected_source_id=candidate_source.source_id,
             audit_context=_build_candidate_lifecycle_audit_context(
                 audit_context=audit_context,
+                lifecycle_record=lifecycle_record,
             ),
         )
     except CandidateLifecycleRevalidationError as exc:
