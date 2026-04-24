@@ -4,7 +4,15 @@ import re
 from typing import Literal, Optional, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeInt,
+    PositiveInt,
+    ValidationError,
+    model_validator,
+)
 
 from app.features.audit.event_model import (
     NonEmptyTrimmedString,
@@ -307,7 +315,7 @@ def prepare_mlflow_export_from_audit_event(
             prompt_version=prompt_version,
             model_version=model_version,
         )
-    except ValueError as exc:
+    except (ValueError, ValidationError) as exc:
         return MLflowExportDecision(
             payload=None,
             suppressed=True,
@@ -418,7 +426,7 @@ def prepare_mlflow_export_from_evaluation_scenario(
             prompt_version=prompt_version,
             model_version=model_version,
         )
-    except ValueError as exc:
+    except (ValueError, ValidationError) as exc:
         return MLflowExportDecision(
             payload=None,
             suppressed=True,

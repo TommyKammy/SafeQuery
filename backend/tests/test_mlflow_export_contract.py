@@ -395,3 +395,19 @@ def test_mlflow_export_suppresses_unsafe_evaluation_diagnostic() -> None:
     assert decision.suppressed is True
     assert decision.reasons == ("prohibited_pattern_detected:evaluation_diagnostic",)
     assert decision.evaluation_scenario_id == scenario.scenario_id
+
+
+def test_mlflow_export_suppresses_invalid_evaluation_contract_without_throwing() -> None:
+    scenario = list_mssql_evaluation_scenarios()[0]
+
+    decision = prepare_mlflow_export_from_evaluation_scenario(
+        scenario,
+        enabled=True,
+        retention_days=120,
+        authoritative_audit_retention_days=90,
+    )
+
+    assert decision.payload is None
+    assert decision.suppressed is True
+    assert decision.reasons == ("invalid_export_contract:ValidationError",)
+    assert decision.evaluation_scenario_id == scenario.scenario_id
