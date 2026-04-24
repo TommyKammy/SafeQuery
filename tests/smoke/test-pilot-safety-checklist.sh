@@ -54,13 +54,13 @@ for pattern in "${required_patterns[@]}"; do
   fi
 done
 
-if grep -Eq "postgresql.*approved follow-on|approved follow-on.*postgresql" "$checklist"; then
+if grep -Eqi "(postgresql.*approved[[:space:]]+follow-on|approved[[:space:]]+follow-on.*postgresql)" "$checklist"; then
   echo "$checklist must not describe PostgreSQL as follow-on for the 2-source core path" >&2
   exit 1
 fi
 
 dialect_matrix="docs/design/dialect-capability-matrix.md"
-if ! grep -Eq '^\| `postgresql` \|.*\| active baseline \|$' "$dialect_matrix"; then
+if ! grep -Eqi '^\| `postgresql` \|.*\| active baseline \|$' "$dialect_matrix"; then
   echo "$dialect_matrix must mark PostgreSQL as active baseline for the 2-source core path" >&2
   exit 1
 fi
