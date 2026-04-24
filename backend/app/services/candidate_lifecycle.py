@@ -289,11 +289,17 @@ def revalidate_candidate_lifecycle(
     current_execution_policy_version = CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
         source.source_family
     )
-    if (
-        current_execution_policy_version is not None
-        and candidate.source.execution_policy_version
-        != current_execution_policy_version
-    ):
+    if current_execution_policy_version is None:
+        _raise_revalidation_error(
+            deny_code=DENY_POLICY_VERSION_STALE,
+            message=(
+                "No backend-owned execution policy version is configured for "
+                f"source family '{source.source_family}'."
+            ),
+            candidate=candidate,
+            audit_context=audit_context,
+        )
+    if candidate.source.execution_policy_version != current_execution_policy_version:
         _raise_revalidation_error(
             deny_code=DENY_POLICY_VERSION_STALE,
             message=(
