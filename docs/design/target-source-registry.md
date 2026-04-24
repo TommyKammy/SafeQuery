@@ -95,3 +95,40 @@ If business PostgreSQL support is added, it must appear as an explicit business 
 - separate policy and dataset contract
 
 This prevents the application system of record from becoming a default execution target inadvertently.
+
+## Planned MySQL Source Profile
+
+MySQL onboarding must use the same registry boundary as the active MSSQL and
+business PostgreSQL baselines. A MySQL source is not executable until the
+registry contains an approved backend-owned source profile and the active
+runtime code has an approved connector, dialect, guard, audit, and evaluation
+profile for that source family.
+
+Minimum MySQL profile fields:
+
+- `source_id`
+- `source_family=mysql`
+- `source_flavor`, for example `mysql-8` or `aurora-mysql`
+- `dataset_contract_version`
+- `schema_snapshot_version`
+- `execution_policy_version`
+- `connector_profile_version`
+- `dialect_profile_version`
+- `activation_posture`
+- `connection_reference`
+
+The `connection_reference` must be a secret indirection such as
+`safequery/business/mysql/<source_id>/reader`. It must not contain raw
+credentials, placeholder credentials treated as valid, or client-supplied
+connection material. MySQL connection identity must include the backend-resolved
+host, port, database, username, and TLS posture so audit reconstruction can
+prove the execution target without exposing the secret value.
+
+The planned MySQL source profile must remain distinct from application
+PostgreSQL. MySQL connector profiles must not reuse application PostgreSQL
+credentials, service identities, endpoints, or migration settings.
+
+MySQL capability flags are advisory until activation. Runtime allow decisions
+must come from the authoritative registry record plus the approved connector and
+guard profiles, not from adapter hints, request metadata, source labels,
+connection string shape, or generated SQL.
