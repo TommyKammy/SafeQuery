@@ -53,7 +53,7 @@ class SourceFamilyProfileRequirements(BaseModel):
     backend_selected: bool
     adapter_inference_allowed: bool
     permitted_source_flavors: tuple[str, ...]
-    required_registry_fields: tuple[str, ...]
+    required_profile_contract_fields: tuple[str, ...]
     required_version_fields: tuple[str, ...]
     connector: ConnectorProfileRequirements
     dialect: DialectProfileRequirements
@@ -69,7 +69,7 @@ MYSQL_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
     backend_selected=True,
     adapter_inference_allowed=False,
     permitted_source_flavors=("mysql-8", "aurora-mysql"),
-    required_registry_fields=(
+    required_profile_contract_fields=(
         "source_id",
         "source_family",
         "source_flavor",

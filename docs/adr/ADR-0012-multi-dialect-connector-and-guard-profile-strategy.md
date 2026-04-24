@@ -91,6 +91,8 @@ for:
 - `execution_policy_version`
 - `connector_profile_version`
 - `dialect_profile_version`
+- `activation_posture`
+- `connection_reference`
 
 The adapter and client must not infer MySQL eligibility from a driver name,
 hostname, connection URL, request hint, source label, or generated SQL text.

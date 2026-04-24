@@ -27,6 +27,18 @@ def test_mysql_family_requirements_are_planned_and_backend_selected() -> None:
     assert requirements.backend_selected is True
     assert requirements.adapter_inference_allowed is False
     assert requirements.permitted_source_flavors == ("mysql-8", "aurora-mysql")
+    assert set(requirements.required_profile_contract_fields) == {
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "execution_policy_version",
+        "connector_profile_version",
+        "dialect_profile_version",
+        "activation_posture",
+        "connection_reference",
+    }
     assert set(requirements.required_version_fields) == {
         "dataset_contract_version",
         "schema_snapshot_version",
@@ -34,6 +46,9 @@ def test_mysql_family_requirements_are_planned_and_backend_selected() -> None:
         "connector_profile_version",
         "dialect_profile_version",
     }
+    assert set(requirements.required_version_fields).issubset(
+        requirements.required_profile_contract_fields
+    )
 
 
 def test_mysql_family_requirements_cover_connector_dialect_guard_and_audit() -> None:
@@ -84,8 +99,22 @@ def test_mysql_family_requirements_cover_connector_dialect_guard_and_audit() -> 
         "execution_policy_version",
         "connector_profile_version",
         "dialect_profile_version",
+        "guard_version",
         "primary_deny_code",
     }.issubset(set(requirements.audit_and_evaluation.reconstruction_fields))
+    assert {
+        "scenario_id",
+        "source.source_id",
+        "source.source_family",
+        "source.source_flavor",
+        "source.dialect_profile",
+        "source.dialect_profile_version",
+        "source.connector_profile_version",
+        "source.dataset_contract_version",
+        "source.schema_snapshot_version",
+        "source.execution_policy_version",
+        "expected.primary_code",
+    }.issubset(set(requirements.audit_and_evaluation.release_gate_fields))
     assert {
         "positive_readonly_selects",
         "row_bounding_regressions",
