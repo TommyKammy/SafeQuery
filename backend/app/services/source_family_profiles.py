@@ -92,7 +92,7 @@ MYSQL_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
         profile_id="mysql.readonly.planned.v1",
         owner="backend",
         read_only_posture="required",
-        secret_reference_pattern="safequery/business/mysql/<source_id>/reader",
+        secret_reference_pattern="safequery/business/mysql/<source_id>/reader",  # noqa: S106 - reference template, not a credential
         connection_identity_fields=(
             "host",
             "port",
