@@ -32,6 +32,20 @@ export type AnalystExecutedEvidence = {
   canAuthorizeExecution: false;
 };
 
+export type AnalystSourceSummary = {
+  sourceId: string;
+  sourceFamily: SourceFamily;
+  sourceFlavor: string | null;
+  datasetContractVersion: number;
+  schemaSnapshotVersion: number;
+  executionPolicyVersion: number | null;
+};
+
+export type AnalystOperatorHistoryHooks = {
+  auditEventId: string | null;
+  historyRecordIds: string[];
+};
+
 export type AnalystValidationOutcome = {
   status: "safe";
   checks: [
@@ -53,8 +67,10 @@ export type AnalystResponsePayload = {
   analystModeVersion: string;
   confidence: AnalystConfidence;
   caveats: string[];
+  sourceSummaries: AnalystSourceSummary[];
   retrievalCitations: AnalystRetrievalCitation[];
   executedEvidence: AnalystExecutedEvidence[];
+  operatorHistoryHooks: AnalystOperatorHistoryHooks;
   validationOutcome: AnalystValidationOutcome;
 };
 
@@ -100,12 +116,28 @@ function readExecutionAuditEventId(value: unknown): string | null {
   return eventId !== null && executionAuditEventIdPattern.test(eventId) ? eventId : null;
 }
 
+function readOptionalAuditEventId(value: unknown): string | null | undefined {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return readExecutionAuditEventId(value) ?? undefined;
+}
+
 function readSourceFamily(value: unknown): SourceFamily | null {
   return value === "mssql" || value === "postgresql" ? value : null;
 }
 
 function readPositiveInteger(value: unknown): number | null {
   return Number.isInteger(value) && typeof value === "number" && value > 0 ? value : null;
+}
+
+function readOptionalPositiveInteger(value: unknown): number | null | undefined {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return readPositiveInteger(value) ?? undefined;
 }
 
 function readNonNegativeInteger(value: unknown): number | null {
@@ -131,6 +163,48 @@ function parseCaveats(value: unknown): string[] | null {
 
   const caveats = value.map(readRequiredString);
   return caveats.every((item): item is string => item !== null) ? caveats : null;
+}
+
+function parseStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const parsed = value.map(readRequiredString);
+  return parsed.every((item): item is string => item !== null) ? parsed : null;
+}
+
+function parseSourceSummary(value: unknown): AnalystSourceSummary | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const sourceId = readSourceToken(value.sourceId);
+  const sourceFamily = readSourceFamily(value.sourceFamily);
+  const sourceFlavor = readOptionalSourceToken(value.sourceFlavor);
+  const datasetContractVersion = readPositiveInteger(value.datasetContractVersion);
+  const schemaSnapshotVersion = readPositiveInteger(value.schemaSnapshotVersion);
+  const executionPolicyVersion = readOptionalPositiveInteger(value.executionPolicyVersion);
+
+  if (
+    !sourceId ||
+    !sourceFamily ||
+    sourceFlavor === undefined ||
+    !datasetContractVersion ||
+    !schemaSnapshotVersion ||
+    executionPolicyVersion === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    sourceId,
+    sourceFamily,
+    sourceFlavor,
+    datasetContractVersion,
+    schemaSnapshotVersion,
+    executionPolicyVersion
+  };
 }
 
 function parseRetrievalCitation(value: unknown): AnalystRetrievalCitation | null {
@@ -186,8 +260,8 @@ function parseExecutedEvidence(value: unknown): AnalystExecutedEvidence | null {
   const sourceFlavor = readOptionalSourceToken(value.sourceFlavor);
   const datasetContractVersion = readPositiveInteger(value.datasetContractVersion);
   const schemaSnapshotVersion = readPositiveInteger(value.schemaSnapshotVersion);
-  const executionPolicyVersion = readPositiveInteger(value.executionPolicyVersion);
-  const connectorProfileVersion = readPositiveInteger(value.connectorProfileVersion);
+  const executionPolicyVersion = readOptionalPositiveInteger(value.executionPolicyVersion);
+  const connectorProfileVersion = readOptionalPositiveInteger(value.connectorProfileVersion);
   const candidateId = readRequiredString(value.candidateId);
   const executionAuditEventId = readExecutionAuditEventId(value.executionAuditEventId);
   const rowCount = readNonNegativeInteger(value.rowCount);
@@ -199,6 +273,8 @@ function parseExecutedEvidence(value: unknown): AnalystExecutedEvidence | null {
     sourceFlavor === undefined ||
     !datasetContractVersion ||
     !schemaSnapshotVersion ||
+    executionPolicyVersion === undefined ||
+    connectorProfileVersion === undefined ||
     !candidateId ||
     !executionAuditEventId ||
     value.executionAuditEventType !== "execution_completed" ||
@@ -242,6 +318,31 @@ function parseArray<T>(value: unknown, parser: (item: unknown) => T | null): T[]
   return parsed.every((item): item is T => item !== null) ? parsed : null;
 }
 
+function parseOperatorHistoryHooks(value: unknown): AnalystOperatorHistoryHooks | null {
+  if (value === undefined) {
+    return {
+      auditEventId: null,
+      historyRecordIds: []
+    };
+  }
+
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const auditEventId = readOptionalAuditEventId(value.auditEventId);
+  const historyRecordIds = parseStringArray(value.historyRecordIds);
+
+  if (auditEventId === undefined || historyRecordIds === null) {
+    return null;
+  }
+
+  return {
+    auditEventId,
+    historyRecordIds
+  };
+}
+
 function sourceKey(item: AnalystRetrievalCitation | AnalystExecutedEvidence): string {
   return `${item.sourceFamily}:${item.sourceId}`;
 }
@@ -268,7 +369,7 @@ function validateNarrativeAuthority(
   return true;
 }
 
-function validationOutcome(): AnalystValidationOutcome {
+function defaultValidationOutcome(): AnalystValidationOutcome {
   return {
     status: "safe",
     checks: [
@@ -279,6 +380,42 @@ function validationOutcome(): AnalystValidationOutcome {
       "narrative_cross_source_execution"
     ],
     unsafeReasons: []
+  };
+}
+
+function parseValidationOutcome(value: unknown): AnalystValidationOutcome | null {
+  if (value === undefined) {
+    return defaultValidationOutcome();
+  }
+
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const expectedChecks: AnalystValidationOutcome["checks"] = [
+    "source_labeled_evidence_present",
+    "source_summary_coverage",
+    "narrative_execution_authority",
+    "narrative_execution_grounding",
+    "narrative_cross_source_execution"
+  ];
+  const checks = Array.isArray(value.checks) ? value.checks : null;
+  const unsafeReasons = parseStringArray(value.unsafeReasons);
+
+  if (
+    value.status !== "safe" ||
+    checks === null ||
+    checks.length !== expectedChecks.length ||
+    !expectedChecks.every((check, index) => checks[index] === check) ||
+    unsafeReasons === null
+  ) {
+    return null;
+  }
+
+  return {
+    status: "safe",
+    checks: expectedChecks,
+    unsafeReasons
   };
 }
 
@@ -293,8 +430,11 @@ export function parseAnalystResponsePayload(value: unknown): AnalystResponsePayl
   const analystModeVersion = readRequiredString(value.analystModeVersion);
   const confidence = readConfidence(value.confidence ?? "unknown");
   const caveats = parseCaveats(value.caveats);
+  const sourceSummaries = parseArray(value.sourceSummaries, parseSourceSummary);
   const retrievalCitations = parseArray(value.retrievalCitations, parseRetrievalCitation);
   const executedEvidence = parseArray(value.executedEvidence, parseExecutedEvidence);
+  const operatorHistoryHooks = parseOperatorHistoryHooks(value.operatorHistoryHooks);
+  const validationOutcome = parseValidationOutcome(value.validationOutcome);
 
   if (
     !responseId ||
@@ -305,8 +445,11 @@ export function parseAnalystResponsePayload(value: unknown): AnalystResponsePayl
     !analystModeVersion ||
     !confidence ||
     caveats === null ||
+    sourceSummaries === null ||
     retrievalCitations === null ||
     executedEvidence === null ||
+    operatorHistoryHooks === null ||
+    validationOutcome === null ||
     (retrievalCitations.length === 0 && executedEvidence.length === 0) ||
     !validateNarrativeAuthority(narrative, retrievalCitations, executedEvidence)
   ) {
@@ -322,8 +465,10 @@ export function parseAnalystResponsePayload(value: unknown): AnalystResponsePayl
     analystModeVersion,
     confidence,
     caveats,
+    sourceSummaries,
     retrievalCitations,
     executedEvidence,
-    validationOutcome: validationOutcome()
+    operatorHistoryHooks,
+    validationOutcome
   };
 }
