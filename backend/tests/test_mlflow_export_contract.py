@@ -461,7 +461,9 @@ def test_mlflow_export_preserves_safe_redacted_samples_and_source_metadata() -> 
                 value="SELECT vendor_name FROM approved_vendor_spend LIMIT 10",
                 source_metadata={
                     "source_id": audit_event.source_id,
+                    "scenario_id": "scenario-123",
                     "schema_snapshot_version": audit_event.schema_snapshot_version,
+                    "dataset_contract_version": audit_event.dataset_contract_version,
                     "column_count": 1,
                 },
             ),
@@ -475,10 +477,38 @@ def test_mlflow_export_preserves_safe_redacted_samples_and_source_metadata() -> 
         "value": "SELECT vendor_name FROM approved_vendor_spend LIMIT 10",
         "source_metadata": {
             "source_id": "business-mssql-source",
+            "scenario_id": "scenario-123",
             "schema_snapshot_version": 7,
+            "dataset_contract_version": 3,
             "column_count": 1,
         },
     }
+
+
+@pytest.mark.parametrize(
+    "source_metadata",
+    [
+        {"connection_string": "Server=warehouse;Password=sample"},
+        {"identity_claims": {"subject": "user:alice"}},
+        {"credentials": {"api_key": "sample-key"}},
+        {"query": {"canonical_sql": "SELECT * FROM payroll"}},
+        {"control_plane": {"candidate_lifecycle_state": "approved"}},
+    ],
+)
+def test_mlflow_redacted_sample_rejects_prohibited_source_metadata(
+    source_metadata: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        MLflowRedactedSample(
+            source_field="sql_snippet",
+            redaction_profile="sql_snippet_v1",
+            value="SELECT vendor_name FROM approved_vendor_spend LIMIT 10",
+            source_metadata=source_metadata,
+        )
+
+    assert "MLflow redacted sample metadata includes prohibited field(s):" in str(
+        exc_info.value
+    )
 
 
 @pytest.mark.parametrize(
@@ -539,6 +569,30 @@ def test_mlflow_export_suppresses_unredacted_sample_without_blocking_audit() -> 
     assert decision.request_id == audit_event.request_id
 
 
+def test_mlflow_export_suppresses_unsafe_sample_metadata_without_blocking_audit() -> None:
+    audit_event = _execution_audit_event()
+    sample = MLflowRedactedSample.model_construct(
+        source_field="sql_snippet",
+        redaction_profile="sql_snippet_v1",
+        value="SELECT vendor_name FROM approved_vendor_spend LIMIT 10",
+        source_metadata={"metadata": {"connection_string": "Server=warehouse"}},
+    )
+
+    decision = prepare_mlflow_export_from_audit_event(
+        audit_event,
+        enabled=True,
+        redacted_samples=(sample,),
+    )
+
+    assert decision.payload is None
+    assert decision.suppressed is True
+    assert decision.reasons == (
+        "prohibited_metadata_field_detected:sql_snippet:connection_string",
+    )
+    assert decision.safequery_audit_event_id == audit_event.event_id
+    assert decision.request_id == audit_event.request_id
+
+
 def test_mlflow_export_suppresses_unsafe_evaluation_diagnostic() -> None:
     scenario = list_mssql_evaluation_scenarios()[0]
 
@@ -558,6 +612,30 @@ def test_mlflow_export_suppresses_unsafe_evaluation_diagnostic() -> None:
     assert decision.payload is None
     assert decision.suppressed is True
     assert decision.reasons == ("prohibited_pattern_detected:evaluation_diagnostic",)
+    assert decision.evaluation_scenario_id == scenario.scenario_id
+
+
+def test_mlflow_export_suppresses_unsafe_evaluation_metadata() -> None:
+    scenario = list_mssql_evaluation_scenarios()[0]
+    sample = MLflowRedactedSample.model_construct(
+        source_field="evaluation_diagnostic",
+        redaction_profile="evaluation_diagnostic_v1",
+        value="evaluation completed without unsafe sample text",
+        source_metadata={"control_plane": {"release_gate_status": "passed"}},
+    )
+
+    decision = prepare_mlflow_export_from_evaluation_scenario(
+        scenario,
+        enabled=True,
+        redacted_samples=(sample,),
+    )
+
+    assert decision.payload is None
+    assert decision.suppressed is True
+    assert decision.reasons == (
+        "prohibited_metadata_field_detected:"
+        "evaluation_diagnostic:release_gate_status",
+    )
     assert decision.evaluation_scenario_id == scenario.scenario_id
 
 
