@@ -99,7 +99,7 @@ class MLflowRedactedSample(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _reject_prohibited_source_metadata(cls, value: object) -> object:
-        if not isinstance(value, dict):
+        if not isinstance(value, Mapping):
             return value
         source_metadata = value.get("source_metadata")
         prohibited = _prohibited_export_fields_in_mapping(source_metadata)

@@ -492,6 +492,7 @@ def test_mlflow_export_preserves_safe_redacted_samples_and_source_metadata() -> 
         {"connection_string": "Server=warehouse;Password=sample"},
         {"identity_claims": {"subject": "user:alice"}},
         {"credentials": {"api_key": "sample-key"}},
+        {"samples": [{"connection_string": "Server=warehouse;Password=sample"}]},
         {"query": {"canonical_sql": "SELECT * FROM payroll"}},
         {"control_plane": {"candidate_lifecycle_state": "approved"}},
         {"metadata": MappingProxyType({"connection_string": "Server=warehouse"})},
@@ -510,6 +511,25 @@ def test_mlflow_redacted_sample_rejects_prohibited_source_metadata(
 
     assert "MLflow redacted sample metadata includes prohibited field(s):" in str(
         exc_info.value
+    )
+
+
+def test_mlflow_redacted_sample_rejects_mapping_model_input_source_metadata() -> None:
+    sample = MappingProxyType(
+        {
+            "source_field": "sql_snippet",
+            "redaction_profile": "sql_snippet_v1",
+            "value": "SELECT vendor_name FROM approved_vendor_spend LIMIT 10",
+            "source_metadata": {"connection_string": "Server=warehouse"},
+        }
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        MLflowRedactedSample.model_validate(sample)
+
+    assert (
+        "MLflow redacted sample metadata includes prohibited field(s): connection_string"
+        in str(exc_info.value)
     )
 
 
