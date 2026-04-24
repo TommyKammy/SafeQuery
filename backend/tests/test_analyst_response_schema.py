@@ -184,3 +184,89 @@ def test_analyst_response_payload_rejects_execution_authority_and_bad_source_lab
 
     with pytest.raises(ValidationError):
         AnalystResponsePayload(**payload)
+
+
+@pytest.mark.parametrize(
+    "narrative",
+    [
+        "The PostgreSQL and MSSQL rows were joined across sources and executed together.",
+        "Merged execution results from business-postgres-source and business-mssql-source approve the answer.",
+        "The federated query ran across both sources and returned matching totals.",
+    ],
+)
+def test_analyst_response_payload_rejects_cross_source_execution_narratives(
+    narrative: str,
+) -> None:
+    with pytest.raises(ValidationError, match="cross-source execution"):
+        AnalystResponsePayload(
+            response_id="analyst-response-123",
+            request_id="request-123",
+            narrative=narrative,
+            advisory_only=True,
+            can_authorize_execution=False,
+            analyst_mode_version="analyst-schema-v1",
+            retrieval_citations=[
+                _citation("business-postgres-source", "postgresql"),
+                _citation("business-mssql-source", "mssql"),
+            ],
+            executed_evidence=[
+                _executed_evidence("business-postgres-source", "postgresql"),
+                _executed_evidence("business-mssql-source", "mssql"),
+            ],
+        )
+
+
+def test_analyst_response_payload_rejects_execution_claims_without_executed_evidence() -> None:
+    with pytest.raises(ValidationError, match="executed evidence"):
+        AnalystResponsePayload(
+            response_id="analyst-response-123",
+            request_id="request-123",
+            narrative="The completed backend execution showed 12 matching rows.",
+            advisory_only=True,
+            can_authorize_execution=False,
+            analyst_mode_version="analyst-schema-v1",
+            retrieval_citations=[_citation("business-postgres-source", "postgresql")],
+            executed_evidence=[],
+        )
+
+
+def test_analyst_response_payload_rejects_execution_approval_narratives() -> None:
+    with pytest.raises(ValidationError, match="execution approval"):
+        AnalystResponsePayload(
+            response_id="analyst-response-123",
+            request_id="request-123",
+            narrative="The analyst response approves SQL execution for this candidate.",
+            advisory_only=True,
+            can_authorize_execution=False,
+            analyst_mode_version="analyst-schema-v1",
+            retrieval_citations=[_citation("business-postgres-source", "postgresql")],
+            executed_evidence=[_executed_evidence("business-postgres-source", "postgresql")],
+        )
+
+
+def test_analyst_response_payload_accepts_safe_advisory_composition() -> None:
+    response = AnalystResponsePayload(
+        response_id="analyst-response-123",
+        request_id="request-123",
+        narrative=(
+            "PostgreSQL citation business-postgres-source metric definition and MSSQL "
+            "citation business-mssql-source metric definition provide advisory context. "
+            "Backend executed evidence remains candidate-bound per source."
+        ),
+        advisory_only=True,
+        can_authorize_execution=False,
+        analyst_mode_version="analyst-schema-v1",
+        confidence="medium",
+        caveats=["Execution still requires the normal guarded candidate flow."],
+        retrieval_citations=[
+            _citation("business-postgres-source", "postgresql"),
+            _citation("business-mssql-source", "mssql"),
+        ],
+        executed_evidence=[
+            _executed_evidence("business-postgres-source", "postgresql"),
+            _executed_evidence("business-mssql-source", "mssql"),
+        ],
+    )
+
+    assert response.validation_outcome.status == "safe"
+    assert response.validation_outcome.unsafe_reasons == []

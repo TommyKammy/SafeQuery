@@ -32,6 +32,18 @@ export type AnalystExecutedEvidence = {
   canAuthorizeExecution: false;
 };
 
+export type AnalystValidationOutcome = {
+  status: "safe";
+  checks: [
+    "source_labeled_evidence_present",
+    "source_summary_coverage",
+    "narrative_execution_authority",
+    "narrative_execution_grounding",
+    "narrative_cross_source_execution"
+  ];
+  unsafeReasons: string[];
+};
+
 export type AnalystResponsePayload = {
   responseId: string;
   requestId: string;
@@ -43,6 +55,7 @@ export type AnalystResponsePayload = {
   caveats: string[];
   retrievalCitations: AnalystRetrievalCitation[];
   executedEvidence: AnalystExecutedEvidence[];
+  validationOutcome: AnalystValidationOutcome;
 };
 
 type RawObject = Record<string, unknown>;
@@ -50,6 +63,12 @@ type RawObject = Record<string, unknown>;
 const sourceTokenPattern = /^[a-z0-9][a-z0-9._-]*$/;
 const executionAuditEventIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const executionApprovalPattern =
+  /\b(approv(?:e|es|ed|ing)\s+(?:sql\s+)?execution|execution\s+(?:is\s+)?approv(?:e|ed)|authori[sz](?:e|es|ed|ing)\s+(?:sql\s+)?execution|execution\s+(?:is\s+)?authori[sz](?:e|ed)|safe\s+to\s+(?:execute|run)|can\s+(?:execute|run)\s+(?:this\s+)?(?:sql|query|candidate))\b/i;
+const executionClaimPattern =
+  /\b(backend\s+execution\s+(?:show(?:s|ed)?|returned|produced)|completed\s+backend\s+execution|execut(?:e|ed|ion)\s+(?:result|evidence)\s+(?:show(?:s|ed)?|returned|produced)|(?:query|candidate)\s+(?:ran|executed)\b|rows?\s+(?:were\s+)?returned)/i;
+const crossSourceExecutionPattern =
+  /\b(cross[- ]source\s+(?:execution|query|join)|federated\s+(?:execution|query)|(?:joined|merged|combined)\s+(?:across\s+sources|execution\s+results)|executed\s+together|ran\s+across\s+(?:both|multiple)\s+sources)\b/i;
 
 function isObject(value: unknown): value is RawObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -223,6 +242,46 @@ function parseArray<T>(value: unknown, parser: (item: unknown) => T | null): T[]
   return parsed.every((item): item is T => item !== null) ? parsed : null;
 }
 
+function sourceKey(item: AnalystRetrievalCitation | AnalystExecutedEvidence): string {
+  return `${item.sourceFamily}:${item.sourceId}`;
+}
+
+function validateNarrativeAuthority(
+  narrative: string,
+  retrievalCitations: AnalystRetrievalCitation[],
+  executedEvidence: AnalystExecutedEvidence[]
+): boolean {
+  const sourceCount = new Set([...retrievalCitations, ...executedEvidence].map(sourceKey)).size;
+
+  if (sourceCount > 1 && crossSourceExecutionPattern.test(narrative)) {
+    return false;
+  }
+
+  if (executionApprovalPattern.test(narrative)) {
+    return false;
+  }
+
+  if (executedEvidence.length === 0 && executionClaimPattern.test(narrative)) {
+    return false;
+  }
+
+  return true;
+}
+
+function validationOutcome(): AnalystValidationOutcome {
+  return {
+    status: "safe",
+    checks: [
+      "source_labeled_evidence_present",
+      "source_summary_coverage",
+      "narrative_execution_authority",
+      "narrative_execution_grounding",
+      "narrative_cross_source_execution"
+    ],
+    unsafeReasons: []
+  };
+}
+
 export function parseAnalystResponsePayload(value: unknown): AnalystResponsePayload | null {
   if (!isObject(value)) {
     return null;
@@ -248,7 +307,8 @@ export function parseAnalystResponsePayload(value: unknown): AnalystResponsePayl
     caveats === null ||
     retrievalCitations === null ||
     executedEvidence === null ||
-    (retrievalCitations.length === 0 && executedEvidence.length === 0)
+    (retrievalCitations.length === 0 && executedEvidence.length === 0) ||
+    !validateNarrativeAuthority(narrative, retrievalCitations, executedEvidence)
   ) {
     return null;
   }
@@ -263,6 +323,7 @@ export function parseAnalystResponsePayload(value: unknown): AnalystResponsePayl
     confidence,
     caveats,
     retrievalCitations,
-    executedEvidence
+    executedEvidence,
+    validationOutcome: validationOutcome()
   };
 }
