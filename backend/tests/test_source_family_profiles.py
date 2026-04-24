@@ -16,6 +16,7 @@ from app.services.source_family_profiles import (
     AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS,
     MARIADB_FAMILY_PROFILE_REQUIREMENTS,
     MYSQL_FAMILY_PROFILE_REQUIREMENTS,
+    ORACLE_FAMILY_PROFILE_REQUIREMENTS,
     get_planned_source_flavor_profile_requirements,
     get_planned_source_family_profile_requirements,
 )
@@ -68,6 +69,33 @@ def test_mariadb_profile_is_planned_mysql_delta_and_backend_selected() -> None:
     assert requirements.shared_profile_basis == "mysql.family.planned.v1"
     assert "mariadb-mode canonicalization must be explicit" in requirements.profile_deltas
     assert "sql_mode and version-specific parser drift" in requirements.profile_deltas
+
+
+def test_oracle_family_requirements_are_long_range_planned_and_backend_selected() -> None:
+    requirements = get_planned_source_family_profile_requirements(" Oracle ")
+
+    assert requirements == ORACLE_FAMILY_PROFILE_REQUIREMENTS
+    assert requirements.source_family == "oracle"
+    assert requirements.rollout_status == "planned"
+    assert requirements.execution_enabled_by_default is False
+    assert requirements.backend_selected is True
+    assert requirements.adapter_inference_allowed is False
+    assert requirements.permitted_source_flavors == ("oracle-19c", "oracle-23ai")
+    assert set(requirements.required_profile_contract_fields) == {
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "execution_policy_version",
+        "connector_profile_version",
+        "dialect_profile_version",
+        "activation_posture",
+        "connection_reference",
+    }
+    assert set(requirements.required_version_fields).issubset(
+        requirements.required_profile_contract_fields
+    )
 
 
 def test_aurora_flavors_are_backend_selected_family_flavors() -> None:
@@ -288,6 +316,68 @@ def test_mariadb_delta_requirements_cover_shared_and_specific_boundaries() -> No
     }.issubset(set(requirements.audit_and_evaluation.evaluation_corpus_requirements))
 
 
+def test_oracle_requirements_cover_connector_dialect_guard_and_audit() -> None:
+    requirements = ORACLE_FAMILY_PROFILE_REQUIREMENTS
+
+    assert requirements.connector.model_dump() == {
+        "profile_id": "oracle.readonly.long-range.v1",
+        "owner": "backend",
+        "read_only_posture": "required",
+        "secret_reference_pattern": "safequery/business/oracle/<source_id>/reader",
+        "connection_identity_fields": (
+            "connect_descriptor",
+            "service_name",
+            "username",
+            "wallet_reference",
+            "tls_mode",
+        ),
+        "required_controls": (
+            "connect_timeout_seconds",
+            "statement_timeout_seconds",
+            "cancellation_probe",
+        ),
+        "application_postgres_separation": (
+            "oracle business source credentials and endpoints must be distinct from "
+            "the application PostgreSQL system of record"
+        ),
+    }
+    assert requirements.dialect.profile_id == "oracle.family.long-range.v1"
+    assert "oracle_identifier_normalization" in (
+        requirements.dialect.canonicalization_requirements
+    )
+    assert "quoted_identifier_case_preservation" in (
+        requirements.dialect.canonicalization_requirements
+    )
+    assert requirements.dialect.read_only_statement_allowlist == ("SELECT", "WITH_SELECT")
+    assert {
+        "multi_statement",
+        "write_operation",
+        "procedure_execution",
+        "dynamic_sql",
+        "external_data_access",
+        "system_catalog_access",
+        "database_link_access",
+        "session_or_package_state_mutation",
+        "unbounded_or_unsafe_fetch",
+        "unsupported_sql_syntax",
+    }.issubset(set(requirements.dialect.fail_closed_denies))
+    assert {
+        "source_family",
+        "source_flavor",
+        "connector_profile_version",
+        "dialect_profile_version",
+        "guard_version",
+        "primary_deny_code",
+    }.issubset(set(requirements.audit_and_evaluation.reconstruction_fields))
+    assert {
+        "guard_deny_corpus",
+        "oracle_identifier_and_quoting_regressions",
+        "oracle_row_bounding_regressions",
+        "connector_timeout_and_cancellation",
+        "release_gate_reconstruction",
+    }.issubset(set(requirements.audit_and_evaluation.evaluation_corpus_requirements))
+
+
 def test_planned_mysql_profile_does_not_enable_active_execution_paths() -> None:
     assert ACTIVE_SOURCE_FAMILIES == ("mssql", "postgresql")
     assert "mysql" not in DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY
@@ -324,6 +414,28 @@ def test_planned_mariadb_profile_does_not_enable_active_execution_paths() -> Non
                 source_id="future-mariadb-source",
                 source_family="mariadb",
                 source_flavor="mariadb-approved",
+                dataset_contract_version=1,
+                schema_snapshot_version=1,
+            )
+        )
+
+    assert exc_info.value.deny_code == DENY_UNSUPPORTED_SOURCE_BINDING
+
+
+def test_long_range_oracle_profile_does_not_enable_active_execution_paths() -> None:
+    assert ACTIVE_SOURCE_FAMILIES == ("mssql", "postgresql")
+    assert "oracle" not in DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY
+    assert "oracle" not in DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY
+
+    with pytest.raises(
+        ExecutionConnectorSelectionError,
+        match="No backend-owned execution connector is registered",
+    ) as exc_info:
+        select_execution_connector(
+            candidate_source=SourceBoundCandidateMetadata(
+                source_id="future-oracle-source",
+                source_family="oracle",
+                source_flavor="oracle-19c",
                 dataset_contract_version=1,
                 schema_snapshot_version=1,
             )

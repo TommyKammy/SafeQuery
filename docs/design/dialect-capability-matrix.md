@@ -18,7 +18,7 @@ It is a planning and review aid for connector, guard, and evaluation work.
 | `mariadb` | planned MySQL-delta profile, backend-selected from source registry only | MySQL-family baseline plus explicit MariaDB mode and version drift canonicalization | separate MariaDB delta fail-closed guard profile; no silent MySQL guard reuse | one policy-bounded `LIMIT`; `OFFSET` only with explicit bounded `LIMIT` after MariaDB delta review | connect timeout, statement timeout, and cancellation probe required | planned read-only MariaDB backend connector profile with secret indirection | MySQL-overlap scenarios plus MariaDB delta deny, row-bounding, timeout, cancellation, and release-gate reconstruction corpus required before activation | planned metadata only |
 | `aurora-postgresql` | inherits PostgreSQL generation posture; registry keeps `source_family=postgresql` and `source_flavor=aurora-postgresql` | inherits PostgreSQL canonicalization and identifier rules | inherits PostgreSQL fail-closed guard and deny corpus | inherits PostgreSQL bounded canonical SQL behavior | connect timeout, statement timeout, and cancellation probe must be reverified for Aurora PostgreSQL | planned Aurora PostgreSQL read-only connector profile with cluster endpoint, engine version, TLS posture, and secret indirection | PostgreSQL suite plus Aurora PostgreSQL flavor, timeout, cancellation, and release-gate reconstruction regressions | planned flavor |
 | `aurora-mysql` | inherits planned MySQL generation posture; registry keeps `source_family=mysql` and `source_flavor=aurora-mysql` | inherits MySQL canonicalization and identifier rules | inherits planned MySQL fail-closed guard and deny corpus | inherits one policy-bounded `LIMIT`; `OFFSET` only with explicit bounded `LIMIT` | connect timeout, statement timeout, and cancellation probe must be reverified for Aurora MySQL | planned Aurora MySQL read-only connector profile with cluster endpoint, engine version, TLS posture, and secret indirection | MySQL suite plus Aurora MySQL flavor, timeout, cancellation, and release-gate reconstruction regressions before activation | planned flavor |
-| `oracle` | Oracle-focused generation profile | Oracle-specific canonicalization | Oracle fail-closed guard profile | to be defined by profile approval | to be defined by profile approval | future connector profile | future onboarding corpus required | long-range planned |
+| `oracle` | Oracle family profile, backend-selected from source registry only | Oracle-aware single-statement canonicalization with explicit quoted identifier case handling | Oracle family fail-closed guard profile with PL/SQL, database link, package, and session mutation denies | one approved policy-bounded `FETCH FIRST` or `ROWNUM` shape before guard, preview, and execution | connect timeout, statement timeout, and cancellation probe required before activation | long-range read-only Oracle backend connector profile with secret indirection, connect descriptor, service name, wallet reference, and TLS posture | positive, deny, identifier and quoting, row-bounding, timeout, cancellation, and release-gate reconstruction corpus required before activation | long-range planned metadata only |
 
 ## Usage Notes
 
@@ -39,3 +39,11 @@ It is a planning and review aid for connector, guard, and evaluation work.
   `source_flavor=aurora-postgresql`, or `source_family=mysql` plus
   `source_flavor=aurora-mysql`; they must not become top-level families or
   client-supplied adapter hints.
+- Oracle is long-range planned metadata only. Oracle support must remain
+  inactive until backend-owned source registry records, connector profile,
+  dialect profile, guard deny corpus, audit and operator-history mapping,
+  entitlement checks, candidate lifecycle revalidation, and release-gate
+  reconstruction are approved together.
+- Oracle execution must not be inferred from adapter hints, client-supplied
+  metadata, analyst artifacts, MLflow traces, driver names, connection
+  descriptors, hostnames, labels, or generated SQL text.

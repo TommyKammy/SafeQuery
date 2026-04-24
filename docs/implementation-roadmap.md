@@ -79,6 +79,9 @@ After the two-source core path is stable:
 1. onboard `mysql`
 2. evaluate `mariadb` as a sibling or delta profile
 3. add Aurora as source flavors on top of PostgreSQL or MySQL families
-4. onboard `oracle` last
+4. define `oracle` as long-range planned metadata only, then onboard it last
+   after Oracle-specific connector, dialect, guard, audit, entitlement,
+   candidate lifecycle, operator-history, and release-gate reconstruction
+   requirements are approved together
 
 Each later family must be added through source-registry onboarding plus connector, guard, and evaluation profile work rather than through a trusted-control-plane redesign.

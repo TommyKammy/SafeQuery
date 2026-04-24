@@ -337,6 +337,141 @@ MARIADB_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
 )
 
 
+ORACLE_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
+    source_family="oracle",
+    rollout_status="planned",
+    execution_enabled_by_default=False,
+    backend_selected=True,
+    adapter_inference_allowed=False,
+    profile_classification="family_baseline",
+    shared_profile_basis=None,
+    profile_deltas=(
+        "oracle connector identity and wallet references must be backend-owned",
+        "Oracle identifier case and quoted-name behavior must be explicit",
+        "ROWNUM, FETCH FIRST, and analytic pagination behavior must be reviewed",
+        "database links, packages, PL/SQL blocks, and session mutation must deny closed",
+        "release-gate corpus must remain separate until Oracle activation approval",
+    ),
+    permitted_source_flavors=("oracle-19c", "oracle-23ai"),
+    required_profile_contract_fields=(
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "execution_policy_version",
+        "connector_profile_version",
+        "dialect_profile_version",
+        "activation_posture",
+        "connection_reference",
+    ),
+    required_version_fields=(
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "execution_policy_version",
+        "connector_profile_version",
+        "dialect_profile_version",
+    ),
+    connector=ConnectorProfileRequirements(
+        profile_id="oracle.readonly.long-range.v1",
+        owner="backend",
+        read_only_posture="required",
+        secret_reference_pattern="safequery/business/oracle/<source_id>/reader",  # noqa: S106 - reference template, not a credential
+        connection_identity_fields=(
+            "connect_descriptor",
+            "service_name",
+            "username",
+            "wallet_reference",
+            "tls_mode",
+        ),
+        required_controls=(
+            "connect_timeout_seconds",
+            "statement_timeout_seconds",
+            "cancellation_probe",
+        ),
+        application_postgres_separation=(
+            "oracle business source credentials and endpoints must be distinct from "
+            "the application PostgreSQL system of record"
+        ),
+    ),
+    dialect=DialectProfileRequirements(
+        profile_id="oracle.family.long-range.v1",
+        canonicalization_requirements=(
+            "single_statement_select_shape",
+            "oracle_identifier_normalization",
+            "quoted_identifier_case_preservation",
+            "literal_preservation_before_guard",
+            "schema_qualified_identifier_normalization",
+            "database_link_reference_rejection",
+        ),
+        identifier_quoting=(
+            "Oracle double-quoted identifiers only when required; preserve case-sensitive "
+            "quoted names and reject ambiguous unquoted identifier assumptions"
+        ),
+        row_bounding_strategy=(
+            "approve one canonical FETCH FIRST or ROWNUM-bounded shape before guard, "
+            "preview, and execution"
+        ),
+        limit_behavior=(
+            "canonical SQL must have one effective policy-bounded row limit; Oracle "
+            "pagination rewrites must not change guard, preview, and execute SQL"
+        ),
+        read_only_statement_allowlist=("SELECT", "WITH_SELECT"),
+        fail_closed_denies=(
+            "multi_statement",
+            "write_operation",
+            "procedure_execution",
+            "dynamic_sql",
+            "external_data_access",
+            "system_catalog_access",
+            "database_link_access",
+            "session_or_package_state_mutation",
+            "unbounded_or_unsafe_fetch",
+            "unsupported_sql_syntax",
+        ),
+    ),
+    audit_and_evaluation=AuditAndEvaluationRequirements(
+        reconstruction_fields=(
+            "source_id",
+            "source_family",
+            "source_flavor",
+            "dataset_contract_version",
+            "schema_snapshot_version",
+            "execution_policy_version",
+            "connector_profile_version",
+            "dialect_profile_version",
+            "guard_version",
+            "primary_deny_code",
+        ),
+        preview_events=("query_submitted", "generation_completed"),
+        guard_events=("guard_evaluated",),
+        execution_events=("execution_requested", "execution_started", "execution_completed"),
+        denial_events=("execution_denied", "candidate_invalidated"),
+        release_gate_fields=(
+            "scenario_id",
+            "source.source_id",
+            "source.source_family",
+            "source.source_flavor",
+            "source.dialect_profile",
+            "source.dialect_profile_version",
+            "source.connector_profile_version",
+            "source.dataset_contract_version",
+            "source.schema_snapshot_version",
+            "source.execution_policy_version",
+            "expected.primary_code",
+        ),
+        evaluation_corpus_requirements=(
+            "positive_readonly_selects",
+            "guard_deny_corpus",
+            "oracle_identifier_and_quoting_regressions",
+            "oracle_row_bounding_regressions",
+            "connector_timeout_and_cancellation",
+            "release_gate_reconstruction",
+        ),
+    ),
+)
+
+
 AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
     source_family="postgresql",
     source_flavor="aurora-postgresql",
@@ -573,7 +708,11 @@ AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
 
 PLANNED_SOURCE_FAMILY_PROFILE_REQUIREMENTS: tuple[
     SourceFamilyProfileRequirements, ...
-] = (MYSQL_FAMILY_PROFILE_REQUIREMENTS, MARIADB_FAMILY_PROFILE_REQUIREMENTS)
+] = (
+    MYSQL_FAMILY_PROFILE_REQUIREMENTS,
+    MARIADB_FAMILY_PROFILE_REQUIREMENTS,
+    ORACLE_FAMILY_PROFILE_REQUIREMENTS,
+)
 
 PLANNED_SOURCE_FLAVOR_PROFILE_REQUIREMENTS: tuple[
     SourceFlavorProfileRequirements, ...
