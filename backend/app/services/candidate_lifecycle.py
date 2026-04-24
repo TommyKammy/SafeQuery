@@ -28,6 +28,12 @@ from app.services.source_governance import (
 from app.services.source_registry import SourceRegistryPostureError
 
 
+CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY = {
+    "mssql": 2,
+    "postgresql": 3,
+}
+
+
 class SourceBoundCandidateMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -126,6 +132,8 @@ def _build_revalidation_audit_event(
         source_flavor=candidate.source.source_flavor,
         dataset_contract_version=candidate.source.dataset_contract_version,
         schema_snapshot_version=candidate.source.schema_snapshot_version,
+        execution_policy_version=candidate.source.execution_policy_version,
+        connector_profile_version=candidate.source.connector_profile_version,
         primary_deny_code=deny_code,
         denial_cause=_denial_cause_for_code(deny_code),
         candidate_state=candidate_state,
@@ -273,6 +281,30 @@ def revalidate_candidate_lifecycle(
             message=(
                 "Candidate schema snapshot version is stale against the "
                 "authoritative source-scoped governance record."
+            ),
+            candidate=candidate,
+            audit_context=audit_context,
+        )
+
+    current_execution_policy_version = CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
+        source.source_family
+    )
+    if current_execution_policy_version is None:
+        _raise_revalidation_error(
+            deny_code=DENY_POLICY_VERSION_STALE,
+            message=(
+                "No backend-owned execution policy version is configured for "
+                f"source family '{source.source_family}'."
+            ),
+            candidate=candidate,
+            audit_context=audit_context,
+        )
+    if candidate.source.execution_policy_version != current_execution_policy_version:
+        _raise_revalidation_error(
+            deny_code=DENY_POLICY_VERSION_STALE,
+            message=(
+                "Candidate execution policy version is stale against the "
+                "backend-owned source-family policy."
             ),
             candidate=candidate,
             audit_context=audit_context,

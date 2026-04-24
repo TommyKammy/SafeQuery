@@ -18,6 +18,7 @@ from app.features.auth.context import AuthenticatedSubject
 from app.services.candidate_lifecycle import (
     CandidateLifecycleAuditContext,
     CandidateLifecycleRecord,
+    CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
     CandidateLifecycleRevalidationError,
     SourceBoundCandidateMetadata,
     revalidate_candidate_lifecycle,
@@ -41,6 +42,8 @@ def _seed_source(
     session: Session,
     *,
     source_id: str,
+    source_family: str = "postgresql",
+    source_flavor: str = "warehouse",
     owner_binding: str = "group:finance-analysts",
     contract_version: int = 3,
     snapshot_version: int = 7,
@@ -50,8 +53,8 @@ def _seed_source(
         id=uuid4(),
         source_id=source_id,
         display_label=f"{source_id} display",
-        source_family="postgresql",
-        source_flavor="warehouse",
+        source_family=source_family,
+        source_flavor=source_flavor,
         activation_posture=activation_posture,
         connector_profile_id=None,
         dialect_profile_id=None,
@@ -95,12 +98,21 @@ def _seed_source(
 def _candidate(
     *,
     source_id: str = "sap-approved-spend",
+    source_family: str = "postgresql",
+    source_flavor: str = "warehouse",
     contract_version: int = 3,
     snapshot_version: int = 7,
+    execution_policy_version: int | None = None,
+    connector_profile_version: int | None = None,
     approval_expires_at: datetime | None = None,
     invalidated_at: datetime | None = None,
 ) -> CandidateLifecycleRecord:
     now = datetime.now(timezone.utc)
+    effective_execution_policy_version = (
+        execution_policy_version
+        if execution_policy_version is not None
+        else CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY[source_family]
+    )
     return CandidateLifecycleRecord(
         owner_subject_id="user:alice",
         approved_at=now - timedelta(minutes=5),
@@ -108,10 +120,12 @@ def _candidate(
         invalidated_at=invalidated_at,
         source=SourceBoundCandidateMetadata(
             source_id=source_id,
-            source_family="postgresql",
-            source_flavor="warehouse",
+            source_family=source_family,
+            source_flavor=source_flavor,
             dataset_contract_version=contract_version,
             schema_snapshot_version=snapshot_version,
+            execution_policy_version=effective_execution_policy_version,
+            connector_profile_version=connector_profile_version,
         ),
     )
 
@@ -306,6 +320,43 @@ def test_revalidate_candidate_lifecycle_rejects_entitlement_drift_on_bound_sourc
     assert exc_info.value.deny_code == "DENY_ENTITLEMENT_CHANGED"
 
 
+def test_revalidate_candidate_lifecycle_rejects_cross_subject_candidate_owner() -> None:
+    with _session_scope() as session:
+        _seed_source(session, source_id="sap-approved-spend")
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="DENY_SUBJECT_MISMATCH",
+        ) as exc_info:
+            revalidate_candidate_lifecycle(
+                candidate=_candidate(),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:bob",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                as_of=datetime.now(timezone.utc),
+                audit_context=_audit_context().model_copy(
+                    update={"user_subject": "user:bob"}
+                ),
+            )
+
+    assert exc_info.value.deny_code == "DENY_SUBJECT_MISMATCH"
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert {
+        "event_type": "execution_denied",
+        "user_subject": "user:bob",
+        "query_candidate_id": "candidate-123",
+        "candidate_owner_subject": "user:alice",
+        "source_id": "sap-approved-spend",
+        "source_family": "postgresql",
+        "primary_deny_code": "DENY_SUBJECT_MISMATCH",
+        "denial_cause": "subject_mismatch",
+        "candidate_state": "denied",
+    }.items() <= audit_event.model_dump(exclude_none=True).items()
+
+
 def test_revalidate_candidate_lifecycle_rejects_stale_source_policy_versions() -> None:
     with _session_scope() as session:
         _seed_source(
@@ -330,6 +381,130 @@ def test_revalidate_candidate_lifecycle_rejects_stale_source_policy_versions() -
             )
 
     assert exc_info.value.deny_code == "DENY_POLICY_VERSION_STALE"
+
+
+@pytest.mark.parametrize(
+    ("source_family", "source_flavor", "current_policy_version"),
+    (
+        ("mssql", "sqlserver", 2),
+        ("postgresql", "warehouse", 3),
+    ),
+)
+def test_revalidate_candidate_lifecycle_rejects_stale_execution_policy_version_for_each_source_family(
+    source_family: str,
+    source_flavor: str,
+    current_policy_version: int,
+) -> None:
+    with _session_scope() as session:
+        _seed_source(
+            session,
+            source_id="sap-approved-spend",
+            source_family=source_family,
+            source_flavor=source_flavor,
+        )
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="DENY_POLICY_VERSION_STALE",
+        ) as exc_info:
+            revalidate_candidate_lifecycle(
+                candidate=_candidate(
+                    source_family=source_family,
+                    source_flavor=source_flavor,
+                    execution_policy_version=current_policy_version - 1,
+                    connector_profile_version=11,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                as_of=datetime.now(timezone.utc),
+                audit_context=_audit_context(),
+            )
+
+    assert exc_info.value.deny_code == "DENY_POLICY_VERSION_STALE"
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert {
+        "event_type": "execution_denied",
+        "query_candidate_id": "candidate-123",
+        "candidate_owner_subject": "user:alice",
+        "source_id": "sap-approved-spend",
+        "source_family": source_family,
+        "source_flavor": source_flavor,
+        "dataset_contract_version": 3,
+        "schema_snapshot_version": 7,
+        "execution_policy_version": current_policy_version - 1,
+        "connector_profile_version": 11,
+        "primary_deny_code": "DENY_POLICY_VERSION_STALE",
+        "denial_cause": "policy_stale",
+        "candidate_state": "denied",
+    }.items() <= audit_event.model_dump(exclude_none=True).items()
+
+
+@pytest.mark.parametrize(
+    ("source_family", "source_flavor", "current_policy_version"),
+    (
+        ("mssql", "sqlserver", 2),
+        ("postgresql", "warehouse", 3),
+    ),
+)
+def test_revalidate_candidate_lifecycle_rejects_missing_backend_policy_version_for_each_source_family(
+    monkeypatch: pytest.MonkeyPatch,
+    source_family: str,
+    source_flavor: str,
+    current_policy_version: int,
+) -> None:
+    monkeypatch.delitem(
+        CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
+        source_family,
+    )
+
+    with _session_scope() as session:
+        _seed_source(
+            session,
+            source_id="sap-approved-spend",
+            source_family=source_family,
+            source_flavor=source_flavor,
+        )
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="No backend-owned execution policy version is configured",
+        ) as exc_info:
+            revalidate_candidate_lifecycle(
+                candidate=_candidate(
+                    source_family=source_family,
+                    source_flavor=source_flavor,
+                    execution_policy_version=current_policy_version,
+                    connector_profile_version=11,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                as_of=datetime.now(timezone.utc),
+                audit_context=_audit_context(),
+            )
+
+    assert exc_info.value.deny_code == "DENY_POLICY_VERSION_STALE"
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert {
+        "event_type": "execution_denied",
+        "query_candidate_id": "candidate-123",
+        "candidate_owner_subject": "user:alice",
+        "source_id": "sap-approved-spend",
+        "source_family": source_family,
+        "source_flavor": source_flavor,
+        "execution_policy_version": current_policy_version,
+        "connector_profile_version": 11,
+        "primary_deny_code": "DENY_POLICY_VERSION_STALE",
+        "denial_cause": "policy_stale",
+        "candidate_state": "denied",
+    }.items() <= audit_event.model_dump(exclude_none=True).items()
 
 
 def test_revalidate_candidate_lifecycle_rejects_non_executable_bound_source() -> None:

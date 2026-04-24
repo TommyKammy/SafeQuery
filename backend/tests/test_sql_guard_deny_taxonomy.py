@@ -104,6 +104,7 @@ def _candidate(
             source_flavor="warehouse",
             dataset_contract_version=contract_version,
             schema_snapshot_version=7,
+            execution_policy_version=3,
         ),
     )
 
