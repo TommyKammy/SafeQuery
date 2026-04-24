@@ -201,6 +201,62 @@ behaves under the MySQL family controls. Because MySQL is still planned
 metadata only, Aurora MySQL must not activate execution until the underlying
 MySQL family connector, guard, audit, and evaluation profiles are approved.
 
+### Long-Range Oracle Family Requirements
+
+Oracle is approved as long-range planned source-family metadata only. Listing
+the family does not activate execution, connector selection, runtime defaults,
+guard behavior, local startup services, release-gate coverage, or adapter
+support.
+
+An Oracle source profile must be registered by the backend with explicit values
+for:
+
+- `source_id`
+- `source_family=oracle`
+- `source_flavor`, such as `oracle-19c` or `oracle-23ai`
+- `dataset_contract_version`
+- `schema_snapshot_version`
+- `execution_policy_version`
+- `connector_profile_version`
+- `dialect_profile_version`
+- `activation_posture`
+- `connection_reference`
+
+The adapter, client, analyst artifacts, MLflow traces, driver name, connection
+descriptor, hostname, source label, request hint, or generated SQL text must not
+infer Oracle eligibility. Connector and dialect profile selection remains
+backend-owned and source-registry governed.
+
+The long-range Oracle connector profile must require:
+
+- read-only database identity and privileges
+- backend-owned secret indirection such as `safequery/business/oracle/<source_id>/reader`
+- explicit connection identity fields for connect descriptor, service name,
+  username, wallet reference, and TLS posture
+- connect timeout, statement timeout, and cancellation probe support
+- separation from application PostgreSQL credentials, service identity, and endpoint
+
+The long-range Oracle dialect and guard profile must require:
+
+- single-statement canonical SQL before preview, guard, and execution
+- Oracle-aware keyword, schema, and identifier normalization
+- preservation of double-quoted identifier case where quoting is required
+- explicit selection of one canonical policy-bounded row limit shape, such as
+  approved `FETCH FIRST` or `ROWNUM` handling, before guard evaluation
+- a read-only statement allowlist for `SELECT` and `WITH`-leading SELECT queries
+- fail-closed denies for writes, multi-statement SQL, PL/SQL blocks, procedure
+  execution, dynamic SQL, external data access, system catalog access, database
+  links, session or package state mutation, unsafe row bounds, and unsupported syntax
+
+Audit, operator-history, candidate lifecycle, entitlement, and release-gate
+reconstruction for Oracle must preserve the source and profile fields needed to
+prove which backend-selected profile was used: `source_id`, `source_family`,
+`source_flavor`, dataset contract version, schema snapshot version, execution
+policy version, connector profile version, dialect profile version, guard
+version, and primary deny code. Oracle activation requires a distinct positive,
+deny, identifier and quoting, row-bounding, timeout, cancellation, and
+release-gate reconstruction corpus before any active connector work begins.
+
 ## Consequences
 
 Positive outcomes:
