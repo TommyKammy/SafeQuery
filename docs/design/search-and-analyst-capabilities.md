@@ -93,6 +93,32 @@ The application should label analyst outputs clearly:
 - executed evidence: grounded in approved SQL execution results
 - narrative guidance: explanatory text that does not itself grant execution authority
 
+## Analyst Response Schema Constraints
+
+Analyst response payloads must be advisory surfaces, not execution approval
+records. The response contract therefore keeps these fields separate:
+
+- `narrative`: human-readable guidance only
+- `retrieval_citations`: source-labeled retrieved semantic assets
+- `executed_evidence`: source-labeled references to completed backend execution
+  audit events
+- `advisory_only=true` and `can_authorize_execution=false`: invariant markers
+  that prevent analyst output from being treated as SQL execution authority
+- `confidence` and `caveats`: metadata for answer quality and known limits
+- `operator_history_hooks`: audit or history anchors for operator-facing
+  reconstruction
+
+Every retrieval citation and executed evidence reference must carry source
+identity, source family, optional source flavor, dataset contract version, and
+schema snapshot version. Executed evidence must additionally reference the
+candidate identifier and the completed execution audit event; it must not embed
+raw result rows or become an approval token.
+
+Responses may include multiple source-labeled advisory artifacts. That does not
+create cross-source execution authority: each executed evidence reference remains
+bound to its own candidate and completed execution audit event, and narrative
+text cannot merge, erase, or retarget those source labels.
+
 ## Governance Implications
 
 SafeQuery must govern not only datasets but also semantic assets used for search and analyst experiences.
