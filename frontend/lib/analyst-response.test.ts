@@ -285,6 +285,34 @@ describe("parseAnalystResponsePayload", () => {
     ).toBeNull();
   });
 
+  it("rejects cross-source execution narratives with one source or retrieval-only context", () => {
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "The PostgreSQL rows were joined across sources and executed together.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        retrievalCitations: [citation("business-postgres-source", "postgresql")],
+        executedEvidence: [evidence("business-postgres-source", "postgresql")]
+      })
+    ).toBeNull();
+
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "The federated query compared governed definitions across both sources.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        retrievalCitations: [citation("business-postgres-source", "postgresql")],
+        executedEvidence: []
+      })
+    ).toBeNull();
+  });
+
   it("rejects execution claims without executed evidence", () => {
     expect(
       parseAnalystResponsePayload({

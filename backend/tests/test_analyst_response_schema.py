@@ -263,6 +263,35 @@ def test_analyst_response_payload_rejects_cross_source_execution_narratives(
         )
 
 
+@pytest.mark.parametrize(
+    "payload_overrides",
+    [
+        {
+            "narrative": "The PostgreSQL rows were joined across sources and executed together.",
+            "retrieval_citations": [_citation("business-postgres-source", "postgresql")],
+            "executed_evidence": [_executed_evidence("business-postgres-source", "postgresql")],
+        },
+        {
+            "narrative": "The federated query compared governed definitions across both sources.",
+            "retrieval_citations": [_citation("business-postgres-source", "postgresql")],
+            "executed_evidence": [],
+        },
+    ],
+)
+def test_analyst_response_payload_rejects_cross_source_execution_with_one_source(
+    payload_overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="cross-source execution"):
+        AnalystResponsePayload(
+            response_id="analyst-response-123",
+            request_id="request-123",
+            advisory_only=True,
+            can_authorize_execution=False,
+            analyst_mode_version="analyst-schema-v1",
+            **payload_overrides,
+        )
+
+
 def test_analyst_response_payload_rejects_execution_claims_without_executed_evidence() -> None:
     with pytest.raises(ValidationError, match="executed evidence"):
         AnalystResponsePayload(
