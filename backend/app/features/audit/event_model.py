@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, PositiveInt, StringConstraints
+from pydantic import BaseModel, ConfigDict, NonNegativeInt, PositiveInt, StringConstraints
 from typing_extensions import Annotated
 
 
@@ -63,6 +63,26 @@ class RetrievalCitationAuditPayload(BaseModel):
     can_authorize_execution: Literal[False] = False
 
 
+class ExecutedEvidenceAuditPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["executed_evidence"] = "executed_evidence"
+    source_id: SourceIdentifier
+    source_family: SourceFamily
+    source_flavor: Optional[SourceFlavor] = None
+    dataset_contract_version: PositiveInt
+    schema_snapshot_version: PositiveInt
+    execution_policy_version: Optional[PositiveInt] = None
+    connector_profile_version: Optional[PositiveInt] = None
+    candidate_id: NonEmptyTrimmedString
+    execution_audit_event_id: UUID
+    execution_audit_event_type: Literal["execution_completed"] = "execution_completed"
+    row_count: NonNegativeInt
+    result_truncated: bool
+    authority: Literal["backend_execution_result"] = "backend_execution_result"
+    can_authorize_execution: Literal[False] = False
+
+
 class SourceAwareAuditEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -83,6 +103,7 @@ class SourceAwareAuditEvent(BaseModel):
     retrieval_corpus_version: Optional[NonEmptyTrimmedString] = None
     retrieved_asset_ids: Optional[list[NonEmptyTrimmedString]] = None
     retrieved_citations: Optional[list[RetrievalCitationAuditPayload]] = None
+    executed_evidence: Optional[list[ExecutedEvidenceAuditPayload]] = None
     analyst_mode_version: Optional[NonEmptyTrimmedString] = None
 
     source_id: SourceIdentifier
