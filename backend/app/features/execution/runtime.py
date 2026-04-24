@@ -88,6 +88,7 @@ class ExecutionAuditContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event_id: UUID
+    causation_event_id: Optional[UUID] = None
     occurred_at: datetime
     request_id: str
     correlation_id: str
@@ -95,6 +96,7 @@ class ExecutionAuditContext(BaseModel):
     session_id: str
     query_candidate_id: Optional[str] = None
     candidate_owner_subject: Optional[str] = None
+    execution_policy_version: Optional[int] = None
     connector_profile_version: Optional[int] = None
 
 
@@ -168,7 +170,14 @@ def _build_execution_audit_event(
         source_flavor=candidate_source.source_flavor,
         dataset_contract_version=candidate_source.dataset_contract_version,
         schema_snapshot_version=candidate_source.schema_snapshot_version,
-        connector_profile_version=audit_context.connector_profile_version,
+        execution_policy_version=(
+            audit_context.execution_policy_version
+            or candidate_source.execution_policy_version
+        ),
+        connector_profile_version=(
+            audit_context.connector_profile_version
+            or candidate_source.connector_profile_version
+        ),
         primary_deny_code=primary_deny_code,
         denial_cause=(
             _execution_denial_cause_for_code(primary_deny_code)
@@ -194,7 +203,7 @@ def _build_execution_audit_events(
         return []
 
     events: list[SourceAwareAuditEvent] = []
-    causation_event_id: UUID | None = None
+    causation_event_id = audit_context.causation_event_id
     for event_type in event_types:
         event = _build_execution_audit_event(
             event_type=event_type,
