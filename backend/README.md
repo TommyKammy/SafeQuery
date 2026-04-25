@@ -59,7 +59,7 @@ docker-compose -f infra/docker-compose.yml run --rm backend python -m app.cli.se
 ```
 
 The seed is idempotent. It creates only backend-owned source registry, dataset
-contract, allow-listed dataset, and approved schema snapshot records for
+contract, allow-listed datasets, and approved schema snapshot records for
 `demo-business-postgres`; the connection reference points at
 `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` and preserves the application
 PostgreSQL role boundary.
