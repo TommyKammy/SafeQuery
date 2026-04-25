@@ -169,7 +169,7 @@ def create_app() -> FastAPI:
     def read_first_run_doctor(
         session: Session = Depends(require_preview_submission_session),
     ) -> FirstRunDoctorResult:
-        return run_first_run_doctor(session)
+        return run_first_run_doctor(session, backend_probe_mode="served_route")
 
     @app.post("/requests/preview", response_model=PreviewSubmissionResponse)
     def create_request_preview(
