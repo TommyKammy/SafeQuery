@@ -6,6 +6,7 @@ from typing import Optional, Protocol
 from pydantic import (
     BaseModel,
     ConfigDict,
+    SecretStr,
     StringConstraints,
     ValidationError,
     model_validator,
@@ -110,6 +111,7 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
     adapter_version: NonEmptyTrimmedString
     base_url: NonEmptyTrimmedString
     model: Optional[NonEmptyTrimmedString] = None
+    api_key: Optional[SecretStr] = None
     timeout_seconds: int
 
     def generate_sql(
@@ -172,6 +174,7 @@ def resolve_sql_generation_adapter(
             adapter_version="vanna.v1",
             base_url=str(generation_settings.vanna_base_url),
             model=generation_settings.vanna_model,
+            api_key=generation_settings.vanna_api_key,
             timeout_seconds=generation_settings.timeout_seconds,
         )
 

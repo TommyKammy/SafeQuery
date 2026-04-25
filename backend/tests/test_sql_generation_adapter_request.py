@@ -191,6 +191,24 @@ def test_sql_generation_adapter_registry_selects_configured_providers() -> None:
     }
 
 
+def test_sql_generation_adapter_registry_preserves_masked_vanna_api_key() -> None:
+    vanna_adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "vanna",
+            "vanna_base_url": "http://vanna:8084",
+            "vanna_model": "warehouse-assistant",
+            "vanna_api_key": "trusted-vanna-token",
+        }
+    )
+
+    assert vanna_adapter.api_key is not None
+    assert vanna_adapter.api_key.get_secret_value() == "trusted-vanna-token"
+    assert (
+        vanna_adapter.model_dump(mode="json", exclude_none=True)["api_key"]
+        == "**********"
+    )
+
+
 def test_sql_generation_adapter_registry_wraps_mapping_validation_errors() -> None:
     try:
         resolve_sql_generation_adapter({"provider": "not-a-provider"})
