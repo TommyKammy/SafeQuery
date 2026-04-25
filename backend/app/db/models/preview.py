@@ -109,6 +109,12 @@ class PreviewCandidate(Base):
     schema_snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False)
     authenticated_subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
     candidate_sql: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    adapter_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    adapter_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    adapter_version: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    adapter_run_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    prompt_version: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    prompt_fingerprint: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     guard_status: Mapped[str] = mapped_column(String(64), nullable=False)
     candidate_state: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -167,6 +173,12 @@ class PreviewAuditEvent(Base):
         Text,
         nullable=True,
     )
+    adapter_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    adapter_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    adapter_version: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    adapter_run_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    prompt_version: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    prompt_fingerprint: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     application_version: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     source_id: Mapped[str] = mapped_column(String(255), nullable=False)
     source_family: Mapped[str] = mapped_column(String(64), nullable=False)

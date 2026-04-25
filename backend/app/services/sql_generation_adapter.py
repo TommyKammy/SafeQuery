@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
 import json
 from typing import Literal, Optional, Protocol
 from urllib.error import HTTPError, URLError
@@ -94,6 +95,17 @@ class SQLGenerationAdapterResponse(BaseModel):
     provider: SQLGenerationProvider
     adapter_version: NonEmptyTrimmedString
     model: Optional[NonEmptyTrimmedString] = None
+
+
+class SQLGenerationAdapterRunMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    adapter_provider: SQLGenerationProvider
+    adapter_version: NonEmptyTrimmedString
+    adapter_model: Optional[NonEmptyTrimmedString] = None
+    adapter_run_id: NonEmptyTrimmedString
+    prompt_version: NonEmptyTrimmedString = "sql_generation_adapter_request.v1"
+    prompt_fingerprint: NonEmptyTrimmedString
 
 
 class SQLGenerationAdapterError(BaseModel):
@@ -446,5 +458,27 @@ def build_sql_generation_adapter_request(
                 )
                 for dataset in prepared_context.datasets
             ],
+        ),
+    )
+
+
+def build_sql_generation_adapter_run_metadata(
+    *,
+    adapter_request: SQLGenerationAdapterRequest,
+    adapter_response: SQLGenerationAdapterResponse,
+    adapter_run_id: str,
+) -> SQLGenerationAdapterRunMetadata:
+    prompt_projection = json.dumps(
+        adapter_request.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return SQLGenerationAdapterRunMetadata(
+        adapter_provider=adapter_response.provider,
+        adapter_version=adapter_response.adapter_version,
+        adapter_model=adapter_response.model,
+        adapter_run_id=adapter_run_id,
+        prompt_fingerprint=(
+            f"sha256:{hashlib.sha256(prompt_projection.encode('utf-8')).hexdigest()}"
         ),
     )

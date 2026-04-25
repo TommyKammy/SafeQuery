@@ -17,6 +17,7 @@ from app.db.models.dataset_contract import (
     DatasetContractDatasetKind,
 )
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
+from app.db.models.preview import PreviewAuditEvent, PreviewCandidate
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
 from app.features.evaluation import (
@@ -453,6 +454,12 @@ def test_mssql_core_vertical_slice_submits_generates_guards_executes_and_audits(
                 application_version="safequery-test",
             ),
         )
+        persisted_candidate = session.query(PreviewCandidate).one()
+        persisted_generation_event = (
+            session.query(PreviewAuditEvent)
+            .filter(PreviewAuditEvent.event_type == "generation_completed")
+            .one()
+        )
 
     adapter_request = captured["adapter_request"]
     adapter_payload = adapter_request.model_dump()
@@ -468,6 +475,22 @@ def test_mssql_core_vertical_slice_submits_generates_guards_executes_and_audits(
 
     assert result.preview.candidate.source_id == scenario.source.source_id
     assert result.generated.canonical_sql == scenario.expected.canonical_sql
+    assert persisted_candidate.candidate_sql == scenario.expected.canonical_sql
+    assert persisted_candidate.adapter_provider == "local_llm"
+    assert persisted_candidate.adapter_model == "safequery-test-sql"
+    assert persisted_candidate.adapter_version == "test.local_llm.v1"
+    assert persisted_candidate.adapter_run_id == "correlation-141"
+    assert persisted_candidate.prompt_version == "sql_generation_adapter_request.v1"
+    assert persisted_candidate.prompt_fingerprint is not None
+    assert scenario.prompt not in persisted_candidate.prompt_fingerprint
+    assert {
+        "adapter_provider": "local_llm",
+        "adapter_model": "safequery-test-sql",
+        "adapter_version": "test.local_llm.v1",
+        "adapter_run_id": "correlation-141",
+        "prompt_version": "sql_generation_adapter_request.v1",
+        "prompt_fingerprint": persisted_candidate.prompt_fingerprint,
+    }.items() <= persisted_generation_event.audit_payload.items()
     assert result.guard.decision == "allow"
     assert result.execution.rows == [
         {"vendor_name": "Northwind", "approved_amount": 4200}
@@ -845,6 +868,12 @@ def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_au
                 application_version="safequery-test",
             ),
         )
+        persisted_candidate = session.query(PreviewCandidate).one()
+        persisted_generation_event = (
+            session.query(PreviewAuditEvent)
+            .filter(PreviewAuditEvent.event_type == "generation_completed")
+            .one()
+        )
 
     adapter_request = captured["adapter_request"]
     adapter_payload = adapter_request.model_dump()
@@ -860,6 +889,22 @@ def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_au
 
     assert result.preview.candidate.source_id == scenario.source.source_id
     assert result.generated.canonical_sql == scenario.expected.canonical_sql
+    assert persisted_candidate.candidate_sql == scenario.expected.canonical_sql
+    assert persisted_candidate.adapter_provider == "local_llm"
+    assert persisted_candidate.adapter_model == "safequery-test-sql"
+    assert persisted_candidate.adapter_version == "test.local_llm.v1"
+    assert persisted_candidate.adapter_run_id == "correlation-142"
+    assert persisted_candidate.prompt_version == "sql_generation_adapter_request.v1"
+    assert persisted_candidate.prompt_fingerprint is not None
+    assert scenario.prompt not in persisted_candidate.prompt_fingerprint
+    assert {
+        "adapter_provider": "local_llm",
+        "adapter_model": "safequery-test-sql",
+        "adapter_version": "test.local_llm.v1",
+        "adapter_run_id": "correlation-142",
+        "prompt_version": "sql_generation_adapter_request.v1",
+        "prompt_fingerprint": persisted_candidate.prompt_fingerprint,
+    }.items() <= persisted_generation_event.audit_payload.items()
     assert result.guard.decision == "allow"
     assert result.execution.rows == [
         {"vendor_name": "Northwind", "approved_amount": 4200}

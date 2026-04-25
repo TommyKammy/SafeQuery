@@ -32,11 +32,14 @@ from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionRequest,
     PreviewSubmissionResponse,
+    persist_generated_candidate_audit_context,
     submit_preview_request,
 )
 from app.services.sql_generation_adapter import (
     SQLGenerationAdapter,
     SQLGenerationAdapterRequest,
+    SQLGenerationAdapterRunMetadata,
+    build_sql_generation_adapter_run_metadata,
     build_sql_generation_adapter_request,
 )
 
@@ -77,6 +80,7 @@ class GeneratedPostgreSQLCandidate(BaseModel):
 
     canonical_sql: str
     source: SourceBoundCandidateMetadata
+    adapter_metadata: SQLGenerationAdapterRunMetadata
 
 
 class PostgreSQLCoreVerticalSliceResult(BaseModel):
@@ -130,6 +134,7 @@ def _audit_base(
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
+    adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
 ) -> SourceAwareAuditEvent:
     return SourceAwareAuditEvent(
         event_id=uuid4(),
@@ -169,6 +174,24 @@ def _audit_base(
         guard_version=(
             audit_context.guard_version if event_type == "guard_evaluated" else None
         ),
+        adapter_provider=(
+            adapter_metadata.adapter_provider if adapter_metadata is not None else None
+        ),
+        adapter_model=(
+            adapter_metadata.adapter_model if adapter_metadata is not None else None
+        ),
+        adapter_version=(
+            adapter_metadata.adapter_version if adapter_metadata is not None else None
+        ),
+        adapter_run_id=(
+            adapter_metadata.adapter_run_id if adapter_metadata is not None else None
+        ),
+        prompt_version=(
+            adapter_metadata.prompt_version if adapter_metadata is not None else None
+        ),
+        prompt_fingerprint=(
+            adapter_metadata.prompt_fingerprint if adapter_metadata is not None else None
+        ),
         application_version=audit_context.application_version,
         source_id=candidate_source.source_id,
         source_family=cast(SourceFamily, candidate_source.source_family),
@@ -196,6 +219,7 @@ def _append_audit_event(
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
+    adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
 ) -> None:
     events.append(
         _audit_base(
@@ -207,6 +231,7 @@ def _append_audit_event(
             candidate_state=candidate_state,
             execution_row_count=execution_row_count,
             result_truncated=result_truncated,
+            adapter_metadata=adapter_metadata,
         )
     )
 
@@ -295,17 +320,23 @@ def run_postgresql_core_vertical_slice(
         raise ValueError(
             "The PostgreSQL core vertical slice requires a PostgreSQL source."
         )
+    candidate_audit_context = audit_context.model_copy(
+        update={
+            "request_id": preview.request.request_id,
+            "query_candidate_id": preview.candidate.candidate_id,
+        }
+    )
 
     audit_events: list[SourceAwareAuditEvent] = []
     _append_audit_event(
         audit_events,
-        audit_context=audit_context,
+        audit_context=candidate_audit_context,
         candidate_source=candidate_source,
         event_type="query_submitted",
     )
 
     prepared_context = prepare_generation_context(
-        request_id=audit_context.request_id,
+        request_id=candidate_audit_context.request_id,
         question=payload.question,
         source_id=candidate_source.source_id,
         authenticated_subject=authenticated_subject,
@@ -314,23 +345,30 @@ def run_postgresql_core_vertical_slice(
     adapter_request = build_sql_generation_adapter_request(prepared_context)
     _append_audit_event(
         audit_events,
-        audit_context=audit_context,
+        audit_context=candidate_audit_context,
         candidate_source=candidate_source,
         event_type="generation_requested",
     )
 
     adapter_response = sql_generation_adapter.generate_sql(adapter_request)
+    adapter_metadata = build_sql_generation_adapter_run_metadata(
+        adapter_request=adapter_request,
+        adapter_response=adapter_response,
+        adapter_run_id=candidate_audit_context.correlation_id,
+    )
     canonical_sql = adapter_response.candidate_sql
     generated = GeneratedPostgreSQLCandidate(
         canonical_sql=canonical_sql,
         source=candidate_source,
+        adapter_metadata=adapter_metadata,
     )
     _append_audit_event(
         audit_events,
-        audit_context=audit_context,
+        audit_context=candidate_audit_context,
         candidate_source=candidate_source,
         event_type="generation_completed",
         candidate_state="generated",
+        adapter_metadata=adapter_metadata,
     )
 
     guard = evaluate_postgresql_sql_guard(
@@ -347,11 +385,20 @@ def run_postgresql_core_vertical_slice(
         primary_deny_code = guard.rejections[0].code if guard.rejections else "guard_rejected"
         _append_audit_event(
             audit_events,
-            audit_context=audit_context,
+            audit_context=candidate_audit_context,
             candidate_source=candidate_source,
             event_type="guard_evaluated",
             primary_deny_code=primary_deny_code,
             candidate_state="denied",
+            adapter_metadata=adapter_metadata,
+        )
+        persist_generated_candidate_audit_context(
+            session,
+            request_id=preview.request.request_id,
+            candidate_id=preview.candidate.candidate_id,
+            candidate_sql=canonical_sql,
+            adapter_metadata=adapter_metadata,
+            audit_events=audit_events,
         )
         raise PostgreSQLVerticalSliceDenied(
             deny_code=primary_deny_code,
@@ -362,16 +409,16 @@ def run_postgresql_core_vertical_slice(
 
     _append_audit_event(
         audit_events,
-        audit_context=audit_context,
+        audit_context=candidate_audit_context,
         candidate_source=candidate_source,
         event_type="guard_evaluated",
         candidate_state="preview_ready",
+        adapter_metadata=adapter_metadata,
     )
-
     lifecycle_record = candidate_lifecycle or _build_default_candidate_lifecycle(
         candidate_source=candidate_source,
         authenticated_subject=authenticated_subject,
-        audit_context=audit_context,
+        audit_context=candidate_audit_context,
     )
     try:
         revalidate_candidate_lifecycle(
@@ -381,19 +428,36 @@ def run_postgresql_core_vertical_slice(
             as_of=audit_context.occurred_at,
             selected_source_id=candidate_source.source_id,
             audit_context=_build_candidate_lifecycle_audit_context(
-                audit_context=audit_context,
+                audit_context=candidate_audit_context,
                 lifecycle_record=lifecycle_record,
             ),
         )
     except CandidateLifecycleRevalidationError as exc:
         if exc.audit_event is not None:
             audit_events.append(exc.audit_event)
+        persist_generated_candidate_audit_context(
+            session,
+            request_id=preview.request.request_id,
+            candidate_id=preview.candidate.candidate_id,
+            candidate_sql=canonical_sql,
+            adapter_metadata=adapter_metadata,
+            audit_events=audit_events,
+        )
         raise PostgreSQLVerticalSliceDenied(
             deny_code=exc.deny_code,
             message=str(exc),
             guard=guard,
             audit_events=audit_events,
         ) from exc
+
+    persist_generated_candidate_audit_context(
+        session,
+        request_id=preview.request.request_id,
+        candidate_id=preview.candidate.candidate_id,
+        candidate_sql=canonical_sql,
+        adapter_metadata=adapter_metadata,
+        audit_events=audit_events,
+    )
 
     selection = select_execution_connector(candidate_source=candidate_source)
     execution = execute_candidate_sql(
@@ -408,7 +472,7 @@ def run_postgresql_core_vertical_slice(
         cancellation_probe=cancellation_probe,
         runtime_safety_state=runtime_safety_state,
         audit_context=_build_execution_audit_context(
-            audit_context=audit_context,
+            audit_context=candidate_audit_context,
             previous_event_id=audit_events[-1].event_id,
         ),
     )

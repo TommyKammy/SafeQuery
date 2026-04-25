@@ -114,7 +114,12 @@ class SourceAwareAuditEvent(BaseModel):
     governance_bindings: Optional[list[NonEmptyTrimmedString]] = None
     entitlement_decision: Optional[Literal["allow", "deny"]] = None
     entitlement_source_bindings: Optional[list[NonEmptyTrimmedString]] = None
+    adapter_provider: Optional[NonEmptyTrimmedString] = None
     adapter_version: Optional[NonEmptyTrimmedString] = None
+    adapter_model: Optional[NonEmptyTrimmedString] = None
+    adapter_run_id: Optional[NonEmptyTrimmedString] = None
+    prompt_version: Optional[NonEmptyTrimmedString] = None
+    prompt_fingerprint: Optional[NonEmptyTrimmedString] = None
     guard_version: Optional[NonEmptyTrimmedString] = None
     application_version: Optional[NonEmptyTrimmedString] = None
     retrieval_corpus_version: Optional[NonEmptyTrimmedString] = None
