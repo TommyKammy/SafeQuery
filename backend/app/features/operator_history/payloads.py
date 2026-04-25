@@ -51,6 +51,15 @@ TerminalState = Literal[
 ResultState = Literal["execution_denied", "failed", "canceled", "empty", "completed"]
 
 
+class OperatorHistoryAuthContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    actor_subject: NonEmptyTrimmedString
+    session_id: NonEmptyTrimmedString
+    auth_source: NonEmptyTrimmedString
+    entitlement_decision: Literal["allow", "deny"]
+
+
 class _SourceAwareHistoryPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -59,6 +68,7 @@ class _SourceAwareHistoryPayload(BaseModel):
     source_flavor: Optional[SourceFlavor] = None
     occurred_at: datetime
     audit_event_id: Optional[UUID] = None
+    auth_context: Optional[OperatorHistoryAuthContext] = None
 
 
 class OperatorHistoryRequestSummary(_SourceAwareHistoryPayload):

@@ -16,6 +16,7 @@ from app.features.auth.context import AuthenticatedSubject
 from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
+    PreviewSubmissionEntitlementError,
     PreviewSubmissionRequest,
     submit_preview_request,
 )
@@ -189,6 +190,115 @@ def test_preview_submission_emits_source_aware_lifecycle_audit_events() -> None:
         "guard_version": "guard-profile-v1",
         "candidate_state": "preview_ready",
     }.items() <= guard_event.items()
+
+
+def test_preview_lifecycle_audit_retains_safe_auth_context_for_entitlement_reconstruction() -> None:
+    with _session_scope() as session:
+        _seed_authoritative_source_governance(
+            session,
+            source_id="persisted-approved-spend",
+        )
+
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="persisted-approved-spend",
+            ),
+            AuthenticatedSubject(
+                subject_id=" user:alice ",
+                governance_bindings=frozenset(
+                    {
+                        " group:finance-analysts ",
+                        "role:read-only-reviewer",
+                    }
+                ),
+            ),
+            session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime.now(timezone.utc),
+                request_id="request-123",
+                correlation_id="correlation-123",
+                user_subject="user:alice",
+                session_id="application-session-redacted",
+                query_candidate_id="candidate-123",
+                candidate_owner_subject="user:alice",
+                guard_version="guard-profile-v1",
+                application_version="safequery-test",
+                auth_source="enterprise-bridge",
+            ),
+        )
+
+    for event in response.audit.events:
+        assert event.user_subject == "user:alice"
+        assert event.session_id == "application-session-redacted"
+        assert event.auth_source == "enterprise-bridge"
+        assert event.governance_bindings == [
+            "group:finance-analysts",
+            "role:read-only-reviewer",
+        ]
+        assert event.entitlement_decision == "allow"
+        assert event.entitlement_source_bindings == ["group:finance-analysts"]
+
+    serialized = response.model_dump()
+    assert "csrf" not in str(serialized).lower()
+    assert "token" not in str(serialized).lower()
+    assert "cookie" not in str(serialized).lower()
+
+
+def test_preview_entitlement_denial_preserves_audit_safe_auth_context() -> None:
+    with _session_scope() as session:
+        _seed_authoritative_source_governance(
+            session,
+            source_id="persisted-approved-spend",
+        )
+
+        try:
+            submit_preview_request(
+                PreviewSubmissionRequest(
+                    question="Show approved vendors by quarterly spend",
+                    source_id="persisted-approved-spend",
+                ),
+                AuthenticatedSubject(
+                    subject_id="user:bob",
+                    governance_bindings=frozenset({"group:unauthorized"}),
+                ),
+                session,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-123",
+                    correlation_id="correlation-123",
+                    user_subject="user:bob",
+                    session_id="application-session-redacted",
+                    auth_source="enterprise-bridge",
+                    application_version="safequery-test",
+                ),
+            )
+        except PreviewSubmissionEntitlementError as exc:
+            audit_events = exc.audit_events
+        else:
+            raise AssertionError("preview submission unexpectedly accepted unauthorized subject")
+
+    assert len(audit_events) == 1
+    denial_event = audit_events[0].model_dump(exclude_none=True)
+    assert {
+        "event_type": "generation_failed",
+        "request_id": "request-123",
+        "correlation_id": "correlation-123",
+        "user_subject": "user:bob",
+        "session_id": "application-session-redacted",
+        "auth_source": "enterprise-bridge",
+        "governance_bindings": ["group:unauthorized"],
+        "entitlement_decision": "deny",
+        "entitlement_source_bindings": ["group:finance-analysts"],
+        "primary_deny_code": "DENY_SOURCE_ENTITLEMENT",
+        "denial_cause": "entitlement_denied",
+        "source_id": "persisted-approved-spend",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+    }.items() <= denial_event.items()
+    assert "csrf" not in str(denial_event).lower()
+    assert "token" not in str(denial_event).lower()
+    assert "cookie" not in str(denial_event).lower()
 
 
 def test_preview_submission_rejects_missing_active_contract_linkage() -> None:

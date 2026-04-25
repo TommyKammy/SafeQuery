@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.features.operator_history.payloads import (
+    OperatorHistoryAuthContext,
     OperatorHistoryCandidateSummary,
     OperatorHistoryDenialSummary,
     OperatorHistoryInvalidationSummary,
@@ -22,6 +23,15 @@ def _source_fields() -> dict[str, object]:
         "source_family": "postgresql",
         "source_flavor": "warehouse",
     }
+
+
+def _auth_context() -> OperatorHistoryAuthContext:
+    return OperatorHistoryAuthContext(
+        actor_subject="user:alice",
+        session_id="application-session-redacted",
+        auth_source="enterprise-bridge",
+        entitlement_decision="allow",
+    )
 
 
 def test_operator_history_summary_payloads_are_source_aware_and_minimized() -> None:
@@ -182,6 +192,60 @@ def test_operator_history_payloads_can_represent_runtime_control_denials() -> No
     assert result.primary_deny_code == "DENY_RUNTIME_RATE_LIMIT"
     assert "rows" not in run.model_dump(exclude_none=True)
     assert "rows" not in result.model_dump(exclude_none=True)
+
+
+def test_operator_history_payloads_retain_minimized_auth_context_without_secrets() -> None:
+    request = OperatorHistoryRequestSummary(
+        request_id="request-123",
+        request_state="previewed",
+        summary_label="Approved vendor spend",
+        occurred_at=datetime.now(timezone.utc),
+        auth_context=_auth_context(),
+        **_source_fields(),
+    )
+    denial = OperatorHistoryDenialSummary(
+        request_id="request-123",
+        candidate_id="candidate-123",
+        terminal_state="review_denied",
+        candidate_state="blocked",
+        guard_status="blocked",
+        primary_deny_code="DENY_ENTITLEMENT_CHANGED",
+        occurred_at=datetime.now(timezone.utc),
+        auth_context=OperatorHistoryAuthContext(
+            actor_subject="user:alice",
+            session_id="application-session-redacted",
+            auth_source="enterprise-bridge",
+            entitlement_decision="deny",
+        ),
+        **_source_fields(),
+    )
+
+    request_dump = request.model_dump(exclude_none=True)
+    denial_dump = denial.model_dump(exclude_none=True)
+
+    assert request_dump["auth_context"] == {
+        "actor_subject": "user:alice",
+        "session_id": "application-session-redacted",
+        "auth_source": "enterprise-bridge",
+        "entitlement_decision": "allow",
+    }
+    assert denial_dump["auth_context"]["entitlement_decision"] == "deny"
+    for serialized in (str(request_dump).lower(), str(denial_dump).lower()):
+        assert "csrf" not in serialized
+        assert "cookie" not in serialized
+        assert "token" not in serialized
+        assert "secret" not in serialized
+
+
+def test_operator_history_auth_context_rejects_raw_identity_provider_material() -> None:
+    with pytest.raises(ValidationError):
+        OperatorHistoryAuthContext(
+            actor_subject="user:alice",
+            session_id="application-session-redacted",
+            auth_source="enterprise-bridge",
+            entitlement_decision="allow",
+            csrf_token="csrf-token-123",
+        )
 
 
 def test_operator_history_result_summary_rejects_raw_result_rows() -> None:

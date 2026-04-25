@@ -179,18 +179,44 @@ local development guidance, doctor output, workflow payloads, or checklist
 evidence disagree, repair the derived surface rather than redefining readiness
 around the summary that happened to pass last.
 
+## Epic L Auth-Context Evidence
+
+Epic L completion evidence is limited to the authentication, application
+session, entitlement, audit, and operator-history bridge. It does not complete
+the later Epic M/P execute API, real LLM connectivity, production IdP callback,
+or operator UI pilot.
+
+Required evidence:
+
+- HTTP preview accepts only a trusted authenticated subject plus a valid
+  application session and CSRF boundary.
+- Preview lifecycle audit events retain audit-safe subject, redacted session,
+  auth-source, normalized governance-binding, entitlement-decision, source, and
+  correlation context.
+- Entitlement denial paths retain audit-safe denial evidence with source and
+  governance-binding context where the current audit model supports it.
+- Operator-history summaries can show minimized auth/source context without
+  raw tokens, CSRF secrets, session cookies, session secrets, or identity
+  provider internals.
+
+Focused verification:
+  `cd backend && python3 -m pytest tests/test_dev_auth_preview_api.py tests/test_preview_source_governance_resolution.py tests/test_operator_history_payloads.py`.
+
 ## Source-Aware Checklist
 
 ### Auth
 
 - Confirm authenticated subject context is present before source selection,
   preview, approval, or execution.
+- Confirm auth-source, redacted session, normalized governance-binding, and
+  entitlement-decision context is retained in audit-safe surfaces without raw
+  tokens, cookies, CSRF secrets, session secrets, or identity provider internals.
 - Confirm entitlement checks are source-specific for both MSSQL and business
   PostgreSQL.
 - Confirm missing, malformed, placeholder, or mismatched auth context blocks
   before generation or execution.
 - Focused verification:
-  `cd backend && python3 -m pytest tests/test_source_entitlements.py`.
+  `cd backend && python3 -m pytest tests/test_source_entitlements.py tests/test_dev_auth_preview_api.py tests/test_preview_source_governance_resolution.py tests/test_operator_history_payloads.py`.
 
 ### Explicit Source Selection
 
@@ -251,9 +277,10 @@ around the summary that happened to pass last.
 
 - Confirm audit events include source id, source family, source flavor, dialect
   profile version, dataset contract version, schema snapshot version, execution
-  policy version, connector profile version, request id, candidate id or
-  equivalent candidate anchor, user subject, and primary deny code where
-  relevant.
+  policy version, connector profile version, request id, correlation id,
+  candidate id or equivalent candidate anchor, user subject, redacted session,
+  auth source, governance bindings, entitlement decision, and primary deny code
+  where relevant.
 - Confirm denied paths are audited with the same source-aware fields as allowed
   paths.
 - Confirm evaluation results are not treated as a replacement for application

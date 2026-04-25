@@ -148,6 +148,15 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
             payload["audit"]["events"][0]["session_id"],
             "application-session-redacted",
         )
+        self.assertEqual(payload["audit"]["events"][0]["auth_source"], "test-helper")
+        self.assertEqual(
+            payload["audit"]["events"][0]["governance_bindings"],
+            [DEMO_DEV_GOVERNANCE_BINDING],
+        )
+        self.assertEqual(
+            payload["audit"]["events"][0]["entitlement_decision"],
+            "allow",
+        )
         self.assertNotIn(app_session.csrf_token, response.text)
         self.assertNotIn(app_session.cookie_value, response.text)
 
