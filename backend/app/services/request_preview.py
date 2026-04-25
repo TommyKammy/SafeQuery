@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import Optional
 from typing_extensions import Annotated
 from uuid import UUID, uuid4
 
 from app.db.models.dataset_contract import DatasetContract
+from app.db.models.preview import PreviewCandidate, PreviewRequest
 from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource
 from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.auth.context import AuthenticatedSubject
 from app.features.auth.governance_bindings import normalize_governance_binding
+from app.features.operator_history.payloads import GuardStatus
 from app.services.source_entitlements import (
     SourceEntitlementError,
     ensure_subject_is_entitled_for_source,
@@ -25,6 +29,7 @@ from app.services.source_registry import SourceRegistryPostureError
 
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+PREVIEW_PENDING_GUARD_STATUS: GuardStatus = "pending"
 
 
 class PreviewSubmissionRequest(BaseModel):
@@ -246,6 +251,148 @@ def _build_preview_entitlement_denial_audit_event(
     ]
 
 
+def _joined_governance_bindings(bindings: list[str]) -> str | None:
+    return ",".join(sorted(bindings)) if bindings else None
+
+
+def _raise_preview_persistence_contract_error(
+    session: Session,
+    message: str,
+) -> None:
+    session.rollback()
+    raise PreviewSubmissionContractError(message)
+
+
+def _persist_preview_submission_records(
+    session: Session,
+    *,
+    payload: PreviewSubmissionRequest,
+    resolved_source: RegisteredSource,
+    dataset_contract: DatasetContract,
+    schema_snapshot: SchemaSnapshot,
+    authenticated_subject: AuthenticatedSubject,
+    audit_context: PreviewAuditContext | None,
+) -> None:
+    request_id = (
+        audit_context.request_id
+        if audit_context is not None and audit_context.request_id.strip()
+        else str(uuid4())
+    )
+    candidate_id = (
+        audit_context.query_candidate_id
+        if (
+            audit_context is not None
+            and audit_context.query_candidate_id is not None
+            and audit_context.query_candidate_id.strip()
+        )
+        else str(uuid4())
+    )
+    subject_id = authenticated_subject.normalized_subject_id()
+    governance_bindings = _joined_governance_bindings(
+        sorted(authenticated_subject.normalized_governance_bindings())
+    )
+
+    for attempt in range(2):
+        try:
+            preview_request = session.execute(
+                select(PreviewRequest).where(PreviewRequest.request_id == request_id)
+            ).scalar_one_or_none()
+            if preview_request is None:
+                preview_request = PreviewRequest(request_id=request_id)
+                session.add(preview_request)
+            elif preview_request.registered_source_id != resolved_source.id:
+                _raise_preview_persistence_contract_error(
+                    session,
+                    "Preview request cannot be rebound to a different source.",
+                )
+
+            preview_request.registered_source_id = resolved_source.id
+            preview_request.source_id = resolved_source.source_id
+            preview_request.source_family = resolved_source.source_family
+            preview_request.source_flavor = resolved_source.source_flavor
+            preview_request.dataset_contract_id = dataset_contract.id
+            preview_request.dataset_contract_version = dataset_contract.contract_version
+            preview_request.schema_snapshot_id = schema_snapshot.id
+            preview_request.schema_snapshot_version = schema_snapshot.snapshot_version
+            preview_request.authenticated_subject_id = subject_id
+            preview_request.auth_source = (
+                audit_context.auth_source if audit_context is not None else None
+            )
+            preview_request.session_id = (
+                audit_context.session_id if audit_context is not None else None
+            )
+            preview_request.governance_bindings = governance_bindings
+            preview_request.entitlement_decision = "allow"
+            preview_request.request_text = payload.question
+            preview_request.request_state = "previewed"
+            session.flush()
+
+            preview_candidate = session.execute(
+                select(PreviewCandidate).where(
+                    PreviewCandidate.request_id == request_id,
+                    PreviewCandidate.source_id == resolved_source.source_id,
+                )
+            ).scalar_one_or_none()
+            if preview_candidate is None:
+                preview_candidate = session.execute(
+                    select(PreviewCandidate).where(
+                        PreviewCandidate.candidate_id == candidate_id
+                    )
+                ).scalar_one_or_none()
+                if preview_candidate is None:
+                    preview_candidate = PreviewCandidate(candidate_id=candidate_id)
+                    session.add(preview_candidate)
+                elif (
+                    preview_candidate.request_id != request_id
+                    or preview_candidate.source_id != resolved_source.source_id
+                ):
+                    _raise_preview_persistence_contract_error(
+                        session,
+                        "Preview candidate cannot be rebound to a different request or source.",
+                    )
+            elif preview_candidate.candidate_id != candidate_id:
+                _raise_preview_persistence_contract_error(
+                    session,
+                    "Preview candidate cannot be rebound to a different candidate.",
+                )
+
+            if (
+                preview_candidate.preview_request_id is not None
+                and preview_candidate.preview_request_id != preview_request.id
+            ) or (
+                preview_candidate.registered_source_id is not None
+                and preview_candidate.registered_source_id != resolved_source.id
+            ):
+                _raise_preview_persistence_contract_error(
+                    session,
+                    "Preview candidate cannot be rebound to a different request or source.",
+                )
+
+            preview_candidate.preview_request_id = preview_request.id
+            preview_candidate.request_id = request_id
+            preview_candidate.registered_source_id = resolved_source.id
+            preview_candidate.source_id = resolved_source.source_id
+            preview_candidate.source_family = resolved_source.source_family
+            preview_candidate.source_flavor = resolved_source.source_flavor
+            preview_candidate.dataset_contract_id = dataset_contract.id
+            preview_candidate.dataset_contract_version = dataset_contract.contract_version
+            preview_candidate.schema_snapshot_id = schema_snapshot.id
+            preview_candidate.schema_snapshot_version = schema_snapshot.snapshot_version
+            preview_candidate.authenticated_subject_id = subject_id
+            preview_candidate.candidate_sql = None
+            preview_candidate.guard_status = PREVIEW_PENDING_GUARD_STATUS
+            preview_candidate.candidate_state = "preview_ready"
+            session.commit()
+            return
+        except IntegrityError as exc:
+            session.rollback()
+            if attempt == 0:
+                continue
+            raise PreviewSubmissionContractError(
+                "Preview submission could not be persisted consistently."
+            ) from exc
+
+
 def submit_preview_request(
     payload: PreviewSubmissionRequest,
     authenticated_subject: AuthenticatedSubject,
@@ -298,6 +445,15 @@ def submit_preview_request(
             schema_snapshot=schema_snapshot,
             audit_context=audit_context,
         ),
+    )
+    _persist_preview_submission_records(
+        session,
+        payload=payload,
+        resolved_source=resolved_source,
+        dataset_contract=dataset_contract,
+        schema_snapshot=schema_snapshot,
+        authenticated_subject=authenticated_subject,
+        audit_context=audit_context,
     )
 
     return PreviewSubmissionResponse(
