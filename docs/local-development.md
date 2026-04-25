@@ -206,10 +206,11 @@ curl http://localhost:8000/health
 The backend `/health` endpoint is the baseline health check for the app and the
 database connection.
 
-For product evaluation, backend health is necessary but not sufficient. Also
-run the first-run doctor after migrations and demo seed data are applied:
+For product evaluation, backend health is necessary but not sufficient. After
+migrations, seed demo governance data and then run the first-run doctor:
 
 ```bash
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend python -m app.cli.seed_demo_source
 docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend python -m app.cli.first_run_doctor
 ```
 

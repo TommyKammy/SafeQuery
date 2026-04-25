@@ -3,9 +3,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
+import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+import app.services.first_run_doctor as first_run_doctor_service
 from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
 from app.db.models.source_registry import RegisteredSource
@@ -63,6 +65,34 @@ def test_first_run_doctor_fails_closed_when_migration_state_is_missing() -> None
     assert result.status == "fail"
     assert sections["migrations"]["status"] == "fail"
     assert "Alembic migration state is missing" in sections["migrations"]["message"]
+
+
+def test_first_run_doctor_fails_closed_when_migration_metadata_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_head_lookup_error() -> set[str]:
+        raise RuntimeError("missing scripts")
+
+    monkeypatch.setattr(
+        first_run_doctor_service,
+        "_alembic_heads",
+        raise_head_lookup_error,
+    )
+
+    with _session_scope() as session:
+        result = run_first_run_doctor(session, database_probe=lambda: None)
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["migrations"]["status"] == "fail"
+    assert "Unable to read Alembic migration metadata" in sections["migrations"][
+        "message"
+    ]
+    assert sections["migrations"]["detail"] == {
+        "error": "RuntimeError",
+        "applied_revisions": ["0005_retrieval_corpus_scaffold"],
+    }
+    assert "source_registry" in sections
 
 
 def test_first_run_doctor_passes_after_demo_seed() -> None:

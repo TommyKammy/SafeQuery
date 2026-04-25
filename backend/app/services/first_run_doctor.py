@@ -106,7 +106,22 @@ def _check_migrations(session: Session) -> FirstRunDoctorCheck:
             detail={"error": exc.__class__.__name__},
         )
 
-    expected_heads = _alembic_heads()
+    try:
+        expected_heads = _alembic_heads()
+    except Exception as exc:
+        return FirstRunDoctorCheck(
+            name="migrations",
+            status="fail",
+            message=(
+                "Unable to read Alembic migration metadata. Verify "
+                "`backend/alembic.ini` and migration scripts are available, "
+                "then rerun the first-run doctor."
+            ),
+            detail={
+                "error": exc.__class__.__name__,
+                "applied_revisions": sorted(applied_revisions),
+            },
+        )
     if not applied_revisions:
         return FirstRunDoctorCheck(
             name="migrations",
