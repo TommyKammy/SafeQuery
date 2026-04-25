@@ -51,6 +51,19 @@ docker-compose -f infra/docker-compose.yml run --rm backend alembic upgrade head
 docker-compose -f infra/docker-compose.yml run --rm backend alembic current
 ```
 
+After migrations, a local development database can be seeded with one
+non-production demo business source:
+
+```bash
+docker-compose -f infra/docker-compose.yml run --rm backend python -m app.cli.seed_demo_source
+```
+
+The seed is idempotent. It creates only backend-owned source registry, dataset
+contract, allow-listed datasets, and approved schema snapshot records for
+`demo-business-postgres`; the connection reference points at
+`SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` and preserves the application
+PostgreSQL role boundary.
+
 For host-side Alembic commands, point `SAFEQUERY_APP_POSTGRES_URL` at a
 database that is explicitly reachable from your shell before running Alembic:
 

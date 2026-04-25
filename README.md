@@ -141,19 +141,31 @@ docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alem
 docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alembic current
 ```
 
-4. Confirm the UI is reachable:
+4. Seed the local demo source governance records:
+
+```bash
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend python -m app.cli.seed_demo_source
+```
+
+The seed is safe to rerun against a local development database. It creates the
+`demo-business-postgres` source registry record, matching dataset contract, two
+minimal allow-listed demo datasets, and an approved schema snapshot pointer. The
+seed references `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` for the business source
+and does not make application PostgreSQL a business target.
+
+5. Confirm the UI is reachable:
 
 ```bash
 curl -I http://localhost:3000
 ```
 
-5. Confirm the API health endpoint is reachable and healthy:
+6. Confirm the API health endpoint is reachable and healthy:
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-6. Stop the stack when finished:
+7. Stop the stack when finished:
 
 ```bash
 docker-compose --env-file .env -f infra/docker-compose.yml down
