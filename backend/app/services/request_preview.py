@@ -26,7 +26,18 @@ from app.services.source_governance import (
     resolve_authoritative_source_governance,
 )
 from app.services.source_registry import SourceRegistryPostureError
-from app.services.sql_generation_adapter import SQLGenerationAdapterRunMetadata
+from app.services.generation_context import (
+    GenerationContextPreparationError,
+    prepare_generation_context,
+)
+from app.services.sql_generation_adapter import (
+    SQLGenerationAdapter,
+    SQLGenerationAdapterConfigurationError,
+    SQLGenerationAdapterRunMetadata,
+    build_sql_generation_adapter_request,
+    build_sql_generation_adapter_run_metadata,
+    normalize_adapter_generated_sql,
+)
 
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -145,6 +156,7 @@ def _build_preview_lifecycle_audit_events(
     dataset_contract: DatasetContract,
     schema_snapshot: SchemaSnapshot,
     audit_context: PreviewAuditContext | None,
+    adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
         return []
@@ -186,12 +198,52 @@ def _build_preview_lifecycle_audit_events(
                 audit_context.guard_version if event_type == "guard_evaluated" else None
             ),
             application_version=audit_context.application_version,
+            adapter_provider=(
+                adapter_metadata.adapter_provider
+                if adapter_metadata is not None
+                and event_type in {"generation_completed", "guard_evaluated"}
+                else None
+            ),
+            adapter_model=(
+                adapter_metadata.adapter_model
+                if adapter_metadata is not None
+                and event_type in {"generation_completed", "guard_evaluated"}
+                else None
+            ),
+            adapter_version=(
+                adapter_metadata.adapter_version
+                if adapter_metadata is not None
+                and event_type in {"generation_completed", "guard_evaluated"}
+                else None
+            ),
+            adapter_run_id=(
+                adapter_metadata.adapter_run_id
+                if adapter_metadata is not None
+                and event_type in {"generation_completed", "guard_evaluated"}
+                else None
+            ),
+            prompt_version=(
+                adapter_metadata.prompt_version
+                if adapter_metadata is not None
+                and event_type in {"generation_completed", "guard_evaluated"}
+                else None
+            ),
+            prompt_fingerprint=(
+                adapter_metadata.prompt_fingerprint
+                if adapter_metadata is not None
+                and event_type in {"generation_completed", "guard_evaluated"}
+                else None
+            ),
             source_id=resolved_source.source_id,
             source_family=resolved_source.source_family,
             source_flavor=resolved_source.source_flavor,
             dataset_contract_version=dataset_contract.contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
-            candidate_state="preview_ready" if event_type == "guard_evaluated" else None,
+            candidate_state=(
+                "generated"
+                if adapter_metadata is not None and event_type == "generation_completed"
+                else "preview_ready" if event_type == "guard_evaluated" else None
+            ),
         )
         causation_event_id = event.event_id
         events.append(event)
@@ -306,6 +358,44 @@ def _build_preview_unavailable_audit_event(
     ]
 
 
+def _build_preview_generation_failed_audit_event(
+    *,
+    resolved_source: RegisteredSource,
+    dataset_contract: DatasetContract,
+    schema_snapshot: SchemaSnapshot,
+    audit_context: PreviewAuditContext | None,
+    failure_code: str,
+) -> list[SourceAwareAuditEvent]:
+    if audit_context is None:
+        return []
+
+    return [
+        SourceAwareAuditEvent(
+            event_id=uuid4(),
+            event_type="generation_failed",
+            occurred_at=audit_context.occurred_at,
+            request_id=audit_context.request_id,
+            correlation_id=audit_context.correlation_id,
+            user_subject=audit_context.user_subject,
+            session_id=audit_context.session_id,
+            auth_source=audit_context.auth_source,
+            governance_bindings=audit_context.governance_bindings or None,
+            entitlement_decision=audit_context.entitlement_decision,
+            entitlement_source_bindings=(
+                audit_context.entitlement_source_bindings or None
+            ),
+            application_version=audit_context.application_version,
+            source_id=resolved_source.source_id,
+            source_family=resolved_source.source_family,
+            source_flavor=resolved_source.source_flavor,
+            dataset_contract_version=dataset_contract.contract_version,
+            schema_snapshot_version=schema_snapshot.snapshot_version,
+            primary_deny_code="DENY_SQL_GENERATION_FAILED",
+            denial_cause=failure_code,
+        )
+    ]
+
+
 def _joined_governance_bindings(bindings: list[str]) -> str | None:
     return ",".join(sorted(bindings)) if bindings else None
 
@@ -381,6 +471,10 @@ def _persist_preview_submission_records(
     authenticated_subject: AuthenticatedSubject,
     audit_context: PreviewAuditContext | None,
     audit_events: list[SourceAwareAuditEvent],
+    candidate_sql: str | None = None,
+    adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
+    request_state: str = "previewed",
+    candidate_state: str = "preview_ready",
 ) -> tuple[str, str]:
     request_id = (
         audit_context.request_id
@@ -433,7 +527,7 @@ def _persist_preview_submission_records(
             preview_request.governance_bindings = governance_bindings
             preview_request.entitlement_decision = "allow"
             preview_request.request_text = payload.question
-            preview_request.request_state = "previewed"
+            preview_request.request_state = request_state
             session.flush()
 
             preview_candidate = session.execute(
@@ -488,15 +582,27 @@ def _persist_preview_submission_records(
             preview_candidate.schema_snapshot_id = schema_snapshot.id
             preview_candidate.schema_snapshot_version = schema_snapshot.snapshot_version
             preview_candidate.authenticated_subject_id = subject_id
-            preview_candidate.candidate_sql = None
-            preview_candidate.adapter_provider = None
-            preview_candidate.adapter_model = None
-            preview_candidate.adapter_version = None
-            preview_candidate.adapter_run_id = None
-            preview_candidate.prompt_version = None
-            preview_candidate.prompt_fingerprint = None
+            preview_candidate.candidate_sql = candidate_sql
+            preview_candidate.adapter_provider = (
+                adapter_metadata.adapter_provider if adapter_metadata is not None else None
+            )
+            preview_candidate.adapter_model = (
+                adapter_metadata.adapter_model if adapter_metadata is not None else None
+            )
+            preview_candidate.adapter_version = (
+                adapter_metadata.adapter_version if adapter_metadata is not None else None
+            )
+            preview_candidate.adapter_run_id = (
+                adapter_metadata.adapter_run_id if adapter_metadata is not None else None
+            )
+            preview_candidate.prompt_version = (
+                adapter_metadata.prompt_version if adapter_metadata is not None else None
+            )
+            preview_candidate.prompt_fingerprint = (
+                adapter_metadata.prompt_fingerprint if adapter_metadata is not None else None
+            )
             preview_candidate.guard_status = PREVIEW_PENDING_GUARD_STATUS
-            preview_candidate.candidate_state = "preview_ready"
+            preview_candidate.candidate_state = candidate_state
             session.flush()
             _persist_preview_audit_events(
                 session,
@@ -586,6 +692,7 @@ def _persist_preview_denial_records(
     audit_context: PreviewAuditContext | None,
     audit_events: list[SourceAwareAuditEvent],
     request_state: str = "preview_denied",
+    entitlement_decision: str = "deny",
 ) -> None:
     request_id = (
         audit_context.request_id
@@ -626,7 +733,7 @@ def _persist_preview_denial_records(
             audit_context.session_id if audit_context is not None else None
         )
         preview_request.governance_bindings = governance_bindings
-        preview_request.entitlement_decision = "deny"
+        preview_request.entitlement_decision = entitlement_decision
         preview_request.request_text = payload.question
         preview_request.request_state = request_state
         session.flush()
@@ -649,6 +756,7 @@ def submit_preview_request(
     authenticated_subject: AuthenticatedSubject,
     session: Session,
     audit_context: PreviewAuditContext | None = None,
+    sql_generation_adapter: SQLGenerationAdapter | None = None,
 ) -> PreviewSubmissionResponse:
     source, dataset_contract, schema_snapshot = _resolve_authoritative_source_governance(
         session,
@@ -747,6 +855,64 @@ def submit_preview_request(
         entitlement_decision="allow",
     )
 
+    candidate_sql: str | None = None
+    adapter_metadata: SQLGenerationAdapterRunMetadata | None = None
+    if sql_generation_adapter is not None:
+        if audit_context is None:
+            raise PreviewSubmissionContractError(
+                "SQL generation preview requires an audit context."
+            )
+        try:
+            prepared_context = prepare_generation_context(
+                request_id=audit_context.request_id,
+                question=payload.question,
+                source_id=resolved_source.source_id,
+                authenticated_subject=authenticated_subject,
+                session=session,
+            )
+            adapter_request = build_sql_generation_adapter_request(prepared_context)
+            adapter_response = sql_generation_adapter.generate_sql(adapter_request)
+            candidate_sql = normalize_adapter_generated_sql(
+                adapter_response.candidate_sql
+            )
+            adapter_metadata = build_sql_generation_adapter_run_metadata(
+                adapter_request=adapter_request,
+                adapter_response=adapter_response,
+                adapter_run_id=audit_context.correlation_id,
+            )
+        except (
+            GenerationContextPreparationError,
+            SQLGenerationAdapterConfigurationError,
+        ) as exc:
+            failure_code = getattr(exc, "code", "sql_generation_context_unavailable")
+            audit_events = _build_preview_generation_failed_audit_event(
+                resolved_source=resolved_source,
+                dataset_contract=dataset_contract,
+                schema_snapshot=schema_snapshot,
+                audit_context=audit_context,
+                failure_code=failure_code,
+            )
+            _persist_preview_denial_records(
+                session,
+                payload=payload,
+                resolved_source=resolved_source,
+                dataset_contract=dataset_contract,
+                schema_snapshot=schema_snapshot,
+                authenticated_subject=authenticated_subject,
+                audit_context=audit_context,
+                audit_events=audit_events,
+                request_state="preview_generation_failed",
+                entitlement_decision="allow",
+            )
+            raise PreviewSubmissionContractError(
+                str(exc),
+                public_code="preview_generation_failed",
+                public_message=(
+                    "SQL generation failed before an authoritative preview "
+                    "candidate was created."
+                ),
+            ) from exc
+
     audit = AuditRecord(
         source_id=resolved_source.source_id,
         state="recorded",
@@ -755,6 +921,7 @@ def submit_preview_request(
             dataset_contract=dataset_contract,
             schema_snapshot=schema_snapshot,
             audit_context=audit_context,
+            adapter_metadata=adapter_metadata,
         ),
     )
     request_id, candidate_id = _persist_preview_submission_records(
@@ -766,6 +933,8 @@ def submit_preview_request(
         authenticated_subject=authenticated_subject,
         audit_context=audit_context,
         audit_events=audit.events,
+        candidate_sql=candidate_sql,
+        adapter_metadata=adapter_metadata,
     )
 
     return PreviewSubmissionResponse(
@@ -777,7 +946,7 @@ def submit_preview_request(
         ),
         candidate=CandidateRecord(
             candidate_id=candidate_id,
-            candidate_sql=None,
+            candidate_sql=candidate_sql,
             guard_status=PREVIEW_PENDING_GUARD_STATUS,
             source_id=resolved_source.source_id,
             source_family=resolved_source.source_family,

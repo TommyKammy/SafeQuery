@@ -12,7 +12,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.models.dataset_contract import DatasetContract
+from app.db.models.dataset_contract import (
+    DatasetContract,
+    DatasetContractDataset,
+    DatasetContractDatasetKind,
+)
 from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
@@ -24,6 +28,10 @@ from app.services.request_preview import (
     PreviewSubmissionContractError,
     PreviewSubmissionRequest,
     submit_preview_request,
+)
+from app.services.sql_generation_adapter import (
+    SQLGenerationAdapterConfigurationError,
+    SQLGenerationAdapterResponse,
 )
 
 
@@ -72,9 +80,43 @@ def _seed_authoritative_source_governance(
     session.add(contract)
     session.flush()
 
+    session.add(
+        DatasetContractDataset(
+            id=uuid4(),
+            dataset_contract_id=contract.id,
+            schema_name="finance",
+            dataset_name="approved_vendor_spend",
+            dataset_kind=DatasetContractDatasetKind.TABLE,
+        )
+    )
+
     source.dataset_contract_id = contract.id
     source.schema_snapshot_id = snapshot.id
     session.commit()
+
+
+class _RecordingHTTPPreviewAdapter:
+    def __init__(self) -> None:
+        self.adapter_request = None
+
+    def generate_sql(self, request):
+        self.adapter_request = request
+        return SQLGenerationAdapterResponse(
+            candidate_sql=(
+                " SELECT vendor_id FROM finance.approved_vendor_spend LIMIT 50; "
+            ),
+            provider="local_llm",
+            adapter_version="test.local_llm.v1",
+            model="safequery-test-sql",
+        )
+
+
+class _FailingHTTPPreviewAdapter:
+    def generate_sql(self, request):
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_runtime_unhealthy",
+            "SQL generation runtime is unavailable.",
+        )
 
 
 def test_http_preview_submission_persists_request_and_candidate_records() -> None:
@@ -202,6 +244,204 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+        get_settings.cache_clear()
+
+
+def test_http_preview_submission_persists_adapter_generated_candidate(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+    adapter = _RecordingHTTPPreviewAdapter()
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: adapter,
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(session)
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 200
+        response_payload = response.json()
+        request_id = response.headers["X-Request-ID"]
+        candidate_sql = "SELECT vendor_id FROM finance.approved_vendor_spend LIMIT 50"
+
+        assert response_payload["request"]["request_id"] == request_id
+        assert response_payload["candidate"]["candidate_sql"] == candidate_sql
+        assert response_payload["candidate"]["guard_status"] == "pending"
+        assert response_payload["candidate"]["state"] == "preview_ready"
+
+        adapter_payload = adapter.adapter_request.model_dump(mode="json")
+        assert adapter_payload["request_id"] == request_id
+        assert adapter_payload["source"] == {
+            "source_id": "sap-approved-spend",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+        }
+        assert adapter_payload["context"]["datasets"] == [
+            {
+                "schema_name": "finance",
+                "dataset_name": "approved_vendor_spend",
+                "dataset_kind": "table",
+            }
+        ]
+        assert "vault:sap-approved-spend" not in str(adapter_payload)
+        assert "connection_reference" not in str(adapter_payload)
+        assert "connection_string" not in str(adapter_payload)
+        assert "credentials" not in str(adapter_payload).lower()
+
+        persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_generation_event = (
+            session.execute(
+                select(PreviewAuditEvent).where(
+                    PreviewAuditEvent.event_type == "generation_completed"
+                )
+            )
+            .scalars()
+            .one()
+        )
+
+        assert persisted_candidate.candidate_sql == candidate_sql
+        assert persisted_candidate.adapter_provider == "local_llm"
+        assert persisted_candidate.adapter_model == "safequery-test-sql"
+        assert persisted_candidate.adapter_version == "test.local_llm.v1"
+        assert persisted_candidate.adapter_run_id
+        assert persisted_candidate.prompt_version == "sql_generation_adapter_request.v1"
+        assert persisted_candidate.prompt_fingerprint is not None
+        assert "Show approved vendors" not in persisted_candidate.prompt_fingerprint
+        assert {
+            "adapter_provider": "local_llm",
+            "adapter_model": "safequery-test-sql",
+            "adapter_version": "test.local_llm.v1",
+            "adapter_run_id": persisted_candidate.adapter_run_id,
+            "prompt_version": "sql_generation_adapter_request.v1",
+            "prompt_fingerprint": persisted_candidate.prompt_fingerprint,
+        }.items() <= persisted_generation_event.audit_payload.items()
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_http_preview_adapter_failure_persists_authoritative_failure(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: _FailingHTTPPreviewAdapter(),
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(session)
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "error": {
+                "code": "preview_generation_failed",
+                "message": (
+                    "SQL generation failed before an authoritative preview "
+                    "candidate was created."
+                ),
+            }
+        }
+
+        persisted_request = session.execute(select(PreviewRequest)).scalar_one()
+        persisted_events = session.execute(select(PreviewAuditEvent)).scalars().all()
+        persisted_candidates = session.execute(select(PreviewCandidate)).scalars().all()
+
+        assert persisted_request.request_id == response.headers["X-Request-ID"]
+        assert persisted_request.request_state == "preview_generation_failed"
+        assert persisted_request.entitlement_decision == "allow"
+        assert persisted_candidates == []
+        assert len(persisted_events) == 1
+        assert persisted_events[0].event_type == "generation_failed"
+        assert persisted_events[0].primary_deny_code == "DENY_SQL_GENERATION_FAILED"
+        assert persisted_events[0].denial_cause == "sql_generation_runtime_unhealthy"
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
         get_settings.cache_clear()
 
 
