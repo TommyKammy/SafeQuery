@@ -500,6 +500,15 @@ def test_http_preview_context_failure_persists_specific_failure_code(
         )
 
         assert response.status_code == 422
+        assert response.json() == {
+            "error": {
+                "code": "preview_generation_failed",
+                "message": (
+                    "SQL generation failed before an authoritative preview "
+                    "candidate was created."
+                ),
+            }
+        }
 
         persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_events = session.execute(select(PreviewAuditEvent)).scalars().all()
