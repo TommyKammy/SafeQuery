@@ -147,7 +147,14 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
         for _attempt in range(self.retry_count + 1):
             try:
                 response = self._dispatch_local_llm_sql(request)
-            except (HTTPError, URLError, TimeoutError, OSError, ValidationError) as exc:
+            except (
+                HTTPError,
+                URLError,
+                TimeoutError,
+                OSError,
+                ValidationError,
+                json.JSONDecodeError,
+            ) as exc:
                 last_error = exc
                 continue
 

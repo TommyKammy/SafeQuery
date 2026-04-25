@@ -304,6 +304,70 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
     assert "credentials" not in json.dumps(calls[0][2])
 
 
+def test_local_llm_generation_retries_malformed_json_response(monkeypatch) -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "local_llm",
+            "local_llm_base_url": "http://local-llm:8080",
+            "retry_count": 1,
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_80_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+        ),
+    )
+    calls = 0
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            if calls == 1:
+                return b'{"candidate_sql":'
+            return json.dumps(
+                {
+                    "candidate_sql": (
+                        "select vendor_id from approved_vendor_spend limit 50"
+                    ),
+                    "model": "safequery-local-sql",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(http_request, timeout=None):
+        nonlocal calls
+        calls += 1
+        return Response()
+
+    monkeypatch.setattr(adapter_module, "urlopen", fake_urlopen)
+
+    response = adapter.generate_sql(request)
+
+    assert calls == 2
+    assert response.candidate_sql == (
+        "select vendor_id from approved_vendor_spend limit 50"
+    )
+
+
 def test_local_llm_generation_circuit_breaker_fails_closed(monkeypatch) -> None:
     adapter = resolve_sql_generation_adapter(
         {
