@@ -25,6 +25,10 @@ from app.features.auth.context import (
     AuthenticatedSubject,
     require_authenticated_subject,
 )
+from app.features.auth.session import (
+    ApplicationSessionContext,
+    require_application_session,
+)
 from app.services.health import check_database_health
 from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_doctor
 from app.services.request_preview import (
@@ -88,7 +92,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
@@ -182,6 +186,9 @@ def create_app() -> FastAPI:
         authenticated_subject: AuthenticatedSubject = Depends(
             require_authenticated_subject
         ),
+        application_session: ApplicationSessionContext = Depends(
+            require_application_session
+        ),
         session: Session = Depends(require_preview_submission_session),
     ) -> PreviewSubmissionResponse:
         try:
@@ -198,7 +205,7 @@ def create_app() -> FastAPI:
                 request_id=request_id,
                 correlation_id=str(uuid4()),
                 user_subject=user_subject,
-                session_id=str(uuid4()),
+                session_id=application_session.audit_session_id,
                 query_candidate_id=str(uuid4()),
                 candidate_owner_subject=user_subject,
                 application_version=f"safequery-api/{app.version}",
