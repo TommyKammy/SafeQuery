@@ -189,3 +189,48 @@ def test_sql_generation_adapter_registry_selects_configured_providers() -> None:
         "model": "warehouse-assistant",
         "timeout_seconds": 30,
     }
+
+
+def test_sql_generation_adapter_registry_wraps_mapping_validation_errors() -> None:
+    try:
+        resolve_sql_generation_adapter({"provider": "not-a-provider"})
+    except SQLGenerationAdapterConfigurationError as exc:
+        assert exc.code == "sql_generation_settings_invalid"
+        assert isinstance(exc.__cause__, ValidationError)
+    else:
+        raise AssertionError("Expected invalid adapter settings to fail closed.")
+
+
+def test_configured_sql_generation_adapter_fails_closed_before_dispatch() -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "local_llm",
+            "local_llm_base_url": "http://local-llm:8080",
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_80_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+        ),
+    )
+
+    try:
+        adapter.generate_sql(request)
+    except SQLGenerationAdapterConfigurationError as exc:
+        assert exc.code == "sql_generation_provider_not_implemented"
+        assert "dispatch is not implemented" in str(exc)
+    else:
+        raise AssertionError("Expected configured adapter dispatch to fail closed.")

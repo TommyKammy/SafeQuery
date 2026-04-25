@@ -3,7 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Optional, Protocol
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 from typing_extensions import Annotated
 
 from app.core.config import SQLGenerationProvider, SQLGenerationSettings
@@ -110,13 +116,20 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
         self,
         request: SQLGenerationAdapterRequest,
     ) -> SQLGenerationAdapterResponse:
-        raise NotImplementedError(
-            "Concrete SQL generation provider dispatch is not implemented yet."
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_provider_not_implemented",
+            f"Provider '{self.provider}' is configured but dispatch is not implemented.",
         )
 
 
 def _settings_from_mapping(settings: Mapping[str, object]) -> SQLGenerationSettings:
-    return SQLGenerationSettings.model_validate(settings)
+    try:
+        return SQLGenerationSettings.model_validate(settings)
+    except ValidationError as exc:
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_settings_invalid",
+            "SQL generation adapter settings are invalid.",
+        ) from exc
 
 
 def resolve_sql_generation_adapter(
