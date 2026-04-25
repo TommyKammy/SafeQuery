@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import create_engine
@@ -11,10 +11,15 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
+from app.db.models.preview import PreviewAuditEvent
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
-from app.services.operator_workflow import get_operator_workflow_snapshot
+from app.services.operator_workflow import (
+    _latest_candidate_events,
+    _latest_request_events,
+    get_operator_workflow_snapshot,
+)
 from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
@@ -96,6 +101,90 @@ def _audit_context(*, request_id: str, candidate_id: str | None = None) -> Previ
         query_candidate_id=candidate_id,
         candidate_owner_subject="user:alice" if candidate_id is not None else None,
         auth_source="test-helper",
+    )
+
+
+def _audit_event(
+    *,
+    event_id: UUID,
+    lifecycle_order: int,
+    event_type: str,
+    request_id: str = "preview-request-234",
+    candidate_id: str | None = None,
+) -> PreviewAuditEvent:
+    return PreviewAuditEvent(
+        event_id=event_id,
+        lifecycle_order=lifecycle_order,
+        preview_request_id=uuid4(),
+        preview_candidate_id=uuid4() if candidate_id is not None else None,
+        request_id=request_id,
+        candidate_id=candidate_id,
+        event_type=event_type,
+        occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+        correlation_id=f"{request_id}-correlation",
+        authenticated_subject_id="user:alice",
+        session_id=f"{request_id}-session",
+        source_id="sap-approved-spend",
+        source_family="postgresql",
+        source_flavor="warehouse",
+        audit_payload={"event_type": event_type},
+    )
+
+
+def test_latest_audit_event_selection_uses_lifecycle_order_when_timestamps_tie() -> None:
+    submitted = _audit_event(
+        event_id=UUID("00000000-0000-4000-8000-000000000001"),
+        lifecycle_order=1,
+        event_type="query_submitted",
+    )
+    completed = _audit_event(
+        event_id=UUID("00000000-0000-4000-8000-000000000002"),
+        lifecycle_order=3,
+        event_type="generation_completed",
+        candidate_id="preview-candidate-234",
+    )
+    evaluated = _audit_event(
+        event_id=UUID("00000000-0000-4000-8000-000000000003"),
+        lifecycle_order=4,
+        event_type="guard_evaluated",
+        candidate_id="preview-candidate-234",
+    )
+
+    assert (
+        _latest_request_events([submitted, completed, evaluated])["preview-request-234"]
+        is evaluated
+    )
+    assert (
+        _latest_candidate_events([completed, evaluated])["preview-candidate-234"]
+        is evaluated
+    )
+
+
+def test_latest_audit_event_selection_uses_event_id_when_lifecycle_order_ties() -> None:
+    lower_event_id = _audit_event(
+        event_id=UUID("00000000-0000-4000-8000-000000000001"),
+        lifecycle_order=4,
+        event_type="guard_evaluated",
+        candidate_id="preview-candidate-234",
+    )
+    higher_event_id = _audit_event(
+        event_id=UUID("00000000-0000-4000-8000-000000000002"),
+        lifecycle_order=4,
+        event_type="guard_evaluated_retry",
+        candidate_id="preview-candidate-234",
+    )
+
+    assert (
+        _latest_request_events([lower_event_id, higher_event_id])[
+            "preview-request-234"
+        ]
+        is higher_event_id
+    )
+    assert (
+        _latest_candidate_events([lower_event_id, higher_event_id])[
+            "preview-candidate-234"
+        ]
+        is higher_event_id
     )
 
 

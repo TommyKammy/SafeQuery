@@ -65,28 +65,47 @@ def _request_labels_by_id(requests: list[PreviewRequest]) -> dict[str, str]:
     return {request.request_id: request.request_text for request in requests}
 
 
-def _latest_request_event_times(
+def _audit_event_sort_key(event: PreviewAuditEvent) -> tuple[datetime, int, str]:
+    return (
+        _as_utc_datetime(event.occurred_at),
+        event.lifecycle_order,
+        str(event.event_id),
+    )
+
+
+def _latest_request_events(
     audit_events: list[PreviewAuditEvent],
-) -> dict[str, datetime]:
-    latest: dict[str, datetime] = {}
+) -> dict[str, PreviewAuditEvent]:
+    latest: dict[str, PreviewAuditEvent] = {}
     for event in audit_events:
         current = latest.get(event.request_id)
-        if current is None or event.occurred_at > current:
-            latest[event.request_id] = event.occurred_at
+        if current is None or _audit_event_sort_key(event) > _audit_event_sort_key(
+            current
+        ):
+            latest[event.request_id] = event
     return latest
 
 
-def _latest_candidate_event_times(
+def _latest_candidate_events(
     audit_events: list[PreviewAuditEvent],
-) -> dict[str, datetime]:
-    latest: dict[str, datetime] = {}
+) -> dict[str, PreviewAuditEvent]:
+    latest: dict[str, PreviewAuditEvent] = {}
     for event in audit_events:
         if event.candidate_id is None:
             continue
         current = latest.get(event.candidate_id)
-        if current is None or event.occurred_at > current:
-            latest[event.candidate_id] = event.occurred_at
+        if current is None or _audit_event_sort_key(event) > _audit_event_sort_key(
+            current
+        ):
+            latest[event.candidate_id] = event
     return latest
+
+
+def _history_occurred_at(
+    event: PreviewAuditEvent | None,
+    fallback: datetime,
+) -> datetime:
+    return _as_utc_datetime(event.occurred_at if event is not None else fallback)
 
 
 def _build_operator_history(
@@ -96,12 +115,22 @@ def _build_operator_history(
 ) -> list[OperatorWorkflowHistoryItem]:
     requests = session.execute(select(PreviewRequest)).scalars().all()
     candidates = session.execute(select(PreviewCandidate)).scalars().all()
-    audit_events = session.execute(select(PreviewAuditEvent)).scalars().all()
+    audit_events = (
+        session.execute(
+            select(PreviewAuditEvent).order_by(
+                PreviewAuditEvent.occurred_at,
+                PreviewAuditEvent.lifecycle_order,
+                PreviewAuditEvent.event_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     source_labels = _source_labels_by_id(sources)
     request_labels = _request_labels_by_id(requests)
-    request_event_times = _latest_request_event_times(audit_events)
-    candidate_event_times = _latest_candidate_event_times(audit_events)
+    request_events = _latest_request_events(audit_events)
+    candidate_events = _latest_candidate_events(audit_events)
 
     history: list[OperatorWorkflowHistoryItem] = []
     for candidate in candidates:
@@ -113,11 +142,9 @@ def _build_operator_history(
                 source_id=candidate.source_id,
                 source_label=source_labels.get(candidate.source_id, candidate.source_id),
                 lifecycle_state=candidate.candidate_state,
-                occurred_at=_as_utc_datetime(
-                    candidate_event_times.get(
-                        candidate.candidate_id,
-                        candidate.updated_at or candidate.created_at,
-                    )
+                occurred_at=_history_occurred_at(
+                    candidate_events.get(candidate.candidate_id),
+                    candidate.updated_at or candidate.created_at,
                 ),
                 guard_status=candidate.guard_status,
             )
@@ -132,11 +159,9 @@ def _build_operator_history(
                 source_id=request.source_id,
                 source_label=source_labels.get(request.source_id, request.source_id),
                 lifecycle_state=request.request_state,
-                occurred_at=_as_utc_datetime(
-                    request_event_times.get(
-                        request.request_id,
-                        request.updated_at or request.created_at,
-                    )
+                occurred_at=_history_occurred_at(
+                    request_events.get(request.request_id),
+                    request.updated_at or request.created_at,
                 ),
             )
         )
