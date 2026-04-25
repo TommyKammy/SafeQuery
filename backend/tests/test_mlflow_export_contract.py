@@ -17,6 +17,7 @@ from app.features.mlflow_export import (
     MLflowEvaluationArtifactLink,
     MLflowRedactedSample,
     MLflowExportPayload,
+    export_adapter_run_trace_from_audit_event,
     prepare_mlflow_export_from_audit_event,
     prepare_mlflow_export_from_evaluation_scenario,
     build_mlflow_export_from_audit_event,
@@ -97,6 +98,82 @@ def test_mlflow_export_payload_serializes_source_aware_audit_metadata() -> None:
     assert "raw_result_set" not in serialized
     assert "user_subject" not in serialized
     assert serialized["safequery_audit_event_id"] != serialized["mlflow_run_id"]
+
+
+def test_mlflow_adapter_run_trace_exports_safe_supplemental_metadata() -> None:
+    audit_event = _execution_audit_event(
+        adapter_provider="local_llm",
+        adapter_model="safequery-test-sql",
+        adapter_version="test.local_llm.v1",
+        adapter_run_id="correlation-123",
+        prompt_version="sql_generation_adapter_request.v1",
+    )
+    exported: list[dict[str, object]] = []
+
+    decision = export_adapter_run_trace_from_audit_event(
+        audit_event,
+        enabled=True,
+        export_sink=lambda payload: exported.append(
+            payload.model_dump(exclude_none=True)
+        ),
+        mlflow_run_id="mlflow-run-123",
+    )
+
+    assert decision.payload is not None
+    assert decision.suppressed is False
+    assert len(exported) == 1
+    serialized = exported[0]
+    assert {
+        "adapter_provider": "local_llm",
+        "adapter_model": "safequery-test-sql",
+        "adapter_version": "test.local_llm.v1",
+        "adapter_run_id": "correlation-123",
+        "prompt_version": "sql_generation_adapter_request.v1",
+    }.items() <= serialized.items()
+    assert serialized["authority"] == "engineering_observability"
+    assert serialized["can_authorize_or_mutate_audit"] is False
+    assert "connection_reference" not in serialized
+    assert "credentials" not in serialized
+    assert "canonical_sql" not in serialized
+
+
+def test_mlflow_adapter_run_trace_disabled_does_not_export() -> None:
+    exported: list[MLflowExportPayload] = []
+
+    decision = export_adapter_run_trace_from_audit_event(
+        _execution_audit_event(),
+        enabled=False,
+        export_sink=exported.append,
+        mlflow_run_id="mlflow-run-123",
+    )
+
+    assert decision.payload is None
+    assert decision.suppressed is False
+    assert exported == []
+
+
+def test_mlflow_adapter_run_trace_failure_is_non_blocking() -> None:
+    audit_event = _execution_audit_event(
+        adapter_provider="local_llm",
+        adapter_model="safequery-test-sql",
+        adapter_run_id="correlation-123",
+    )
+
+    def failing_sink(payload: MLflowExportPayload) -> None:
+        raise RuntimeError("mlflow unavailable")
+
+    decision = export_adapter_run_trace_from_audit_event(
+        audit_event,
+        enabled=True,
+        export_sink=failing_sink,
+        mlflow_run_id="mlflow-run-123",
+    )
+
+    assert decision.payload is not None
+    assert decision.suppressed is True
+    assert decision.reasons == ("export_sink_failed:RuntimeError",)
+    assert decision.safequery_audit_event_id == audit_event.event_id
+    assert decision.request_id == audit_event.request_id
 
 
 def test_mlflow_export_audit_builder_rejects_missing_source_versions() -> None:
@@ -360,6 +437,7 @@ def test_mlflow_evaluation_export_rejects_inconsistent_token_counts() -> None:
         "execution_approval_state",
         "guard_decision",
         "identity_claims",
+        "connection_reference",
         "release_gate_status",
         "runtime_safety_state",
         "sql_guard_decision",
@@ -388,6 +466,26 @@ def test_mlflow_export_payload_rejects_prohibited_data_classes(
         f"MLflow export payload includes prohibited field(s): {prohibited_field}"
         in str(exc_info.value)
     )
+
+
+def test_mlflow_export_payload_rejects_raw_workstation_local_paths() -> None:
+    workstation_path = "/" + "/".join(("Users", "sample-operator", "SafeQuery"))
+
+    with pytest.raises(ValidationError) as exc_info:
+        MLflowExportPayload(
+            export_kind="audit_trace",
+            safequery_audit_event_id=uuid4(),
+            request_id="request-123",
+            source_id="business-mssql-source",
+            source_family="mssql",
+            source_flavor="sqlserver",
+            dataset_contract_version=3,
+            schema_snapshot_version=7,
+            execution_policy_version=2,
+            model_version=workstation_path,
+        )
+
+    assert "raw workstation-local path field(s): model_version" in str(exc_info.value)
 
 
 def test_mlflow_export_payload_rejects_mlflow_as_audit_authority() -> None:
