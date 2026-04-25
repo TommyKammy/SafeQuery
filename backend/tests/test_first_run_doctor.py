@@ -131,6 +131,24 @@ def test_first_run_doctor_fails_closed_when_source_seed_is_missing() -> None:
     ]
 
 
+def test_first_run_doctor_fails_closed_when_source_governance_tables_are_missing() -> None:
+    with _session_scope() as session:
+        session.execute(text("DROP TABLE registered_sources"))
+        session.commit()
+
+        result = run_first_run_doctor(session, database_probe=lambda: None)
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["source_registry"]["status"] == "fail"
+    assert sections["source_registry"]["detail"] == {"error": "OperationalError"}
+    assert sections["dataset_contract"]["status"] == "fail"
+    assert sections["schema_snapshot"]["status"] == "fail"
+    assert sections["entitlement_seed"]["status"] == "fail"
+    assert sections["backend"]["status"] == "pass"
+    assert sections["frontend"]["status"] == "pass"
+
+
 def test_first_run_doctor_fails_closed_when_contract_or_snapshot_link_is_missing() -> None:
     with _session_scope() as session:
         seed_demo_source_governance(session)

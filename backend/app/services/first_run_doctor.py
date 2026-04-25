@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +25,8 @@ from app.services.source_entitlements import (
     SourceEntitlementError,
     ensure_subject_is_entitled_for_source,
 )
+
+logger = logging.getLogger(__name__)
 
 DoctorStatus = Literal["pass", "fail", "degraded"]
 
@@ -331,6 +334,48 @@ def _check_entitlement_seed(
     )
 
 
+def _source_governance_unavailable_checks(
+    exc: SQLAlchemyError,
+) -> list[FirstRunDoctorCheck]:
+    error_detail = {"error": exc.__class__.__name__}
+    return [
+        FirstRunDoctorCheck(
+            name="source_registry",
+            status="fail",
+            message=(
+                "Unable to read demo source readiness data from the database. "
+                "Run `alembic upgrade head`, then rerun "
+                "`python -m app.cli.seed_demo_source`."
+            ),
+            detail=error_detail,
+        ),
+        FirstRunDoctorCheck(
+            name="dataset_contract",
+            status="fail",
+            message=(
+                "Dataset contract readiness could not be evaluated because "
+                "source readiness data is unavailable."
+            ),
+        ),
+        FirstRunDoctorCheck(
+            name="schema_snapshot",
+            status="fail",
+            message=(
+                "Schema snapshot readiness could not be evaluated because "
+                "source readiness data is unavailable."
+            ),
+        ),
+        FirstRunDoctorCheck(
+            name="entitlement_seed",
+            status="fail",
+            message=(
+                "Entitlement seed readiness could not be evaluated because "
+                "source readiness data is unavailable."
+            ),
+        ),
+    ]
+
+
 def _check_backend_expectation(backend_base_url: str) -> FirstRunDoctorCheck:
     normalized = backend_base_url.rstrip("/")
     return FirstRunDoctorCheck(
@@ -375,17 +420,26 @@ def run_first_run_doctor(
         _check_migrations(session),
     ]
 
-    active_sources = _active_demo_sources(session)
-    primary_source = active_sources[0] if active_sources else None
-    contract = _load_linked_contract(session, primary_source)
-    snapshot = _load_linked_snapshot(session, primary_source)
+    try:
+        active_sources = _active_demo_sources(session)
+        primary_source = active_sources[0] if active_sources else None
+        contract = _load_linked_contract(session, primary_source)
+        snapshot = _load_linked_snapshot(session, primary_source)
+
+        checks.extend(
+            [
+                _check_source_registry(active_sources),
+                _check_dataset_contract(session, primary_source, contract, snapshot),
+                _check_schema_snapshot(primary_source, snapshot),
+                _check_entitlement_seed(primary_source, contract),
+            ]
+        )
+    except SQLAlchemyError as exc:
+        logger.exception("First-run doctor could not read source governance data.")
+        checks.extend(_source_governance_unavailable_checks(exc))
 
     checks.extend(
         [
-            _check_source_registry(active_sources),
-            _check_dataset_contract(session, primary_source, contract, snapshot),
-            _check_schema_snapshot(primary_source, snapshot),
-            _check_entitlement_seed(primary_source, contract),
             _check_backend_expectation(resolved_backend_base_url),
             _check_frontend_expectation(
                 resolved_frontend_base_url,
