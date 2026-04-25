@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
-from app.db.models.preview import PreviewCandidate, PreviewRequest
+from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.db.session import require_preview_submission_session
@@ -27,14 +27,18 @@ from app.services.request_preview import (
 )
 
 
-def _seed_authoritative_source_governance(session: Session) -> None:
+def _seed_authoritative_source_governance(
+    session: Session,
+    *,
+    source_posture: SourceActivationPosture = SourceActivationPosture.ACTIVE,
+) -> None:
     source = RegisteredSource(
         id=uuid4(),
         source_id="sap-approved-spend",
         display_label="SAP spend cube / approved_vendor_spend",
         source_family="postgresql",
         source_flavor="warehouse",
-        activation_posture=SourceActivationPosture.ACTIVE,
+        activation_posture=source_posture,
         connector_profile_id=None,
         dialect_profile_id=None,
         dataset_contract_id=None,
@@ -127,6 +131,13 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
 
         persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_events = (
+            session.execute(
+                select(PreviewAuditEvent).order_by(PreviewAuditEvent.lifecycle_order)
+            )
+            .scalars()
+            .all()
+        )
 
         assert persisted_request.request_id == request_id
         assert persisted_request.request_text == (
@@ -154,6 +165,30 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert persisted_candidate.registered_source_id == persisted_request.registered_source_id
         assert persisted_candidate.dataset_contract_id == persisted_request.dataset_contract_id
         assert persisted_candidate.schema_snapshot_id == persisted_request.schema_snapshot_id
+
+        assert [event.event_type for event in persisted_events] == [
+            "query_submitted",
+            "generation_requested",
+            "generation_completed",
+            "guard_evaluated",
+        ]
+        assert all(
+            event.preview_request_id == persisted_request.id for event in persisted_events
+        )
+        assert all(
+            event.preview_candidate_id == persisted_candidate.id
+            for event in persisted_events
+        )
+        assert all(event.request_id == request_id for event in persisted_events)
+        assert persisted_events[-1].candidate_id == response_candidate_id
+        assert persisted_events[-1].candidate_state == "preview_ready"
+        assert persisted_events[-1].audit_payload["event_type"] == "guard_evaluated"
+        assert persisted_events[-1].audit_payload["query_candidate_id"] == (
+            response_candidate_id
+        )
+        serialized_events = str([event.audit_payload for event in persisted_events])
+        assert app_session.csrf_token not in serialized_events
+        assert app_session.cookie_value not in serialized_events
     finally:
         session.close()
         engine.dispose()
@@ -221,6 +256,163 @@ def test_preview_submission_updates_existing_request_and_candidate_records() -> 
     assert persisted_candidates[0].candidate_id == "preview-candidate-231"
     assert persisted_candidates[0].request_id == "preview-request-231"
     assert persisted_candidates[0].source_id == "sap-approved-spend"
+
+
+def test_http_preview_entitlement_denial_persists_audit_event_without_secrets() -> None:
+    previous_env = {
+        name: os.environ.get(name)
+        for name in (
+            "SAFEQUERY_APP_POSTGRES_URL",
+            "SAFEQUERY_SESSION_SIGNING_KEY",
+        )
+    }
+    os.environ["SAFEQUERY_APP_POSTGRES_URL"] = (
+        "postgresql://safequery:safequery@db:5432/safequery"
+    )
+    os.environ["SAFEQUERY_SESSION_SIGNING_KEY"] = "x" * 32
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:unentitled-analysts"}),
+    )
+
+    main_module = importlib.import_module("app.main")
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(session)
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 403
+        request_id = response.headers["X-Request-ID"]
+        persisted_request = session.execute(select(PreviewRequest)).scalar_one()
+        persisted_events = session.execute(select(PreviewAuditEvent)).scalars().all()
+        persisted_candidates = session.execute(select(PreviewCandidate)).scalars().all()
+
+        assert persisted_candidates == []
+        assert persisted_request.request_id == request_id
+        assert persisted_request.request_state == "preview_denied"
+        assert persisted_request.entitlement_decision == "deny"
+        assert persisted_request.request_text == (
+            "Show approved vendors by quarterly spend"
+        )
+        assert len(persisted_events) == 1
+        assert persisted_events[0].preview_request_id == persisted_request.id
+        assert persisted_events[0].preview_candidate_id is None
+        assert persisted_events[0].event_type == "generation_failed"
+        assert persisted_events[0].primary_deny_code == "DENY_SOURCE_ENTITLEMENT"
+        assert persisted_events[0].audit_payload["denial_cause"] == (
+            "entitlement_denied"
+        )
+        serialized_events = str([event.audit_payload for event in persisted_events])
+        assert app_session.csrf_token not in serialized_events
+        assert app_session.cookie_value not in serialized_events
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        for name, value in previous_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        get_settings.cache_clear()
+
+
+def test_http_preview_unavailable_source_persists_audit_event() -> None:
+    previous_env = {
+        name: os.environ.get(name)
+        for name in (
+            "SAFEQUERY_APP_POSTGRES_URL",
+            "SAFEQUERY_SESSION_SIGNING_KEY",
+        )
+    }
+    os.environ["SAFEQUERY_APP_POSTGRES_URL"] = (
+        "postgresql://safequery:safequery@db:5432/safequery"
+    )
+    os.environ["SAFEQUERY_SESSION_SIGNING_KEY"] = "x" * 32
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+
+    main_module = importlib.import_module("app.main")
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(
+            session,
+            source_posture=SourceActivationPosture.PAUSED,
+        )
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 422
+        request_id = response.headers["X-Request-ID"]
+        persisted_request = session.execute(select(PreviewRequest)).scalar_one()
+        persisted_event = session.execute(select(PreviewAuditEvent)).scalar_one()
+
+        assert persisted_request.request_id == request_id
+        assert persisted_request.request_state == "preview_unavailable"
+        assert persisted_request.entitlement_decision == "deny"
+        assert persisted_event.preview_request_id == persisted_request.id
+        assert persisted_event.preview_candidate_id is None
+        assert persisted_event.event_type == "generation_failed"
+        assert persisted_event.primary_deny_code == "DENY_SOURCE_UNAVAILABLE"
+        assert persisted_event.denial_cause == "source_unavailable"
+        assert persisted_event.audit_payload["source_id"] == "sap-approved-spend"
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        for name, value in previous_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        get_settings.cache_clear()
 
 
 def test_preview_submission_rejects_candidate_rebind_by_request_source_key() -> None:

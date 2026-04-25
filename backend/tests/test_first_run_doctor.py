@@ -31,7 +31,7 @@ def _session_scope() -> Iterator[Session]:
         session.execute(
             text(
                 "INSERT INTO alembic_version (version_num) "
-                "VALUES ('0006_preview_persistence')"
+                "VALUES ('0007_preview_audit_event_persistence')"
             )
         )
         session.commit()
@@ -125,7 +125,7 @@ def test_first_run_doctor_fails_closed_when_migration_metadata_is_unreadable(
     ]
     assert sections["migrations"]["detail"] == {
         "error": "RuntimeError",
-        "applied_revisions": ["0006_preview_persistence"],
+        "applied_revisions": ["0007_preview_audit_event_persistence"],
     }
     assert "source_registry" in sections
 

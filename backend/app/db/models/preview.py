@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -120,4 +121,70 @@ class PreviewCandidate(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class PreviewAuditEvent(Base):
+    __tablename__ = "preview_audit_events"
+    __table_args__ = (UniqueConstraint("event_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        SqlAlchemyUuid,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(SqlAlchemyUuid, nullable=False)
+    lifecycle_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    preview_request_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("preview_requests.id"),
+        nullable=False,
+    )
+    preview_candidate_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("preview_candidates.id"),
+        nullable=True,
+    )
+    request_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    correlation_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    causation_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        SqlAlchemyUuid,
+        nullable=True,
+    )
+    authenticated_subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    governance_bindings: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    entitlement_decision: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+    entitlement_source_bindings: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    application_version: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    source_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_family: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_flavor: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    dataset_contract_version: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    schema_snapshot_version: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    primary_deny_code: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    denial_cause: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    candidate_state: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    audit_payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
     )
