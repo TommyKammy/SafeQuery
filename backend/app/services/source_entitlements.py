@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.db.models.dataset_contract import DatasetContract
 from app.db.models.source_registry import RegisteredSource
 from app.features.auth.context import AuthenticatedSubject
+from app.features.auth.governance_bindings import normalize_governance_binding
 from app.services.source_registry import (
     SourceRegistryPostureError,
     ensure_source_is_executable,
@@ -13,21 +14,14 @@ class SourceEntitlementError(PermissionError):
     """Raised when a subject is not entitled to use a selected registered source."""
 
 
-def _normalized_binding(binding: str | None) -> str | None:
-    if binding is None:
-        return None
-    normalized = binding.strip()
-    if not normalized:
-        return None
-    return normalized
-
-
 def _contract_execution_entitlement_bindings(contract: DatasetContract) -> frozenset[str]:
     # Execution entitlement is currently limited to source operators.
     # Review and exception bindings remain available for future role-aware policies
     # but must not implicitly grant execution eligibility.
     bindings = {
-        normalized for binding in (contract.owner_binding,) if (normalized := _normalized_binding(binding))
+        normalized
+        for binding in (contract.owner_binding,)
+        if (normalized := normalize_governance_binding(binding)) is not None
     }
     return frozenset(bindings)
 

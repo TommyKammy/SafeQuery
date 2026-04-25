@@ -93,6 +93,23 @@ class SourceEntitlementTestCase(unittest.TestCase):
         ):
             ensure_subject_is_entitled_for_source(subject, source, contract)
 
+    def test_malformed_matching_binding_is_denied(self) -> None:
+        source = _registered_source(source_id="sap-approved-spend")
+        contract = _dataset_contract(
+            registered_source_id=source.id,
+            owner_binding="finance-analysts",
+        )
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"finance-analysts"}),
+        )
+
+        with self.assertRaisesRegex(
+            SourceEntitlementError,
+            "has no execution-eligible source-scoped governance bindings",
+        ):
+            ensure_subject_is_entitled_for_source(subject, source, contract)
+
     def test_subject_matching_only_security_review_binding_is_denied(self) -> None:
         source = _registered_source(source_id="sap-approved-spend")
         contract = _dataset_contract(

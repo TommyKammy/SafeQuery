@@ -4,12 +4,7 @@ from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Request
 
-
-def _normalize_binding(binding: str) -> str | None:
-    normalized = binding.strip()
-    if not normalized:
-        return None
-    return normalized
+from app.features.auth.governance_bindings import normalize_governance_binding
 
 
 @dataclass(frozen=True)
@@ -30,7 +25,7 @@ class AuthenticatedSubject:
         normalized_bindings = {
             normalized
             for binding in self.governance_bindings
-            if (normalized := _normalize_binding(binding)) is not None
+            if (normalized := normalize_governance_binding(binding)) is not None
         }
         return frozenset(normalized_bindings)
 
