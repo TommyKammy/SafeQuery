@@ -22,6 +22,30 @@ _SAFE_API_ERROR_CODES = frozenset(
     }
 )
 
+_SAFE_ENTITLEMENT_DENIAL_AUDIT_FIELDS = frozenset(
+    {
+        "event_id",
+        "event_type",
+        "occurred_at",
+        "request_id",
+        "correlation_id",
+        "user_subject",
+        "session_id",
+        "auth_source",
+        "governance_bindings",
+        "entitlement_decision",
+        "entitlement_source_bindings",
+        "application_version",
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "primary_deny_code",
+        "denial_cause",
+    }
+)
+
 
 def api_error(
     status_code: int,
@@ -130,7 +154,17 @@ def _safe_http_exception_audit(
     if not all(isinstance(event, dict) for event in events):
         return None
 
-    return {"events": events}
+    return {
+        "events": [
+            {
+                key: value
+                for key, value in event.items()
+                if isinstance(key, str)
+                and key in _SAFE_ENTITLEMENT_DENIAL_AUDIT_FIELDS
+            }
+            for event in events
+        ]
+    }
 
 
 async def handle_http_exception(
