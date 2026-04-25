@@ -1,30 +1,77 @@
-# SafeQuery Baseline
+# SafeQuery Source-Aware Baseline
 
-SafeQuery is a controlled enterprise NL2SQL application. This repository checkpoint establishes the minimum local baseline for:
+SafeQuery is a controlled enterprise NL2SQL application. This repository now
+captures the source-aware core service baseline for the first productized local
+run:
 
-- a Next.js frontend
-- a FastAPI backend
-- a PostgreSQL application database
+- a Next.js operator workflow shell
+- a FastAPI backend control plane
+- an application PostgreSQL system of record
+- Alembic migrations for source registry, dataset, schema snapshot, retrieval,
+  and related control-plane records
+- source-aware preview, audit, evaluation, and operator-workflow contracts
 
-The baseline intentionally stops at placeholder UI and health-oriented API behavior. No auth, SQL generation, SQL guard, or SQL execution logic is implemented yet.
-
-The current Epic A frontend should be treated as a developer state demo, not the intended production information architecture. It exists to make the baseline lifecycle and review states concrete while SafeQuery is still wiring the trusted backend boundary.
-
-For future UI implementation work, the next authoritative UI direction is the UX-1 workflow-first operator shell contract in [docs/design/operator-workflow-information-architecture.md](./docs/design/operator-workflow-information-architecture.md). Contributors should use that document as the source of truth for production-facing shell structure, workflow regions, and operator navigation rather than extending the current top-level demo shell as if it were the final product IA.
+The current baseline is intentionally application-owned. The backend-owned
+source registry controls which business sources can be selected, application
+PostgreSQL remains separate from business-source credentials, and execution must
+stay candidate-only through server-owned candidate identifiers. The browser, SQL
+generation adapter, LLM, analyst surface, search surface, and MLflow exports do
+not receive execution authority.
 
 ## Repository Shape
 
 ```text
-frontend/  Next.js UI placeholder and local stack status surface
-backend/   FastAPI API placeholder and PostgreSQL-backed health checks
+frontend/  Next.js operator workflow shell and product-state surfaces
+backend/   FastAPI control plane, migrations, source registry, and contracts
 infra/     Docker Compose baseline for local startup
-tests/     Focused smoke checks for repository structure
-docs/      Architecture and requirements source material
+tests/     Focused smoke checks for repository and documentation contracts
+docs/      Architecture, requirements, roadmap, and local development guides
 ```
 
-## Local Startup
+## Product evaluation flow
 
-For the full baseline startup workflow, including env setup, compose startup,
+Use this path when you want to inspect the current product baseline as a
+non-developer evaluator:
+
+1. Create `.env` from the checked-in example.
+2. Start the compose stack.
+3. Run migrations.
+4. Open the frontend at `http://localhost:3000`.
+5. Confirm the backend health endpoint at `http://localhost:8000/health`.
+6. Confirm the operator shell can load source registry options from the backend
+   instead of relying on hard-coded source names.
+
+A successful first run should show the workflow-first operator shell, reachable
+backend health, an application PostgreSQL-backed control plane, and source
+registry readiness for reviewed source records. The local baseline can exercise
+source-aware request and preview contracts, but it should not be read as a
+complete production pilot.
+
+Known product-readiness gaps remain for later Epic K/O/P work:
+
+- real authentication and session wiring
+- production SQL generation adapter integration
+- fully persisted candidate and run history
+- final execute-path wiring for approved candidates
+- production deployment, secrets, and release operations
+
+The operator shell direction is defined in
+`docs/design/operator-workflow-information-architecture.md`; extend that
+workflow-first contract rather than reintroducing placeholder-only health UI.
+
+Optional governed search, analyst-style orchestration, and MLflow integrations
+are extension tracks. They can observe or enrich the product when separately
+enabled, but they are not prerequisites for the core SafeQuery control path and
+must not become trusted execution or authorization authorities.
+
+Future MySQL, MariaDB, Aurora, Oracle, Search, Analyst, and MLflow UI activation
+work remains planned metadata or optional extension work unless a later issue
+explicitly activates it. First-run productization must not infer those families
+from docs, service names, driver names, or placeholder configuration.
+
+## Developer setup flow
+
+For the full local startup workflow, including env setup, compose startup,
 migrations, and troubleshooting, use
 [docs/local-development.md](./docs/local-development.md).
 
@@ -63,10 +110,12 @@ Keep the local roles distinct from the start:
   `app-postgres` service for SafeQuery-owned state
 - business PostgreSQL source uses
   `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` and the
-  `business-postgres-source` service for later generation-context work
+  `business-postgres-source` service for source-specific context work
 - business MSSQL source uses
   `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING` and the
-  `business-mssql-source` service for later execution-path work
+  `business-mssql-source` service for source-specific connector work
+
+This role split does not make the application database a business target.
 
 2. Start the local stack:
 
@@ -74,38 +123,37 @@ Keep the local roles distinct from the start:
 docker-compose --env-file .env -f infra/docker-compose.yml up --build -d
 ```
 
-If `.env` is missing or a required value is blank, Docker Compose will stop with
-an explicit missing-variable error instead of silently using local defaults.
+If `.env` is missing or a required value is blank, Docker Compose stops with an
+explicit missing-variable error instead of silently using local defaults.
 
-The baseline startup path still uses the same compose entrypoint, but the local
-topology now declares a separate application PostgreSQL service, a separate
-business PostgreSQL source, and a separate business MSSQL source so later
-source-aware work has explicit local anchors. This role split does not make the application database a business target.
-
-3. Confirm the UI is reachable:
-
-```bash
-curl -I http://localhost:3000
-```
-
-4. Confirm the API health endpoint is reachable and healthy:
-
-```bash
-curl http://localhost:8000/health
-```
-
-PostgreSQL stays on the compose network only for this baseline. The app stack
-reaches it internally, which avoids common host-port conflicts during local
-startup.
-
-If your Docker shell is pointed at a stale Colima socket, scope the command to the active profile instead of changing global settings:
+If your Docker shell is pointed at a stale Colima socket, scope the command to
+the active profile instead of changing global settings:
 
 ```bash
 DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" \
   docker-compose --env-file .env -f infra/docker-compose.yml up --build -d
 ```
 
-5. Stop the stack when finished:
+3. Apply migrations:
+
+```bash
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alembic upgrade head
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alembic current
+```
+
+4. Confirm the UI is reachable:
+
+```bash
+curl -I http://localhost:3000
+```
+
+5. Confirm the API health endpoint is reachable and healthy:
+
+```bash
+curl http://localhost:8000/health
+```
+
+6. Stop the stack when finished:
 
 ```bash
 docker-compose --env-file .env -f infra/docker-compose.yml down
@@ -117,20 +165,33 @@ To remove the PostgreSQL volume as well:
 docker-compose --env-file .env -f infra/docker-compose.yml down -v
 ```
 
-## Extension Seams
+## Trust Boundary
 
-The initial structure leaves explicit room for later feature work:
+SafeQuery's trusted boundary stays in the backend:
 
-- `backend/app/features/auth/` for session and identity enforcement
-- `backend/app/features/guard/` for SQL validation and deny logic
-- `backend/app/features/execution/` for approved query execution handling
-- `backend/app/features/audit/` for lifecycle audit persistence
+- the backend-owned source registry decides which source records are executable
+- application PostgreSQL stores SafeQuery control-plane state only
+- business-source credentials are distinct from application persistence
+- preview and execute surfaces are tied to server-owned source and candidate
+  records
+- candidate-only execution is required; clients must not submit raw SQL for
+  execution
+- no LLM or adapter execution authority is granted by this baseline
 
-The frontend remains a simple shell so later query input, SQL preview, and audit workflows can be added without changing the trusted backend boundary.
+The fail-closed startup guards are intentional:
 
-That simple shell is a developer state demo for the Epic A prototype. It is useful for exercising baseline states and component posture, but it is not the intended production information architecture.
+- `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL`
+- `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used.`
 
-When UI work moves beyond the current prototype, follow the UX-1 workflow-first operator shell contract in [docs/design/operator-workflow-information-architecture.md](./docs/design/operator-workflow-information-architecture.md) as the next authoritative UI direction.
+The compose topology mirrors those roles explicitly:
+
+- `app-postgres` for application PostgreSQL persistence
+- `business-postgres-source` for the optional local business PostgreSQL source
+- `business-mssql-source` for the optional local business MSSQL source
+
+On startup, the backend logs `source_posture`, `configured_source_count`, and a
+`source_roles` map so local diagnosis can confirm which source role is
+configured or intentionally left unset without inferring from service names.
 
 ## Focused Verification
 
@@ -140,15 +201,13 @@ Repository structure smoke check:
 tests/smoke/test-baseline.sh
 ```
 
-Optional local component checks:
+Documentation entrypoint checks:
 
 ```bash
-cd frontend && cp .env.local.example .env.local && npm install && npm run build
-cd ../backend && cp .env.example .env && python3 -m pip install -e .
+bash tests/smoke/test-local-startup-docs.sh
+bash tests/smoke/test-doc-entrypoints-current-set.sh
+bash tests/smoke/test-epic-a-doc-framing.sh
 ```
-
-Backend settings can also load from `.env` or `../.env`, so running from the
-repo root or from `backend/` uses the same configuration path.
 
 Backend migration scaffold verification:
 
@@ -188,35 +247,14 @@ Local topology smoke verification:
 bash tests/smoke/test-local-topology-roles.sh
 ```
 
-Application persistence and business-source access now use separate reviewed
-names:
+## Epic K Sequence
 
-- `SAFEQUERY_APP_POSTGRES_URL` for the application-owned PostgreSQL system of
-  record
-- `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` for a business PostgreSQL source used
-  to curate generation context later
-- `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING` for the dedicated MSSQL
-  execution source path
+The intended Epic K order starts with this README and local development refresh,
+then moves through first-run seed data, doctor/readiness checks, and the next
+source-aware productization issues. Track that sequence in
+[docs/implementation-roadmap.md](./docs/implementation-roadmap.md) and keep
+issue text path-hygienic by using repo-relative commands and placeholders such
+as `<supervisor-config-path>` instead of workstation-local absolute paths.
 
-Do not reuse the application PostgreSQL credential as a business-source secret.
-
-The fail-closed startup guards are intentional:
-
-- `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL`
-- `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used.`
-
-The compose topology mirrors those roles explicitly:
-
-- `app-postgres` for application PostgreSQL persistence
-- `business-postgres-source` for the optional local business PostgreSQL source
-- `business-mssql-source` for the optional local business MSSQL source
-
-The backend baseline still depends only on `app-postgres`; the source services
-exist to keep the local topology and credentials explicit for later work.
-
-On startup, the backend logs `source_posture`, `configured_source_count`, and a
-`source_roles` map so local diagnosis can confirm which source role is
-configured or intentionally left unset without inferring from service names.
-
-The dedicated local startup guide remains the source of truth for contributor
-setup and troubleshooting.
+The roadmap is directional planning, not an activation switch for later source
+families or optional UI tracks.

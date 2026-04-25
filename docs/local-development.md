@@ -1,18 +1,28 @@
 # Local Development Startup
 
 This guide documents the current baseline startup path for local SafeQuery
-development. It is intentionally limited to the foundation stack that exists in
-this repository today:
+development and product evaluation. It separates developer setup commands from
+the product evaluation flow so first-run users can tell the difference between
+building the stack and judging the current SafeQuery baseline.
+
+The repository currently contains the source-aware core service baseline:
 
 - Next.js frontend
 - FastAPI backend
 - application PostgreSQL
-- Alembic migration scaffold
+- Alembic migrations for the application-owned control plane
+- backend-owned source registry readiness
+- source-aware preview, audit, evaluation, and operator-workflow contracts
 
 The local topology also declares dedicated source-role services:
 
 - business PostgreSQL source
 - business MSSQL source
+
+Those source services are local role anchors. They do not make application
+PostgreSQL a business target, and they do not grant execution authority to an
+LLM, SQL generation adapter, browser client, MLflow export, search surface, or
+analyst surface.
 
 Use this document as the source of truth for first local runs. `README.md`
 keeps a shorter entrypoint and links back here.
@@ -25,7 +35,49 @@ SafeQuery currently supports two practical local workflows:
 - host-shell component checks for the frontend or backend in isolation
 
 The compose-backed path is the baseline because it wires the frontend, backend,
-database, and health checks together with the repository's current settings.
+database, source registry records, migrations, and health checks together with
+the repository's current settings.
+
+## Product evaluation flow
+
+Use this flow when you are evaluating the current product baseline rather than
+developing an individual component:
+
+1. Create `.env` from `.env.example`.
+2. Start the compose stack from the repository root.
+3. Apply Alembic migrations through the compose-backed backend service.
+4. Open `http://localhost:3000` and inspect the workflow-first operator shell.
+5. Confirm `http://localhost:8000/health` returns a healthy backend response.
+6. Confirm the operator shell is using backend source registry data, not a
+   source inferred from a service name or local credential name.
+
+A successful first-run baseline should show:
+
+- backend health backed by application PostgreSQL
+- source registry readiness for reviewed local source records
+- source-aware request and preview contracts anchored to backend records
+- explicit source visibility in the operator shell
+- candidate-only execution posture, with no raw-SQL execute authority exposed to
+  the client
+
+Known Missing Product Wiring:
+
+- real authentication and session bridge wiring
+- production SQL generation adapter integration
+- final persisted candidate and run history
+- execute-path wiring for approved candidates
+- deployment, secrets, and production release operations
+
+Optional governed search, analyst-style orchestration, and MLflow integrations
+remain extension tracks. They are not required for first-run Epic K activation
+and must not become execution, authorization, audit, or source-registry
+authorities.
+
+## Developer setup flow
+
+Use the numbered setup sections below when you need to build, migrate, test, or
+troubleshoot the stack locally. The commands are intentionally repo-relative and
+avoid workstation-local absolute paths.
 
 ## Prerequisites
 
@@ -84,6 +136,10 @@ Treat those as three different local roles:
 The hardened local foundation keeps those roles explicit before any source-aware
 core path exists, so operators can inspect the topology without guessing and
 without treating application PostgreSQL as a business target.
+
+The backend-owned source registry remains authoritative for source activation.
+Do not infer an active source from a hostname, credential name, driver string,
+or nearby documentation note.
 
 The checked-in baseline values are already wired to the compose network:
 
@@ -150,6 +206,11 @@ curl http://localhost:8000/health
 The backend `/health` endpoint is the baseline health check for the app and the
 database connection.
 
+For product evaluation, backend health is necessary but not sufficient. Also
+confirm that the frontend can render the operator workflow shell and that source
+registry data is available to the shell. Missing registry data should block
+preview submission rather than letting the UI guess an executable source.
+
 ## 4. Validate the Hardened Foundation
 
 Run the focused smoke checks that prove the local role split and fail-closed
@@ -185,6 +246,11 @@ that summarize the hardened foundation without inferring from service names:
 - `source_posture`
 - `configured_source_count`
 - `source_roles`
+
+These checks preserve the SafeQuery trust boundary: source registry decisions
+are backend-owned, application PostgreSQL stays separate from business sources,
+candidate-only execution remains the only approved execute posture, and there is
+no LLM or adapter execution authority.
 
 ## 5. Run Migrations
 
@@ -233,6 +299,10 @@ python3 -m pip install -e backend
 
 The backend settings loader accepts `.env` and `../.env`, which keeps the repo
 root and `backend/` command paths aligned.
+
+Host-shell component checks are developer setup checks. They do not replace the
+compose-backed product evaluation flow because they do not prove the full
+frontend, backend, migration, and source-registry topology together.
 
 ## 7. Stop the Stack
 
@@ -299,3 +369,18 @@ If that succeeds, re-check the frontend env values in `.env` or
 This is expected if you try to use the compose-only hostname `app-postgres` from a
 host shell. Use the compose-backed migration commands instead, or point
 `SAFEQUERY_APP_POSTGRES_URL` at a host-reachable database endpoint.
+
+## Epic K Sequence
+
+Epic K starts with the refreshed README and this local development guide, then
+continues into first-run seed data, source-registry doctor/readiness checks, and
+the next productization issues. Keep the sequence aligned with
+[docs/implementation-roadmap.md](./implementation-roadmap.md) and use
+repo-relative commands or placeholders such as `<supervisor-config-path>` when
+writing issue text or validation notes.
+
+Future families from Epic J remain planned metadata only unless a later issue
+explicitly activates them through backend-owned source registry, connector,
+guard, entitlement, audit, candidate lifecycle, and release-gate work. MySQL,
+MariaDB, Aurora, Oracle, Search, Analyst, and MLflow UI work must not be treated
+as part of first-run Epic K activation.

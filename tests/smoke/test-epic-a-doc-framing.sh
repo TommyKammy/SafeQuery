@@ -16,11 +16,11 @@ for path in "$readme_path" "$docs_index_path"; do
 done
 
 readme_required_patterns=(
-  "developer state demo"
-  "not the intended production information architecture"
+  "source-aware core service baseline"
+  "Product evaluation flow"
+  "Known product-readiness gaps"
   "docs/design/operator-workflow-information-architecture.md"
-  "next authoritative UI direction"
-  "UX-1 workflow-first operator shell contract"
+  "docs/implementation-roadmap.md"
 )
 
 docs_index_required_patterns=(
