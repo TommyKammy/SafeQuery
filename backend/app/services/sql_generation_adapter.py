@@ -190,7 +190,10 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
         request: SQLGenerationAdapterRequest,
     ) -> SQLGenerationAdapterResponse:
         payload = {
-            "request": request.model_dump(mode="json"),
+            "request": request.model_dump(
+                mode="json",
+                exclude={"context": {"datasets"}},
+            ),
         }
         if self.model is not None:
             payload["model"] = self.model

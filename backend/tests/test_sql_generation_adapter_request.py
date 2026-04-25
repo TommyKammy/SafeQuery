@@ -256,6 +256,13 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
                 "context_id": "snapshot_finance_v3",
                 "source_id": "sap-approved-spend",
             },
+            datasets=[
+                {
+                    "schema_name": "finance",
+                    "dataset_name": "approved_vendor_spend",
+                    "dataset_kind": "table",
+                },
+            ],
         ),
     )
     calls: list[tuple[str, float | None, dict[str, object]]] = []
@@ -302,6 +309,7 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
     ]
     assert [call[1] for call in calls] == [7, 7]
     assert calls[0][2]["request"]["question"] == "Show approved vendors"
+    assert "datasets" not in calls[0][2]["request"]["context"]
     assert "credentials" not in json.dumps(calls[0][2])
 
 
