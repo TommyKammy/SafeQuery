@@ -110,6 +110,10 @@ class SourceAwareAuditEvent(BaseModel):
     claim_or_role_snapshot: Optional[dict[str, object]] = None
     query_candidate_id: Optional[NonEmptyTrimmedString] = None
     candidate_owner_subject: Optional[NonEmptyTrimmedString] = None
+    auth_source: Optional[NonEmptyTrimmedString] = None
+    governance_bindings: Optional[list[NonEmptyTrimmedString]] = None
+    entitlement_decision: Optional[Literal["allow", "deny"]] = None
+    entitlement_source_bindings: Optional[list[NonEmptyTrimmedString]] = None
     adapter_version: Optional[NonEmptyTrimmedString] = None
     guard_version: Optional[NonEmptyTrimmedString] = None
     application_version: Optional[NonEmptyTrimmedString] = None

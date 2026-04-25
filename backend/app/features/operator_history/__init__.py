@@ -1,4 +1,5 @@
 from app.features.operator_history.payloads import (
+    OperatorHistoryAuthContext,
     OperatorHistoryCandidateSummary,
     OperatorHistoryDenialSummary,
     OperatorHistoryInvalidationSummary,
@@ -8,6 +9,7 @@ from app.features.operator_history.payloads import (
 )
 
 __all__ = [
+    "OperatorHistoryAuthContext",
     "OperatorHistoryCandidateSummary",
     "OperatorHistoryDenialSummary",
     "OperatorHistoryInvalidationSummary",

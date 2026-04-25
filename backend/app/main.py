@@ -210,6 +210,7 @@ def create_app() -> FastAPI:
                 session_id=application_session.audit_session_id,
                 query_candidate_id=str(uuid4()),
                 candidate_owner_subject=user_subject,
+                auth_source=application_session.auth_source,
                 application_version=f"safequery-api/{app.version}",
             )
             return submit_preview_request(

@@ -67,6 +67,35 @@ def test_source_aware_audit_event_accepts_relevant_lifecycle_events(
     }
 
 
+def test_source_aware_audit_event_retains_auth_context_without_raw_session_material() -> None:
+    payload = _source_aware_payload()
+    payload.update(
+        {
+            "auth_source": "enterprise-bridge",
+            "governance_bindings": ["group:finance-analysts"],
+            "entitlement_decision": "allow",
+            "entitlement_source_bindings": ["group:finance-analysts"],
+        }
+    )
+
+    event = SourceAwareAuditEvent(**payload)
+
+    dumped = event.model_dump(exclude_none=True)
+    assert dumped["auth_source"] == "enterprise-bridge"
+    assert dumped["governance_bindings"] == ["group:finance-analysts"]
+    assert dumped["entitlement_decision"] == "allow"
+    assert dumped["entitlement_source_bindings"] == ["group:finance-analysts"]
+
+    with pytest.raises(ValidationError):
+        SourceAwareAuditEvent(
+            **_source_aware_payload(),
+            auth_source="enterprise-bridge",
+            governance_bindings=["group:finance-analysts"],
+            entitlement_decision="allow",
+            raw_session_cookie="session-cookie",
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
