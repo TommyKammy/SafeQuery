@@ -167,19 +167,37 @@ The doctor returns machine-readable JSON and fails closed when migrations,
 demo source registry records, linked dataset contracts, approved schema
 snapshots, or dev/local entitlement seed data are missing.
 
-6. Confirm the UI is reachable:
+6. Confirm the live operator workflow contract exposes an active source selector
+   option:
+
+```bash
+curl http://localhost:8000/operator/workflow
+```
+
+For the full compose-backed first-run smoke path, run:
+
+```bash
+bash tests/smoke/test-compose-operator-workflow-source-selector.sh
+```
+
+This smoke starts the compose baseline, runs migrations and demo seed through
+repo-owned backend commands, checks backend health and the first-run doctor,
+then fails with a targeted message if `/operator/workflow` returns no active
+source selector option.
+
+7. Confirm the UI is reachable:
 
 ```bash
 curl -I http://localhost:3000
 ```
 
-7. Confirm the API health endpoint is reachable and healthy:
+8. Confirm the API health endpoint is reachable and healthy:
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-8. Stop the stack when finished:
+9. Stop the stack when finished:
 
 ```bash
 docker-compose --env-file .env -f infra/docker-compose.yml down
@@ -258,6 +276,12 @@ Source-foundation smoke verification:
 ```bash
 cd backend
 python3 -m pytest tests/test_source_foundation_smoke.py
+```
+
+Compose-backed first-run operator workflow smoke verification:
+
+```bash
+bash tests/smoke/test-compose-operator-workflow-source-selector.sh
 ```
 
 Startup-guard verification:
