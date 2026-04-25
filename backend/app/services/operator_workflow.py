@@ -32,6 +32,8 @@ class OperatorWorkflowHistoryItem(BaseModel):
     source_label: str = Field(serialization_alias="sourceLabel")
     lifecycle_state: str = Field(serialization_alias="lifecycleState")
     occurred_at: datetime = Field(serialization_alias="occurredAt")
+    candidate_sql: Optional[str] = Field(default=None, serialization_alias="candidateSql")
+    request_id: Optional[str] = Field(default=None, serialization_alias="requestId")
     guard_status: Optional[str] = Field(default=None, serialization_alias="guardStatus")
     run_state: Optional[str] = Field(default=None, serialization_alias="runState")
 
@@ -146,6 +148,8 @@ def _build_operator_history(
                     candidate_events.get(candidate.candidate_id),
                     candidate.updated_at or candidate.created_at,
                 ),
+                candidate_sql=candidate.candidate_sql,
+                request_id=candidate.request_id,
                 guard_status=candidate.guard_status,
             )
         )

@@ -223,6 +223,7 @@ def test_operator_workflow_history_is_built_from_preview_request_and_candidate_r
             "sourceLabel": "SAP spend cube / approved_vendor_spend",
             "lifecycleState": "preview_ready",
             "occurredAt": "2026-01-02T03:04:05Z",
+            "requestId": "preview-request-234",
             "guardStatus": "pending",
         },
         {

@@ -90,20 +90,32 @@ def test_preview_submission_binds_all_records_to_authoritative_source_id() -> No
             session,
         )
 
-    assert response.model_dump() == {
+    payload = response.model_dump()
+    assert {
+        "question": "Show approved vendors by quarterly spend",
+        "source_id": "sap-approved-spend",
+        "state": "submitted",
+    }.items() <= payload["request"].items()
+    assert payload["request"]["request_id"]
+    assert {
+        "source_id": "sap-approved-spend",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "dataset_contract_version": 1,
+        "schema_snapshot_version": 1,
+        "state": "preview_ready",
+        "candidate_sql": None,
+        "guard_status": "pending",
+    }.items() <= payload["candidate"].items()
+    assert payload["candidate"]["candidate_id"]
+    assert payload == {
         "request": {
             "question": "Show approved vendors by quarterly spend",
+            "request_id": payload["request"]["request_id"],
             "source_id": "sap-approved-spend",
             "state": "submitted",
         },
-        "candidate": {
-            "source_id": "sap-approved-spend",
-            "source_family": "postgresql",
-            "source_flavor": "warehouse",
-            "dataset_contract_version": 1,
-            "schema_snapshot_version": 1,
-            "state": "preview_ready",
-        },
+        "candidate": payload["candidate"],
         "audit": {
             "source_id": "sap-approved-spend",
             "state": "recorded",

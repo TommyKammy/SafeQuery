@@ -124,10 +124,14 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         )
 
         assert response.status_code == 200
+        response_payload = response.json()
         request_id = response.headers["X-Request-ID"]
-        response_candidate_id = response.json()["audit"]["events"][2][
-            "query_candidate_id"
-        ]
+        response_candidate_id = response_payload["audit"]["events"][2]["query_candidate_id"]
+
+        assert response_payload["request"]["request_id"] == request_id
+        assert response_payload["candidate"]["candidate_id"] == response_candidate_id
+        assert response_payload["candidate"]["guard_status"] == "pending"
+        assert response_payload["candidate"]["candidate_sql"] is None
 
         persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
