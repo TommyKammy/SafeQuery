@@ -167,7 +167,8 @@ complete:
 - K-4 doctor evidence: `python -m app.cli.first_run_doctor` reports pass/fail
   status for migrations, active demo source registry records, dataset contract
   linkage, schema snapshot approval, entitlement readiness, execution connector
-  readiness, backend health, and frontend health.
+  readiness, live backend `/health` reachability, and live frontend app-surface
+  reachability.
 - K-5 workflow evidence:
   `tests/smoke/test-compose-operator-workflow-source-selector.sh` or the live
   `/operator/workflow` payload shows a non-empty active source selector sourced

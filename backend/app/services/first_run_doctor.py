@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -35,6 +39,14 @@ from app.services.source_entitlements import (
 logger = logging.getLogger(__name__)
 
 DoctorStatus = Literal["pass", "fail", "degraded"]
+BackendProbeMode = Literal["probe", "served_route"]
+
+
+@dataclass(frozen=True)
+class HttpProbeResponse:
+    status_code: int
+    body: str
+    content_type: str = ""
 
 
 class FirstRunDoctorCheck(BaseModel):
@@ -500,27 +512,163 @@ def _source_governance_unavailable_checks(
     ]
 
 
-def _check_backend_expectation(backend_base_url: str) -> FirstRunDoctorCheck:
-    normalized = backend_base_url.rstrip("/")
+def _normalize_base_url(base_url: str) -> str:
+    return base_url.rstrip("/")
+
+
+def _http_get(url: str) -> HttpProbeResponse:
+    request = Request(url, headers={"Accept": "application/json, text/html"})
+    try:
+        with urlopen(request, timeout=2.0) as response:
+            body = response.read(64_000).decode("utf-8", errors="replace")
+            return HttpProbeResponse(
+                status_code=response.status,
+                body=body,
+                content_type=response.headers.get_content_type(),
+            )
+    except HTTPError as exc:
+        body = exc.read(64_000).decode("utf-8", errors="replace")
+        return HttpProbeResponse(
+            status_code=exc.code,
+            body=body,
+            content_type=exc.headers.get_content_type(),
+        )
+
+
+def _health_status(body: str) -> object:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("status")
+
+
+def _check_backend_served_route(backend_base_url: str) -> FirstRunDoctorCheck:
+    normalized = _normalize_base_url(backend_base_url)
     return FirstRunDoctorCheck(
         name="backend",
         status="pass",
-        message="Backend readiness endpoint is expected to be reachable after startup.",
-        detail={"health_url": f"{normalized}/health"},
+        message=(
+            "Backend doctor route is serving this response; run the CLI doctor "
+            "to probe the configured browser-facing backend health URL."
+        ),
+        detail={
+            "doctor_route": "/doctor/first-run",
+            "backend_base_url": normalized,
+        },
     )
 
 
-def _check_frontend_expectation(
+def _check_backend_health(
+    backend_base_url: str,
+    probe: Callable[[str], HttpProbeResponse],
+) -> FirstRunDoctorCheck:
+    health_url = f"{_normalize_base_url(backend_base_url)}/health"
+    try:
+        response = probe(health_url)
+    except Exception as exc:
+        return FirstRunDoctorCheck(
+            name="backend",
+            status="fail",
+            message=(
+                "Backend health endpoint is not reachable. Start the backend "
+                "service and verify NEXT_PUBLIC_API_BASE_URL points at it."
+            ),
+            detail={"health_url": health_url, "error": exc.__class__.__name__},
+        )
+
+    health_status = _health_status(response.body)
+    if response.status_code >= 400 or health_status != "ok":
+        detail: dict[str, object] = {
+            "health_url": health_url,
+            "status_code": response.status_code,
+        }
+        if health_status is not None:
+            detail["health_status"] = health_status
+        return FirstRunDoctorCheck(
+            name="backend",
+            status="fail",
+            message=(
+                "Backend health endpoint returned an unhealthy response. "
+                "Check backend logs, database connectivity, and "
+                "NEXT_PUBLIC_API_BASE_URL before product evaluation."
+            ),
+            detail=detail,
+        )
+
+    return FirstRunDoctorCheck(
+        name="backend",
+        status="pass",
+        message="Backend health endpoint is reachable and healthy.",
+        detail={"health_url": health_url, "status_code": response.status_code},
+    )
+
+
+def _check_frontend_surface(
     frontend_base_url: str,
     backend_base_url: str,
+    probe: Callable[[str], HttpProbeResponse],
 ) -> FirstRunDoctorCheck:
+    normalized_frontend_url = _normalize_base_url(frontend_base_url)
+    normalized_backend_url = _normalize_base_url(backend_base_url)
+    try:
+        response = probe(normalized_frontend_url)
+    except Exception as exc:
+        return FirstRunDoctorCheck(
+            name="frontend",
+            status="fail",
+            message=(
+                "Frontend app surface is not reachable. Start the frontend "
+                "service and verify SAFEQUERY_FRONTEND_BASE_URL before product "
+                "evaluation."
+            ),
+            detail={
+                "frontend_url": normalized_frontend_url,
+                "backend_base_url": normalized_backend_url,
+                "error": exc.__class__.__name__,
+            },
+        )
+
+    if response.status_code >= 400:
+        return FirstRunDoctorCheck(
+            name="frontend",
+            status="fail",
+            message=(
+                "Frontend app surface returned an unhealthy response. Check "
+                "the frontend service and SAFEQUERY_FRONTEND_BASE_URL."
+            ),
+            detail={
+                "frontend_url": normalized_frontend_url,
+                "backend_base_url": normalized_backend_url,
+                "status_code": response.status_code,
+            },
+        )
+
+    if "SafeQuery" not in response.body:
+        return FirstRunDoctorCheck(
+            name="frontend",
+            status="fail",
+            message=(
+                "Frontend did not return the SafeQuery app surface. Verify "
+                "SAFEQUERY_FRONTEND_BASE_URL points at the local SafeQuery UI."
+            ),
+            detail={
+                "frontend_url": normalized_frontend_url,
+                "backend_base_url": normalized_backend_url,
+                "status_code": response.status_code,
+            },
+        )
+
     return FirstRunDoctorCheck(
         name="frontend",
         status="pass",
-        message="Frontend is expected to call the configured backend base URL after startup.",
+        message="Frontend app surface is reachable.",
         detail={
-            "frontend_url": frontend_base_url.rstrip("/"),
-            "backend_base_url": backend_base_url.rstrip("/"),
+            "frontend_url": normalized_frontend_url,
+            "backend_base_url": normalized_backend_url,
+            "status_code": response.status_code,
         },
     )
 
@@ -531,9 +679,13 @@ def run_first_run_doctor(
     database_probe: Callable[[], None] | None = None,
     backend_base_url: str | None = None,
     frontend_base_url: str | None = None,
+    backend_probe: Callable[[str], HttpProbeResponse] | None = None,
+    frontend_probe: Callable[[str], HttpProbeResponse] | None = None,
+    backend_probe_mode: BackendProbeMode = "probe",
 ) -> FirstRunDoctorResult:
     resolved_backend_base_url = backend_base_url or os.getenv(
-        "NEXT_PUBLIC_API_BASE_URL", "http://localhost:8000"
+        "SAFEQUERY_BACKEND_BASE_URL",
+        os.getenv("NEXT_PUBLIC_API_BASE_URL", "http://localhost:8000"),
     )
     resolved_frontend_base_url = frontend_base_url or os.getenv(
         "SAFEQUERY_FRONTEND_BASE_URL", "http://localhost:3000"
@@ -552,14 +704,22 @@ def run_first_run_doctor(
         logger.exception("First-run doctor could not read source governance data.")
         checks.extend(_source_governance_unavailable_checks(exc))
 
-    checks.extend(
-        [
-            _check_backend_expectation(resolved_backend_base_url),
-            _check_frontend_expectation(
-                resolved_frontend_base_url,
+    if backend_probe_mode == "served_route":
+        checks.append(_check_backend_served_route(resolved_backend_base_url))
+    else:
+        checks.append(
+            _check_backend_health(
                 resolved_backend_base_url,
-            ),
-        ]
+                backend_probe or _http_get,
+            )
+        )
+
+    checks.append(
+        _check_frontend_surface(
+            resolved_frontend_base_url,
+            resolved_backend_base_url,
+            frontend_probe or _http_get,
+        )
     )
 
     return FirstRunDoctorResult(status=_aggregate_status(checks), checks=checks)

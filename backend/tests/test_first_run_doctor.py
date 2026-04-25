@@ -12,7 +12,7 @@ from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
 from app.db.models.source_registry import RegisteredSource
 from app.services.demo_source_seed import DEMO_SOURCE_UUID, seed_demo_source_governance
-from app.services.first_run_doctor import run_first_run_doctor
+from app.services.first_run_doctor import HttpProbeResponse, run_first_run_doctor
 
 
 @contextmanager
@@ -48,6 +48,21 @@ def _doctor_sections(payload: dict[str, object]) -> dict[str, dict[str, object]]
     }
 
 
+def _ready_surface_probes() -> dict[str, object]:
+    return {
+        "backend_probe": lambda _url: HttpProbeResponse(
+            status_code=200,
+            body='{"status":"ok","service":"safequery-api"}',
+            content_type="application/json",
+        ),
+        "frontend_probe": lambda _url: HttpProbeResponse(
+            status_code=200,
+            body="<html><head><title>SafeQuery Query Workflow</title></head></html>",
+            content_type="text/html",
+        ),
+    }
+
+
 def test_first_run_doctor_fails_closed_when_migration_state_is_missing() -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.pool import StaticPool
@@ -59,7 +74,11 @@ def test_first_run_doctor_fails_closed_when_migration_state_is_missing() -> None
     )
     Base.metadata.create_all(engine)
     with Session(engine) as session:
-        result = run_first_run_doctor(session, database_probe=lambda: None)
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
 
     sections = _doctor_sections(result.model_dump(mode="json"))
     assert result.status == "fail"
@@ -80,7 +99,11 @@ def test_first_run_doctor_fails_closed_when_migration_metadata_is_unreadable(
     )
 
     with _session_scope() as session:
-        result = run_first_run_doctor(session, database_probe=lambda: None)
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
 
     sections = _doctor_sections(result.model_dump(mode="json"))
     assert result.status == "fail"
@@ -104,6 +127,7 @@ def test_first_run_doctor_passes_after_demo_seed() -> None:
             database_probe=lambda: None,
             backend_base_url="http://localhost:8000",
             frontend_base_url="http://localhost:3000",
+            **_ready_surface_probes(),
         )
 
     payload = result.model_dump(mode="json")
@@ -127,6 +151,205 @@ def test_first_run_doctor_passes_after_demo_seed() -> None:
     assert sections["frontend"]["status"] == "pass"
 
 
+def test_first_run_doctor_fails_when_backend_url_is_unreachable() -> None:
+    def unreachable_backend(_url: str) -> HttpProbeResponse:
+        raise TimeoutError("connection timed out")
+
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            backend_base_url="http://backend.invalid",
+            frontend_base_url="http://localhost:3000",
+            backend_probe=unreachable_backend,
+            frontend_probe=lambda _url: HttpProbeResponse(
+                status_code=200,
+                body="<html><head><title>SafeQuery Query Workflow</title></head></html>",
+                content_type="text/html",
+            ),
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["backend"]["status"] == "fail"
+    assert "Backend health endpoint is not reachable" in sections["backend"]["message"]
+    assert sections["backend"]["detail"] == {
+        "health_url": "http://backend.invalid/health",
+        "error": "TimeoutError",
+    }
+    assert sections["frontend"]["status"] == "pass"
+
+
+def test_first_run_doctor_fails_when_backend_health_response_is_unhealthy() -> None:
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            backend_base_url="http://localhost:8000",
+            frontend_base_url="http://localhost:3000",
+            backend_probe=lambda _url: HttpProbeResponse(
+                status_code=503,
+                body='{"status":"degraded","service":"safequery-api"}',
+                content_type="application/json",
+            ),
+            frontend_probe=lambda _url: HttpProbeResponse(
+                status_code=200,
+                body="<html><head><title>SafeQuery Query Workflow</title></head></html>",
+                content_type="text/html",
+            ),
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["backend"]["status"] == "fail"
+    assert "Backend health endpoint returned an unhealthy response" in sections[
+        "backend"
+    ]["message"]
+    assert sections["backend"]["detail"] == {
+        "health_url": "http://localhost:8000/health",
+        "status_code": 503,
+        "health_status": "degraded",
+    }
+
+
+def test_first_run_doctor_fails_when_frontend_url_is_unreachable() -> None:
+    def unreachable_frontend(_url: str) -> HttpProbeResponse:
+        raise ConnectionError("connection refused")
+
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            backend_base_url="http://localhost:8000",
+            frontend_base_url="http://frontend.invalid",
+            backend_probe=lambda _url: HttpProbeResponse(
+                status_code=200,
+                body='{"status":"ok","service":"safequery-api"}',
+                content_type="application/json",
+            ),
+            frontend_probe=unreachable_frontend,
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["backend"]["status"] == "pass"
+    assert sections["frontend"]["status"] == "fail"
+    assert "Frontend app surface is not reachable" in sections["frontend"]["message"]
+    assert sections["frontend"]["detail"] == {
+        "frontend_url": "http://frontend.invalid",
+        "backend_base_url": "http://localhost:8000",
+        "error": "ConnectionError",
+    }
+
+
+def test_first_run_doctor_fails_when_frontend_surface_is_unexpected() -> None:
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            backend_base_url="http://localhost:8000",
+            frontend_base_url="http://localhost:3000",
+            backend_probe=lambda _url: HttpProbeResponse(
+                status_code=200,
+                body='{"status":"ok","service":"safequery-api"}',
+                content_type="application/json",
+            ),
+            frontend_probe=lambda _url: HttpProbeResponse(
+                status_code=200,
+                body="<html><head><title>Placeholder</title></head></html>",
+                content_type="text/html",
+            ),
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["frontend"]["status"] == "fail"
+    assert "Frontend did not return the SafeQuery app surface" in sections["frontend"][
+        "message"
+    ]
+    assert sections["frontend"]["detail"] == {
+        "frontend_url": "http://localhost:3000",
+        "backend_base_url": "http://localhost:8000",
+        "status_code": 200,
+    }
+
+
+def test_first_run_doctor_prefers_backend_probe_url_over_public_api_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_urls: list[str] = []
+
+    def backend_probe(url: str) -> HttpProbeResponse:
+        seen_urls.append(url)
+        return HttpProbeResponse(
+            status_code=200,
+            body='{"status":"ok","service":"safequery-api"}',
+            content_type="application/json",
+        )
+
+    monkeypatch.setenv("SAFEQUERY_BACKEND_BASE_URL", "http://backend:8000")
+    monkeypatch.setenv("NEXT_PUBLIC_API_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("SAFEQUERY_FRONTEND_BASE_URL", "http://frontend:3000")
+
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            backend_probe=backend_probe,
+            frontend_probe=lambda _url: HttpProbeResponse(
+                status_code=200,
+                body="<html><head><title>SafeQuery Query Workflow</title></head></html>",
+                content_type="text/html",
+            ),
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "pass"
+    assert seen_urls == ["http://backend:8000/health"]
+    assert sections["frontend"]["detail"] == {
+        "frontend_url": "http://frontend:3000",
+        "backend_base_url": "http://backend:8000",
+        "status_code": 200,
+    }
+
+
+def test_first_run_doctor_can_report_api_route_backend_without_cli_probe() -> None:
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            backend_base_url="http://browser-facing-backend.invalid",
+            frontend_base_url="http://localhost:3000",
+            backend_probe_mode="served_route",
+            frontend_probe=lambda _url: HttpProbeResponse(
+                status_code=200,
+                body="<html><head><title>SafeQuery Query Workflow</title></head></html>",
+                content_type="text/html",
+            ),
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "pass"
+    assert sections["backend"]["status"] == "pass"
+    assert "doctor route is serving this response" in sections["backend"]["message"]
+    assert sections["backend"]["detail"] == {
+        "doctor_route": "/doctor/first-run",
+        "backend_base_url": "http://browser-facing-backend.invalid",
+    }
+
+
 def test_first_run_doctor_fails_closed_when_demo_source_connector_binding_drifts() -> None:
     with _session_scope() as session:
         seed_demo_source_governance(session)
@@ -135,7 +358,11 @@ def test_first_run_doctor_fails_closed_when_demo_source_connector_binding_drifts
         source.source_flavor = "demo"
         session.commit()
 
-        result = run_first_run_doctor(session, database_probe=lambda: None)
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
 
     sections = _doctor_sections(result.model_dump(mode="json"))
     assert result.status == "fail"
@@ -154,7 +381,11 @@ def test_first_run_doctor_fails_closed_when_demo_source_connector_binding_drifts
 
 def test_first_run_doctor_fails_closed_when_source_seed_is_missing() -> None:
     with _session_scope() as session:
-        result = run_first_run_doctor(session, database_probe=lambda: None)
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
 
     sections = _doctor_sections(result.model_dump(mode="json"))
     assert result.status == "fail"
@@ -169,7 +400,11 @@ def test_first_run_doctor_fails_closed_when_source_governance_tables_are_missing
         session.execute(text("DROP TABLE registered_sources"))
         session.commit()
 
-        result = run_first_run_doctor(session, database_probe=lambda: None)
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
 
     sections = _doctor_sections(result.model_dump(mode="json"))
     assert result.status == "fail"
@@ -192,7 +427,11 @@ def test_first_run_doctor_fails_closed_when_contract_or_snapshot_link_is_missing
         source.schema_snapshot_id = None
         session.commit()
 
-        result = run_first_run_doctor(session, database_probe=lambda: None)
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
 
     sections = _doctor_sections(result.model_dump(mode="json"))
     assert result.status == "fail"
@@ -210,7 +449,11 @@ def test_first_run_doctor_fails_closed_when_entitlement_seed_is_missing() -> Non
         contract.owner_binding = None
         session.commit()
 
-        result = run_first_run_doctor(session, database_probe=lambda: None)
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
 
     sections = _doctor_sections(result.model_dump(mode="json"))
     assert result.status == "fail"

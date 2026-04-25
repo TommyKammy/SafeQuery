@@ -217,16 +217,25 @@ docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend pyth
 The doctor emits JSON with pass/fail/degraded checks for application database
 connectivity, Alembic posture, active demo source registry records, linked
 dataset contracts, approved schema snapshots, dev/local entitlement seed data,
-the backend-owned execution connector binding, and backend/frontend URL
-expectations. Missing registry data, contract links, schema snapshots,
-entitlements, execution connector readiness, or migrations are failures, not
-empty UI states.
+the backend-owned execution connector binding, `SAFEQUERY_BACKEND_BASE_URL`
+`/health` reachability, and `SAFEQUERY_FRONTEND_BASE_URL` app-surface
+reachability. Missing registry data, contract links, schema snapshots,
+entitlements, execution connector readiness, migrations, unreachable backend
+health, or an unreachable/unexpected frontend surface are failures, not empty UI
+states.
 
 The same payload is available from the running backend:
 
 ```bash
 curl http://localhost:8000/doctor/first-run
 ```
+
+Because the API-served doctor route is already running inside the backend, that
+payload marks the backend route itself as reachable. Use the CLI doctor when
+you need to verify that the configured `SAFEQUERY_BACKEND_BASE_URL` also
+reaches `/health`. In Compose, `.env.example` points the backend container at
+the service-local backend and frontend URLs so the doctor probes reachable
+surfaces from inside the compose network.
 
 Confirm the live operator workflow contract exposes at least one active source
 selector option:

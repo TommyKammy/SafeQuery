@@ -167,7 +167,10 @@ docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend pyth
 The doctor returns machine-readable JSON and fails closed when migrations,
 demo source registry records, linked dataset contracts, approved schema
 snapshots, dev/local entitlement seed data, or the backend-owned execution
-connector binding are missing.
+connector binding are missing. The CLI doctor also probes
+`SAFEQUERY_BACKEND_BASE_URL` `/health` and `SAFEQUERY_FRONTEND_BASE_URL`;
+unreachable or unhealthy surfaces are reported as failures instead of
+first-run-ready passes.
 
 6. Confirm the live operator workflow contract exposes an active source selector
    option:
