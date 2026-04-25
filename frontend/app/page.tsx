@@ -22,6 +22,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const config = getAppConfig();
   const question = readParam(params.question)?.trim() || "List the top 10 approved vendors by quarterly spend.";
   const sourceId = readParam(params.source_id)?.trim();
+  const historyRecordId = readParam(params.history_record_id)?.trim();
   const state = resolveWorkflowState(readParam(params.state));
   const operatorWorkflow = await getOperatorWorkflowSnapshot(config.apiInternalBaseUrl);
 
@@ -31,6 +32,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       health={DEFAULT_HEALTH_SNAPSHOT}
       operatorWorkflow={operatorWorkflow}
       question={question}
+      historyRecordId={historyRecordId}
       sourceId={sourceId}
       state={state}
     />

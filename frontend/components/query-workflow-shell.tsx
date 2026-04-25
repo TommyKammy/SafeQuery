@@ -36,6 +36,7 @@ type CanonicalWorkflowState =
 type QueryWorkflowShellProps = {
   apiUrl: string;
   health: HealthSnapshot;
+  historyRecordId?: string;
   operatorWorkflow: OperatorWorkflowSnapshot;
   question: string;
   sourceId?: string;
@@ -972,6 +973,7 @@ function renderStatePanel(
 export function QueryWorkflowShell({
   apiUrl,
   health,
+  historyRecordId,
   operatorWorkflow,
   question,
   sourceId,
@@ -1006,7 +1008,8 @@ export function QueryWorkflowShell({
   const guardTone = getGuardTone(normalizedState);
   const historyCandidatePreview = findAuthoritativeCandidatePreview(
     operatorWorkflow.history,
-    submittedSourceId
+    submittedSourceId,
+    historyRecordId
   );
   const candidatePreview = submittedCandidatePreview ?? historyCandidatePreview;
   const workflowContext = getWorkflowContext(

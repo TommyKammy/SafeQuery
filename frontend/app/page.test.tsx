@@ -317,6 +317,70 @@ describe("HomePage", () => {
     expect(screen.queryByText(/placeholder sql generated from the question review surface/i)).not.toBeInTheDocument();
   });
 
+  it("anchors reopened candidate previews to the URL history record", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select 'wrong candidate' as preview;",
+                    guardStatus: "blocked",
+                    itemType: "candidate",
+                    label: "Earlier blocked candidate",
+                    lifecycleState: "blocked",
+                    occurredAt: "2026-04-21T14:20:00Z",
+                    recordId: "candidate-wrong",
+                    requestId: "request-wrong",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  },
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Selected candidate",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-selected",
+                    requestId: "request-selected",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-selected",
+          question: "Selected candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    expect(screen.getByText("select vendor_name from approved_vendor_spend;")).toBeInTheDocument();
+    expect(screen.getByText("request-selected")).toBeInTheDocument();
+    expect(screen.getByText("candidate-selected")).toBeInTheDocument();
+    expect(screen.queryByText("select 'wrong candidate' as preview;")).not.toBeInTheDocument();
+  });
+
   it("submits the selected source and question to the preview API", async () => {
     const csrfToken = document.createElement("meta");
     csrfToken.name = "safequery-csrf-token";
