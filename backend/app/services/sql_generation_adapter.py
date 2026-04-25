@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from typing import Optional, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    PrivateAttr,
     SecretStr,
     StringConstraints,
     ValidationError,
@@ -113,14 +117,97 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
     model: Optional[NonEmptyTrimmedString] = None
     api_key: Optional[SecretStr] = None
     timeout_seconds: int
+    retry_count: int
+    circuit_breaker_failure_threshold: int
+    _consecutive_failures: int = PrivateAttr(default=0)
 
     def generate_sql(
         self,
         request: SQLGenerationAdapterRequest,
     ) -> SQLGenerationAdapterResponse:
+        if self.provider == "local_llm":
+            return self._generate_local_llm_sql(request)
+
         raise SQLGenerationAdapterConfigurationError(
             "sql_generation_provider_not_implemented",
             f"Provider '{self.provider}' is configured but dispatch is not implemented.",
+        )
+
+    def _generate_local_llm_sql(
+        self,
+        request: SQLGenerationAdapterRequest,
+    ) -> SQLGenerationAdapterResponse:
+        if self._consecutive_failures >= self.circuit_breaker_failure_threshold:
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_runtime_circuit_open",
+                "Local LLM SQL generation runtime is unhealthy; circuit breaker is open.",
+            )
+
+        last_error: BaseException | None = None
+        for _attempt in range(self.retry_count + 1):
+            try:
+                response = self._dispatch_local_llm_sql(request)
+            except (HTTPError, URLError, TimeoutError, OSError, ValidationError) as exc:
+                last_error = exc
+                continue
+
+            self._consecutive_failures = 0
+            return response
+
+        self._consecutive_failures += 1
+        detail = (
+            last_error.__class__.__name__
+            if last_error is not None
+            else "UnknownAdapterFailure"
+        )
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_runtime_unhealthy",
+            f"Local LLM SQL generation runtime is unavailable ({detail}).",
+        )
+
+    def _dispatch_local_llm_sql(
+        self,
+        request: SQLGenerationAdapterRequest,
+    ) -> SQLGenerationAdapterResponse:
+        payload = {
+            "request": request.model_dump(mode="json"),
+        }
+        if self.model is not None:
+            payload["model"] = self.model
+
+        http_request = Request(
+            f"{self.base_url.rstrip('/')}/generate-sql",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urlopen(http_request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            status = getattr(response, "status", 200)
+            raw_body = response.read().decode("utf-8", errors="replace")
+
+        if status >= 400:
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_runtime_unhealthy",
+                "Local LLM SQL generation runtime returned an unhealthy response.",
+            )
+
+        decoded = json.loads(raw_body)
+        if not isinstance(decoded, dict):
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_response_invalid",
+                "Local LLM SQL generation runtime returned an invalid response.",
+            )
+
+        candidate_sql = decoded.get("candidate_sql")
+        model = decoded.get("model", self.model)
+        return SQLGenerationAdapterResponse(
+            candidate_sql=candidate_sql,
+            provider="local_llm",
+            adapter_version=self.adapter_version,
+            model=model,
         )
 
 
@@ -161,6 +248,10 @@ def resolve_sql_generation_adapter(
             base_url=str(generation_settings.local_llm_base_url),
             model=generation_settings.local_llm_model,
             timeout_seconds=generation_settings.timeout_seconds,
+            retry_count=generation_settings.retry_count,
+            circuit_breaker_failure_threshold=(
+                generation_settings.circuit_breaker_failure_threshold
+            ),
         )
 
     if generation_settings.provider == "vanna":
@@ -176,6 +267,10 @@ def resolve_sql_generation_adapter(
             model=generation_settings.vanna_model,
             api_key=generation_settings.vanna_api_key,
             timeout_seconds=generation_settings.timeout_seconds,
+            retry_count=generation_settings.retry_count,
+            circuit_breaker_failure_threshold=(
+                generation_settings.circuit_breaker_failure_threshold
+            ),
         )
 
     raise SQLGenerationAdapterConfigurationError(

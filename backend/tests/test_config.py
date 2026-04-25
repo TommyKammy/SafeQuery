@@ -100,6 +100,9 @@ class SettingsTestCase(unittest.TestCase):
             sql_generation_provider="local_llm",
             sql_generation_local_llm_base_url="http://local-llm:8080",
             sql_generation_local_llm_model="safequery-local-sql",
+            sql_generation_timeout_seconds=17,
+            sql_generation_retry_count=2,
+            sql_generation_circuit_breaker_failure_threshold=4,
             business_postgres_source_url=(
                 "postgresql://source_reader:read-only@pg-source:5432/business"
             ),
@@ -116,9 +119,32 @@ class SettingsTestCase(unittest.TestCase):
             settings.sql_generation.local_llm_model,
             "safequery-local-sql",
         )
+        self.assertEqual(settings.sql_generation.timeout_seconds, 17)
+        self.assertEqual(settings.sql_generation.retry_count, 2)
+        self.assertEqual(settings.sql_generation.circuit_breaker_failure_threshold, 4)
         dumped = settings.sql_generation.model_dump(mode="json", exclude_none=True)
         self.assertNotIn("business_postgres_source_url", dumped)
         self.assertNotIn("business_mssql_source_connection_string", dumped)
+
+    def test_sql_generation_retry_policy_settings_are_bounded(self) -> None:
+        for field, value in (
+            ("sql_generation_timeout_seconds", 0),
+            ("sql_generation_timeout_seconds", 301),
+            ("sql_generation_retry_count", -1),
+            ("sql_generation_retry_count", 4),
+            ("sql_generation_circuit_breaker_failure_threshold", 0),
+            ("sql_generation_circuit_breaker_failure_threshold", 11),
+        ):
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(ValidationError):
+                    Settings(
+                        app_postgres_url=(
+                            "postgresql://safequery:safequery@db:5432/safequery"
+                        ),
+                        _env_file=None,
+                        _env_prefix="SAFEQUERY_",
+                        **{field: value},
+                    )
 
     def test_sql_generation_provider_fails_closed_when_selected_without_endpoint(
         self,
