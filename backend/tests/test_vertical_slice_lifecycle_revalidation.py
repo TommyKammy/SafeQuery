@@ -16,6 +16,7 @@ from app.db.models.dataset_contract import (
     DatasetContractDataset,
     DatasetContractDatasetKind,
 )
+from app.db.models.preview import PreviewAuditEvent, PreviewCandidate
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
@@ -206,6 +207,57 @@ def _unexpected_query_runner(**_: object) -> list[dict[str, object]]:
     raise AssertionError("execution must not run after lifecycle revalidation denies")
 
 
+def _assert_persisted_lifecycle_denial(
+    session: Session,
+    *,
+    request_id: str,
+    candidate_id: str,
+    correlation_id: str,
+    canonical_sql: str,
+    deny_code: str,
+    event_type: str,
+    candidate_state: str,
+) -> None:
+    persisted_candidate = (
+        session.query(PreviewCandidate)
+        .filter(
+            PreviewCandidate.request_id == request_id,
+            PreviewCandidate.candidate_id == candidate_id,
+        )
+        .one()
+    )
+    assert persisted_candidate.candidate_sql == canonical_sql
+    assert persisted_candidate.adapter_provider == "local_llm"
+    assert persisted_candidate.adapter_model == "safequery-test-sql"
+    assert persisted_candidate.adapter_version == "test.local_llm.v1"
+    assert persisted_candidate.adapter_run_id == correlation_id
+    assert persisted_candidate.prompt_fingerprint is not None
+
+    persisted_generation_event = (
+        session.query(PreviewAuditEvent)
+        .filter(
+            PreviewAuditEvent.request_id == request_id,
+            PreviewAuditEvent.candidate_id == candidate_id,
+            PreviewAuditEvent.event_type == "generation_completed",
+        )
+        .one()
+    )
+    assert persisted_generation_event.adapter_run_id == correlation_id
+
+    persisted_denial_event = (
+        session.query(PreviewAuditEvent)
+        .filter(
+            PreviewAuditEvent.request_id == request_id,
+            PreviewAuditEvent.candidate_id == candidate_id,
+            PreviewAuditEvent.primary_deny_code == deny_code,
+        )
+        .one()
+    )
+    assert persisted_denial_event.event_type == event_type
+    assert persisted_denial_event.candidate_state == candidate_state
+    assert persisted_denial_event.audit_payload["primary_deny_code"] == deny_code
+
+
 def test_mssql_vertical_slice_denies_expired_candidate_before_execution() -> None:
     with _session_scope() as session:
         _seed_source(
@@ -244,6 +296,16 @@ def test_mssql_vertical_slice_denies_expired_candidate_before_execution() -> Non
                     - timedelta(seconds=1),
                 ),
             )
+        _assert_persisted_lifecycle_denial(
+            session,
+            request_id=exc_info.value.audit_events[-1].request_id,
+            candidate_id=exc_info.value.audit_events[-1].query_candidate_id,
+            correlation_id="correlation-mssql-expired",
+            canonical_sql="SELECT TOP 10 vendor_name FROM dbo.approved_vendor_spend",
+            deny_code=DENY_APPROVAL_EXPIRED,
+            event_type="execution_denied",
+            candidate_state="denied",
+        )
 
     denial = exc_info.value.audit_events[-1].model_dump(exclude_none=True)
     assert exc_info.value.deny_code == DENY_APPROVAL_EXPIRED
@@ -351,6 +413,16 @@ def test_postgresql_vertical_slice_denies_invalidated_candidate_before_execution
                     invalidated_at=datetime.now(timezone.utc) - timedelta(seconds=1),
                 ),
             )
+        _assert_persisted_lifecycle_denial(
+            session,
+            request_id=exc_info.value.audit_events[-1].request_id,
+            candidate_id=exc_info.value.audit_events[-1].query_candidate_id,
+            correlation_id="correlation-postgres-invalidated",
+            canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
+            deny_code=DENY_CANDIDATE_INVALIDATED,
+            event_type="candidate_invalidated",
+            candidate_state="invalidated",
+        )
 
     denial = exc_info.value.audit_events[-1].model_dump(exclude_none=True)
     assert exc_info.value.deny_code == DENY_CANDIDATE_INVALIDATED

@@ -396,15 +396,6 @@ def run_mssql_core_vertical_slice(
         candidate_state="preview_ready",
         adapter_metadata=adapter_metadata,
     )
-    persist_generated_candidate_audit_context(
-        session,
-        request_id=preview.request.request_id,
-        candidate_id=preview.candidate.candidate_id,
-        candidate_sql=canonical_sql,
-        adapter_metadata=adapter_metadata,
-        audit_events=audit_events,
-    )
-
     lifecycle_record = candidate_lifecycle or _build_default_candidate_lifecycle(
         candidate_source=candidate_source,
         authenticated_subject=authenticated_subject,
@@ -425,12 +416,29 @@ def run_mssql_core_vertical_slice(
     except CandidateLifecycleRevalidationError as exc:
         if exc.audit_event is not None:
             audit_events.append(exc.audit_event)
+        persist_generated_candidate_audit_context(
+            session,
+            request_id=preview.request.request_id,
+            candidate_id=preview.candidate.candidate_id,
+            candidate_sql=canonical_sql,
+            adapter_metadata=adapter_metadata,
+            audit_events=audit_events,
+        )
         raise MSSQLVerticalSliceDenied(
             deny_code=exc.deny_code,
             message=str(exc),
             guard=guard,
             audit_events=audit_events,
         ) from exc
+
+    persist_generated_candidate_audit_context(
+        session,
+        request_id=preview.request.request_id,
+        candidate_id=preview.candidate.candidate_id,
+        candidate_sql=canonical_sql,
+        adapter_metadata=adapter_metadata,
+        audit_events=audit_events,
+    )
 
     selection = select_execution_connector(candidate_source=candidate_source)
     execution = execute_candidate_sql(
