@@ -38,6 +38,7 @@ from app.services.sql_generation_adapter import (
 def _seed_authoritative_source_governance(
     session: Session,
     *,
+    include_datasets: bool = True,
     source_posture: SourceActivationPosture = SourceActivationPosture.ACTIVE,
 ) -> None:
     source = RegisteredSource(
@@ -80,15 +81,16 @@ def _seed_authoritative_source_governance(
     session.add(contract)
     session.flush()
 
-    session.add(
-        DatasetContractDataset(
-            id=uuid4(),
-            dataset_contract_id=contract.id,
-            schema_name="finance",
-            dataset_name="approved_vendor_spend",
-            dataset_kind=DatasetContractDatasetKind.TABLE,
+    if include_datasets:
+        session.add(
+            DatasetContractDataset(
+                id=uuid4(),
+                dataset_contract_id=contract.id,
+                schema_name="finance",
+                dataset_name="approved_vendor_spend",
+                dataset_kind=DatasetContractDatasetKind.TABLE,
+            )
         )
-    )
 
     source.dataset_contract_id = contract.id
     source.schema_snapshot_id = snapshot.id
@@ -438,6 +440,79 @@ def test_http_preview_adapter_failure_persists_authoritative_failure(
         assert persisted_events[0].event_type == "generation_failed"
         assert persisted_events[0].primary_deny_code == "DENY_SQL_GENERATION_FAILED"
         assert persisted_events[0].denial_cause == "sql_generation_runtime_unhealthy"
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_http_preview_context_failure_persists_specific_failure_code(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: _RecordingHTTPPreviewAdapter(),
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(session, include_datasets=False)
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 422
+
+        persisted_request = session.execute(select(PreviewRequest)).scalar_one()
+        persisted_events = session.execute(select(PreviewAuditEvent)).scalars().all()
+        persisted_candidates = session.execute(select(PreviewCandidate)).scalars().all()
+
+        assert persisted_request.request_id == response.headers["X-Request-ID"]
+        assert persisted_request.request_state == "preview_generation_failed"
+        assert persisted_request.entitlement_decision == "allow"
+        assert persisted_candidates == []
+        assert len(persisted_events) == 1
+        assert persisted_events[0].event_type == "generation_failed"
+        assert persisted_events[0].primary_deny_code == "DENY_SQL_GENERATION_FAILED"
+        assert persisted_events[0].denial_cause == "no_approved_datasets"
     finally:
         session.close()
         engine.dispose()

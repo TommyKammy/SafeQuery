@@ -66,6 +66,15 @@ class PreparedGenerationContext(BaseModel):
 class GenerationContextPreparationError(ValueError):
     """Raised when curated generation context cannot be prepared safely."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "sql_generation_context_unavailable",
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 def prepare_generation_context(
     *,
@@ -85,8 +94,16 @@ def prepare_generation_context(
             source,
             dataset_contract,
         )
-    except (SourceGovernanceResolutionError, SourceEntitlementError) as exc:
-        raise GenerationContextPreparationError(str(exc)) from exc
+    except SourceGovernanceResolutionError as exc:
+        raise GenerationContextPreparationError(
+            str(exc),
+            code="governance_resolution_failed",
+        ) from exc
+    except SourceEntitlementError as exc:
+        raise GenerationContextPreparationError(
+            str(exc),
+            code="entitlement_check_failed",
+        ) from exc
 
     approved_datasets = session.execute(
         select(DatasetContractDataset)
@@ -98,7 +115,8 @@ def prepare_generation_context(
     ).scalars().all()
     if not approved_datasets:
         raise GenerationContextPreparationError(
-            f"Registered source '{resolved_source.source_id}' has no approved datasets in the active contract."
+            f"Registered source '{resolved_source.source_id}' has no approved datasets in the active contract.",
+            code="no_approved_datasets",
         )
 
     return PreparedGenerationContext(
