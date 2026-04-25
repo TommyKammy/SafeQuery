@@ -526,6 +526,9 @@ describe("HomePage", () => {
       fireEvent.change(screen.getByRole("combobox", { name: /source/i }), {
         target: { value: "sap-approved-spend" }
       });
+      fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+        target: { value: "Show approved vendors by quarterly spend" }
+      });
       fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
 
       expect(await screen.findByRole("alert")).toHaveTextContent(failureCase.expectedCopy);
