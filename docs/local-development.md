@@ -226,6 +226,13 @@ The same payload is available from the running backend:
 curl http://localhost:8000/doctor/first-run
 ```
 
+Confirm the live operator workflow contract exposes at least one active source
+selector option:
+
+```bash
+curl http://localhost:8000/operator/workflow
+```
+
 Confirm that the frontend can render the operator workflow shell and that source
 registry data is available to the shell. Missing registry data should block
 preview submission rather than letting the UI guess an executable source.
@@ -240,6 +247,7 @@ bash tests/smoke/test-local-topology-roles.sh
 cd backend
 python3 -m pytest tests/test_application_postgres_guard.py
 python3 -m pytest tests/test_source_foundation_smoke.py
+bash tests/smoke/test-compose-operator-workflow-source-selector.sh
 ```
 
 Those checks cover different enforcement boundaries:
@@ -252,6 +260,10 @@ Those checks cover different enforcement boundaries:
   `SAFEQUERY_APP_POSTGRES_URL`
 - `tests/test_source_foundation_smoke.py` proves the backend still reports a
   coherent source posture when optional business sources are unset or configured
+- `tests/smoke/test-compose-operator-workflow-source-selector.sh` proves the
+  documented first-run compose path can migrate, seed demo governance data,
+  pass backend readiness checks, and expose a non-empty active source selector
+  through `/operator/workflow`
 
 When the startup guards fire, expect explicit messages instead of implicit
 fallbacks:
