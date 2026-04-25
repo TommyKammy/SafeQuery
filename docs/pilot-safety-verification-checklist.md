@@ -161,12 +161,13 @@ complete:
   `alembic current` succeed for the application-owned control plane.
 - K-3 seed evidence: `python -m app.cli.seed_demo_source` creates the demo
   business PostgreSQL source, dataset contract, approved schema snapshot, and
-  dev/local entitlement binding without treating application PostgreSQL as a
-  business target.
+  dev/local entitlement binding with the backend-owned PostgreSQL `warehouse`
+  execution profile, without treating application PostgreSQL as a business
+  target.
 - K-4 doctor evidence: `python -m app.cli.first_run_doctor` reports pass/fail
   status for migrations, active demo source registry records, dataset contract
-  linkage, schema snapshot approval, entitlement readiness, backend health, and
-  frontend health.
+  linkage, schema snapshot approval, entitlement readiness, execution connector
+  readiness, backend health, and frontend health.
 - K-5 workflow evidence:
   `tests/smoke/test-compose-operator-workflow-source-selector.sh` or the live
   `/operator/workflow` payload shows a non-empty active source selector sourced

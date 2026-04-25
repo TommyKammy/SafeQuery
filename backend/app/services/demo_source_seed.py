@@ -71,7 +71,7 @@ def _upsert_demo_source(session: Session) -> tuple[RegisteredSource, bool]:
             source_id=DEMO_SOURCE_ID,
             display_label="Demo business PostgreSQL",
             source_family="postgresql",
-            source_flavor="demo",
+            source_flavor="warehouse",
             activation_posture=SourceActivationPosture.ACTIVE,
             connector_profile_id=None,
             dialect_profile_id=None,
@@ -84,7 +84,7 @@ def _upsert_demo_source(session: Session) -> tuple[RegisteredSource, bool]:
 
     source.display_label = "Demo business PostgreSQL"
     source.source_family = "postgresql"
-    source.source_flavor = "demo"
+    source.source_flavor = "warehouse"
     source.activation_posture = SourceActivationPosture.ACTIVE
     source.connector_profile_id = None
     source.dialect_profile_id = None

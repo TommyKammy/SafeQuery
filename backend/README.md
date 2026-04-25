@@ -61,8 +61,9 @@ docker-compose -f infra/docker-compose.yml run --rm backend python -m app.cli.se
 The seed is idempotent. It creates only backend-owned source registry, dataset
 contract, allow-listed datasets, and approved schema snapshot records for
 `demo-business-postgres`; the connection reference points at
-`SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` and preserves the application
-PostgreSQL role boundary.
+`SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL`, the source uses the backend-owned
+PostgreSQL `warehouse` execution profile, and the application PostgreSQL role
+boundary is preserved.
 
 For host-side Alembic commands, point `SAFEQUERY_APP_POSTGRES_URL` at a
 database that is explicitly reachable from your shell before running Alembic:

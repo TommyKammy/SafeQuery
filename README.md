@@ -151,8 +151,9 @@ The seed is safe to rerun against a local development database. It creates the
 `demo-business-postgres` source registry record, matching dataset contract, two
 minimal allow-listed demo datasets, and an approved schema snapshot pointer. The
 seed references `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` for the business source
-and does not make application PostgreSQL a business target. The dataset contract
-owner binding is the dev/local-only fixture
+and binds the source to the backend-owned PostgreSQL `warehouse` execution
+profile; it does not make application PostgreSQL a business target. The dataset
+contract owner binding is the dev/local-only fixture
 `group:safequery-demo-local-operators`, intended for later development auth
 middleware to attach to `user:demo-local-operator`; it is not a production trust
 source and does not bypass the source-scoped entitlement check.
@@ -165,7 +166,8 @@ docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend pyth
 
 The doctor returns machine-readable JSON and fails closed when migrations,
 demo source registry records, linked dataset contracts, approved schema
-snapshots, or dev/local entitlement seed data are missing.
+snapshots, dev/local entitlement seed data, or the backend-owned execution
+connector binding are missing.
 
 6. Confirm the live operator workflow contract exposes an active source selector
    option:

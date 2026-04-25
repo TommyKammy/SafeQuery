@@ -17,9 +17,15 @@ from app.db.models.dataset_contract import DatasetContract, DatasetContractDatas
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
+from app.features.execution import (
+    ExecutionConnectorSelectionError,
+    select_execution_connector,
+)
+from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 from app.services.demo_source_seed import (
     DEMO_DEV_GOVERNANCE_BINDING,
     DEMO_DEV_SUBJECT_ID,
+    DEMO_SOURCE_ID,
 )
 from app.services.source_entitlements import (
     SourceEntitlementError,
@@ -162,7 +168,7 @@ def _active_demo_sources(session: Session) -> list[RegisteredSource]:
         session.scalars(
             select(RegisteredSource)
             .where(RegisteredSource.activation_posture == SourceActivationPosture.ACTIVE)
-            .where(RegisteredSource.source_flavor == "demo")
+            .where(RegisteredSource.source_id == DEMO_SOURCE_ID)
             .order_by(RegisteredSource.source_id)
         )
     )
@@ -351,6 +357,63 @@ def _check_entitlement_seed(
     )
 
 
+def _check_execution_connector(
+    source: RegisteredSource | None,
+    contract: DatasetContract | None,
+    snapshot: SchemaSnapshot | None,
+) -> FirstRunDoctorCheck:
+    if source is None or contract is None or snapshot is None:
+        detail = {"source_id": source.source_id} if source is not None else {}
+        return FirstRunDoctorCheck(
+            name="execution_connector",
+            status="fail",
+            message=(
+                "Demo source execution connector readiness cannot be evaluated until "
+                "the source, dataset contract, and schema snapshot are present."
+            ),
+            detail=detail,
+        )
+
+    try:
+        selection = select_execution_connector(
+            candidate_source=SourceBoundCandidateMetadata(
+                source_id=source.source_id,
+                source_family=source.source_family,
+                source_flavor=source.source_flavor,
+                dataset_contract_version=contract.contract_version,
+                schema_snapshot_version=snapshot.snapshot_version,
+            )
+        )
+    except ExecutionConnectorSelectionError as exc:
+        return FirstRunDoctorCheck(
+            name="execution_connector",
+            status="fail",
+            message=(
+                "Active demo source is not execution-ready because no backend-owned "
+                "execution connector matches its source binding."
+            ),
+            detail={
+                "source_id": source.source_id,
+                "source_family": source.source_family,
+                "source_flavor": source.source_flavor,
+                "deny_code": exc.deny_code,
+            },
+        )
+
+    return FirstRunDoctorCheck(
+        name="execution_connector",
+        status="pass",
+        message="Backend-owned execution connector is ready for the active demo source.",
+        detail={
+            "source_id": selection.source_id,
+            "source_family": selection.source_family,
+            "source_flavor": selection.source_flavor,
+            "connector_id": selection.connector_id,
+            "ownership": selection.ownership,
+        },
+    )
+
+
 def _source_governance_checks_for_source(
     session: Session,
     source: RegisteredSource,
@@ -361,6 +424,7 @@ def _source_governance_checks_for_source(
         _check_dataset_contract(session, source, contract, snapshot),
         _check_schema_snapshot(source, snapshot),
         _check_entitlement_seed(source, contract),
+        _check_execution_connector(source, contract, snapshot),
     ]
 
 
@@ -382,6 +446,7 @@ def _source_governance_checks(
         _check_dataset_contract(session, None, None, None),
         _check_schema_snapshot(None, None),
         _check_entitlement_seed(None, None),
+        _check_execution_connector(None, None, None),
     ]
 
 
@@ -421,6 +486,14 @@ def _source_governance_unavailable_checks(
             status="fail",
             message=(
                 "Entitlement seed readiness could not be evaluated because "
+                "source readiness data is unavailable."
+            ),
+        ),
+        FirstRunDoctorCheck(
+            name="execution_connector",
+            status="fail",
+            message=(
+                "Execution connector readiness could not be evaluated because "
                 "source readiness data is unavailable."
             ),
         ),

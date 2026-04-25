@@ -11,6 +11,8 @@ from app.db.models.dataset_contract import DatasetContract, DatasetContractDatas
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
+from app.features.execution import select_execution_connector
+from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 from app.services.demo_source_seed import (
     DEMO_DEV_GOVERNANCE_BINDING,
     DEMO_DEV_SUBJECT_ID,
@@ -68,7 +70,7 @@ def test_demo_source_seed_creates_preview_governance_records() -> None:
     assert source.display_label == "Demo business PostgreSQL"
     assert source.activation_posture == SourceActivationPosture.ACTIVE
     assert source.source_family == "postgresql"
-    assert source.source_flavor == "demo"
+    assert source.source_flavor == "warehouse"
     assert source.connection_reference == "env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL"
     assert contract is not None
     assert contract.contract_version == 1
@@ -78,6 +80,36 @@ def test_demo_source_seed_creates_preview_governance_records() -> None:
     assert response.candidate.source_id == DEMO_SOURCE_ID
     assert response.candidate.dataset_contract_version == 1
     assert response.candidate.schema_snapshot_version == 1
+
+
+def test_demo_source_seed_preview_candidate_selects_execution_connector() -> None:
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id=DEMO_SOURCE_ID,
+            ),
+            AuthenticatedSubject(
+                subject_id=DEMO_DEV_SUBJECT_ID,
+                governance_bindings=frozenset({DEMO_DEV_GOVERNANCE_BINDING}),
+            ),
+            session,
+        )
+
+    selection = select_execution_connector(
+        candidate_source=SourceBoundCandidateMetadata(
+            source_id=response.candidate.source_id,
+            source_family=response.candidate.source_family,
+            source_flavor=response.candidate.source_flavor,
+            dataset_contract_version=response.candidate.dataset_contract_version,
+            schema_snapshot_version=response.candidate.schema_snapshot_version,
+        )
+    )
+
+    assert selection.connector_id == "postgresql_readonly"
+    assert selection.ownership == "backend"
 
 
 def test_demo_source_seed_denies_unrelated_demo_subject() -> None:
@@ -125,4 +157,4 @@ def test_demo_source_seed_is_idempotent_and_visible_to_operator_workflow() -> No
     assert [source.source_id for source in workflow.sources] == [DEMO_SOURCE_ID]
     assert workflow.sources[0].activation_posture == "active"
     assert workflow.sources[0].source_family == "postgresql"
-    assert workflow.sources[0].source_flavor == "demo"
+    assert workflow.sources[0].source_flavor == "warehouse"
