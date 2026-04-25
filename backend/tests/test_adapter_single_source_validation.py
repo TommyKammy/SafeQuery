@@ -59,6 +59,7 @@ def test_adapter_request_accepts_single_source_context_fragments() -> None:
                 "context_id": "policy_generation_v1",
                 "source_id": "sap-approved-spend",
             },
+            "datasets": [],
         },
     }
 

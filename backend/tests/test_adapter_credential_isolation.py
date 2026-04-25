@@ -26,7 +26,13 @@ def test_build_sql_generation_adapter_request_uses_only_adapter_safe_fields() ->
             dataset_contract_id="contract_finance_v1",
             schema_snapshot_id="snapshot_finance_v3",
         ),
-        datasets=[],
+        datasets=[
+            {
+                "schema_name": "finance",
+                "dataset_name": "approved_vendor_spend",
+                "dataset_kind": "table",
+            },
+        ],
     )
 
     adapter_request = build_sql_generation_adapter_request(prepared_context)
@@ -51,11 +57,17 @@ def test_build_sql_generation_adapter_request_uses_only_adapter_safe_fields() ->
             },
             "glossary": None,
             "policy": None,
+            "datasets": [
+                {
+                    "schema_name": "finance",
+                    "dataset_name": "approved_vendor_spend",
+                    "dataset_kind": "table",
+                },
+            ],
         },
     }
     dumped = adapter_request.model_dump()
     assert "display_label" not in str(dumped)
-    assert "datasets" not in dumped
     assert "connection_reference" not in str(dumped)
     assert "connector_profile_id" not in str(dumped)
     assert "execution_policy_id" not in str(dumped)

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
-from typing import Optional, Protocol
+from typing import Literal, Optional, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     PrivateAttr,
     SecretStr,
     StringConstraints,
@@ -22,6 +23,7 @@ from app.services.generation_context import PreparedGenerationContext
 
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+DatasetKindLiteral = Literal["view", "table", "materialized_view"]
 
 
 class SQLGenerationSourceBinding(BaseModel):
@@ -32,20 +34,29 @@ class SQLGenerationSourceBinding(BaseModel):
     source_flavor: Optional[NonEmptyTrimmedString] = None
 
 
-class SQLGenerationContextReferences(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    dataset_contract: "SQLGenerationContextReference"
-    schema_snapshot: "SQLGenerationContextReference"
-    glossary: Optional["SQLGenerationContextReference"] = None
-    policy: Optional["SQLGenerationContextReference"] = None
-
-
 class SQLGenerationContextReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     context_id: NonEmptyTrimmedString
     source_id: NonEmptyTrimmedString
+
+
+class SQLGenerationCuratedDataset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_name: NonEmptyTrimmedString
+    dataset_name: NonEmptyTrimmedString
+    dataset_kind: DatasetKindLiteral
+
+
+class SQLGenerationContextReferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_contract: SQLGenerationContextReference
+    schema_snapshot: SQLGenerationContextReference
+    glossary: Optional[SQLGenerationContextReference] = None
+    policy: Optional[SQLGenerationContextReference] = None
+    datasets: list[SQLGenerationCuratedDataset] = Field(default_factory=list)
 
 
 class SQLGenerationAdapterRequest(BaseModel):
@@ -127,6 +138,8 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
     ) -> SQLGenerationAdapterResponse:
         if self.provider == "local_llm":
             return self._generate_local_llm_sql(request)
+        if self.provider == "vanna":
+            return self._generate_vanna_sql(request)
 
         raise SQLGenerationAdapterConfigurationError(
             "sql_generation_provider_not_implemented",
@@ -213,6 +226,122 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
         return SQLGenerationAdapterResponse(
             candidate_sql=candidate_sql,
             provider="local_llm",
+            adapter_version=self.adapter_version,
+            model=model,
+        )
+
+    def _generate_vanna_sql(
+        self,
+        request: SQLGenerationAdapterRequest,
+    ) -> SQLGenerationAdapterResponse:
+        if not request.context.datasets:
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_vanna_context_missing",
+                "Vanna SQL generation requires curated source-scoped dataset context.",
+            )
+        if self._consecutive_failures >= self.circuit_breaker_failure_threshold:
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_runtime_circuit_open",
+                "Vanna SQL generation runtime is unhealthy; circuit breaker is open.",
+            )
+
+        last_error: BaseException | None = None
+        for _attempt in range(self.retry_count + 1):
+            try:
+                response = self._dispatch_vanna_sql(request)
+            except (
+                HTTPError,
+                URLError,
+                TimeoutError,
+                OSError,
+                ValidationError,
+                json.JSONDecodeError,
+                SQLGenerationAdapterConfigurationError,
+            ) as exc:
+                last_error = exc
+                continue
+
+            self._consecutive_failures = 0
+            return response
+
+        self._consecutive_failures += 1
+        detail = (
+            last_error.__class__.__name__
+            if last_error is not None
+            else "UnknownAdapterFailure"
+        )
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_runtime_unhealthy",
+            f"Vanna SQL generation runtime is unavailable ({detail}).",
+        )
+
+    def _dispatch_vanna_sql(
+        self,
+        request: SQLGenerationAdapterRequest,
+    ) -> SQLGenerationAdapterResponse:
+        context_payload: dict[str, object] = {
+            "dataset_contract": request.context.dataset_contract.model_dump(
+                mode="json"
+            ),
+            "schema_snapshot": request.context.schema_snapshot.model_dump(
+                mode="json"
+            ),
+            "datasets": [
+                dataset.model_dump(mode="json")
+                for dataset in request.context.datasets
+            ],
+        }
+        payload: dict[str, object] = {
+            "question": request.question,
+            "source": request.source.model_dump(mode="json"),
+            "context": context_payload,
+        }
+        if request.context.glossary is not None:
+            context_payload["glossary"] = request.context.glossary.model_dump(
+                mode="json"
+            )
+        if request.context.policy is not None:
+            context_payload["policy"] = request.context.policy.model_dump(
+                mode="json"
+            )
+        if self.model is not None:
+            payload["model"] = self.model
+
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if self.api_key is not None:
+            headers["Authorization"] = f"Bearer {self.api_key.get_secret_value()}"
+
+        http_request = Request(
+            f"{self.base_url.rstrip('/')}/api/v0/generate_sql",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urlopen(http_request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            status = getattr(response, "status", 200)
+            raw_body = response.read().decode("utf-8", errors="replace")
+
+        if status >= 400:
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_runtime_unhealthy",
+                "Vanna SQL generation runtime returned an unhealthy response.",
+            )
+
+        decoded = json.loads(raw_body)
+        if not isinstance(decoded, dict):
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_response_invalid",
+                "Vanna SQL generation runtime returned an invalid response.",
+            )
+
+        candidate_sql = decoded.get("candidate_sql", decoded.get("sql"))
+        model = decoded.get("model", self.model)
+        return SQLGenerationAdapterResponse(
+            candidate_sql=candidate_sql,
+            provider="vanna",
             adapter_version=self.adapter_version,
             model=model,
         )
@@ -306,5 +435,13 @@ def build_sql_generation_adapter_request(
                 context_id=prepared_context.governance.schema_snapshot_id,
                 source_id=prepared_context.source.source_id,
             ),
+            datasets=[
+                SQLGenerationCuratedDataset(
+                    schema_name=dataset.schema_name,
+                    dataset_name=dataset.dataset_name,
+                    dataset_kind=dataset.dataset_kind,
+                )
+                for dataset in prepared_context.datasets
+            ],
         ),
     )
