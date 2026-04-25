@@ -17,7 +17,7 @@ from app.db.models.dataset_contract import (
     DatasetContractDatasetKind,
 )
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
-from app.db.models.preview import PreviewAuditEvent, PreviewCandidate
+from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
 from app.features.evaluation import (
@@ -52,6 +52,7 @@ from app.features.guard.deny_taxonomy import (
     DENY_RUNTIME_RATE_LIMIT,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_UNSUPPORTED_SOURCE_BINDING,
+    DENY_UNSUPPORTED_SQL_SYNTAX,
 )
 from app.features.guard.sql_guard import evaluate_postgresql_sql_guard
 from app.services.candidate_lifecycle import (
@@ -935,6 +936,74 @@ def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_au
             "execution_policy_version": scenario.source.execution_policy_version,
             "connector_profile_version": scenario.source.connector_profile_version,
         }.items() <= dumped.items()
+
+
+def test_postgresql_core_vertical_slice_blocks_mssql_adapter_output_before_preview_ready() -> None:
+    from app.services.postgresql_vertical_slice import (
+        PostgreSQLVerticalSliceDenied,
+        run_postgresql_core_vertical_slice,
+    )
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _postgresql_scenarios_by_id()[
+        "postgresql-positive-approved-vendor-spend-top-vendors"
+    ]
+    incompatible_sql = "SELECT TOP 10 vendor_name FROM finance.approved_vendor_spend"
+
+    class IncompatibleAdapter:
+        def generate_sql(self, request):
+            return _adapter_response(incompatible_sql)
+
+    def fake_query_runner(**_: object) -> list[dict[str, object]]:
+        raise AssertionError("PostgreSQL execution must not run for incompatible SQL")
+
+    with _session_scope() as session:
+        _seed_postgresql_source(session, scenario=scenario)
+
+        with pytest.raises(PostgreSQLVerticalSliceDenied) as exc_info:
+            run_postgresql_core_vertical_slice(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=IncompatibleAdapter(),
+                business_postgres_url=POSTGRESQL_TEST_URL,
+                application_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
+                query_runner=fake_query_runner,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-142-incompatible-adapter-output",
+                    correlation_id="correlation-142-incompatible-adapter-output",
+                    user_subject="user:alice",
+                    session_id="session-142-incompatible-adapter-output",
+                    query_candidate_id="candidate-142-incompatible-adapter-output",
+                    candidate_owner_subject="user:alice",
+                    guard_version="postgresql-guard-v1",
+                    application_version="safequery-test",
+                ),
+            )
+
+        persisted_request = session.query(PreviewRequest).one()
+        persisted_candidate = session.query(PreviewCandidate).one()
+        persisted_denial_event = (
+            session.query(PreviewAuditEvent)
+            .filter(PreviewAuditEvent.event_type == "guard_evaluated")
+            .one()
+        )
+
+    assert exc_info.value.deny_code == DENY_UNSUPPORTED_SQL_SYNTAX
+    assert exc_info.value.guard.decision == "reject"
+    assert persisted_request.request_state == "blocked"
+    assert persisted_candidate.candidate_sql == incompatible_sql
+    assert persisted_candidate.candidate_state == "blocked"
+    assert persisted_candidate.guard_status == "blocked"
+    assert persisted_denial_event.primary_deny_code == DENY_UNSUPPORTED_SQL_SYNTAX
+    assert persisted_denial_event.candidate_state == "denied"
 
 
 def test_postgresql_core_vertical_slice_denies_application_postgres_reuse_before_query() -> None:

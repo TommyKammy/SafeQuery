@@ -14,6 +14,7 @@ from app.services.sql_generation_adapter import (
     SQLGenerationContextReferences,
     SQLGenerationSourceBinding,
     build_sql_generation_adapter_run_metadata,
+    normalize_adapter_generated_sql,
     resolve_sql_generation_adapter,
 )
 
@@ -201,6 +202,15 @@ def test_sql_generation_adapter_run_metadata_fingerprints_safe_request_projectio
     assert metadata.prompt_fingerprint.startswith("sha256:")
     assert "Show approved vendors" not in metadata.prompt_fingerprint
     assert "sap-approved-spend" not in metadata.prompt_fingerprint
+
+
+def test_normalize_adapter_generated_sql_strips_wrapping_whitespace_and_terminal_semicolon() -> None:
+    assert (
+        normalize_adapter_generated_sql(
+            "\n SELECT vendor_id FROM approved_vendor_spend LIMIT 50; \t"
+        )
+        == "SELECT vendor_id FROM approved_vendor_spend LIMIT 50"
+    )
 
 
 def test_sql_generation_adapter_registry_fails_closed_when_disabled() -> None:

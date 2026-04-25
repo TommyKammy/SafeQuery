@@ -143,6 +143,10 @@ _MSSQL_MULTI_STATEMENT_SEPARATOR = re.compile(
     r";\s*\S|^\s*GO\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_MSSQL_POSTGRESQL_LIMIT_SYNTAX = re.compile(
+    r"\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*;?\s*$",
+    re.IGNORECASE,
+)
 _POSTGRESQL_DENY_RULES: tuple[MSSQLGuardRule, ...] = (
     MSSQLGuardRule(
         code=DENY_WRITE_OPERATION,
@@ -176,6 +180,10 @@ _POSTGRESQL_DENY_RULES: tuple[MSSQLGuardRule, ...] = (
 
 _POSTGRESQL_QUERY_START = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
 _POSTGRESQL_MULTI_STATEMENT_SEPARATOR = re.compile(r";\s*\S", re.IGNORECASE)
+_POSTGRESQL_MSSQL_TOP_SYNTAX = re.compile(
+    r"^\s*SELECT\s+TOP\s+(?:\(\s*)?\d+",
+    re.IGNORECASE,
+)
 _POSTGRESQL_IDENTIFIER = r"(?:\"(?:[^\"]|\"\")+\"|[A-Za-z_][\w$]*)"
 _POSTGRESQL_FROM_CLAUSE = re.compile(
     r"\bFROM\b(?P<body>.*?)(?=\bWHERE\b|\bGROUP\s+BY\b|\bHAVING\b|\bORDER\s+BY\b|"
@@ -353,6 +361,15 @@ def evaluate_mssql_sql_guard(
             detail="Canonical SQL must contain exactly one SELECT statement.",
         )
 
+    if _MSSQL_POSTGRESQL_LIMIT_SYNTAX.search(canonical_sql):
+        return _reject_sql_guard(
+            profile="mssql",
+            canonical_sql=canonical_sql,
+            source=request.source,
+            code=DENY_UNSUPPORTED_SQL_SYNTAX,
+            detail="PostgreSQL LIMIT syntax is not allowed in the MSSQL guard profile.",
+        )
+
     for rule in _MSSQL_DENY_RULES:
         if re.search(rule.pattern, canonical_sql, re.IGNORECASE):
             return _reject_sql_guard(
@@ -424,6 +441,15 @@ def evaluate_postgresql_sql_guard(
             source=request.source,
             code=DENY_MULTI_STATEMENT,
             detail="Canonical SQL must contain exactly one SELECT statement.",
+        )
+
+    if _POSTGRESQL_MSSQL_TOP_SYNTAX.search(canonical_sql):
+        return _reject_sql_guard(
+            profile="postgresql",
+            canonical_sql=canonical_sql,
+            source=request.source,
+            code=DENY_UNSUPPORTED_SQL_SYNTAX,
+            detail="MSSQL TOP syntax is not allowed in the PostgreSQL guard profile.",
         )
 
     for rule in _POSTGRESQL_DENY_RULES:
