@@ -217,8 +217,10 @@ docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend pyth
 The doctor emits JSON with pass/fail/degraded checks for application database
 connectivity, Alembic posture, active demo source registry records, linked
 dataset contracts, approved schema snapshots, dev/local entitlement seed data,
-and backend/frontend URL expectations. Missing registry data, contract links,
-schema snapshots, entitlements, or migrations are failures, not empty UI states.
+the backend-owned execution connector binding, and backend/frontend URL
+expectations. Missing registry data, contract links, schema snapshots,
+entitlements, execution connector readiness, or migrations are failures, not
+empty UI states.
 
 The same payload is available from the running backend:
 

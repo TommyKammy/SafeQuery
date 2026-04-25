@@ -92,3 +92,23 @@ def test_select_execution_connector_rejects_unsupported_source_flavor_without_fa
         )
 
     assert exc_info.value.deny_code == DENY_UNSUPPORTED_SOURCE_BINDING
+
+
+def test_select_execution_connector_rejects_preview_only_demo_flavor_without_fallback() -> None:
+    from app.features.execution.connector_selection import (
+        ExecutionConnectorSelectionError,
+        select_execution_connector,
+    )
+
+    with pytest.raises(
+        ExecutionConnectorSelectionError,
+        match="candidate-bound source family 'postgresql' and flavor 'demo'",
+    ) as exc_info:
+        select_execution_connector(
+            candidate_source=_candidate_source(
+                source_id="demo-business-postgres",
+                source_flavor="demo",
+            )
+        )
+
+    assert exc_info.value.deny_code == DENY_UNSUPPORTED_SOURCE_BINDING
