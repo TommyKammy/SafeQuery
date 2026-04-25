@@ -26,6 +26,7 @@ from app.services.source_governance import (
     resolve_authoritative_source_governance,
 )
 from app.services.source_registry import SourceRegistryPostureError
+from app.services.sql_generation_adapter import SQLGenerationAdapterRunMetadata
 
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -342,6 +343,12 @@ def _persist_preview_audit_events(
                 entitlement_source_bindings=_joined_governance_bindings(
                     list(event.entitlement_source_bindings or [])
                 ),
+                adapter_provider=event.adapter_provider,
+                adapter_model=event.adapter_model,
+                adapter_version=event.adapter_version,
+                adapter_run_id=event.adapter_run_id,
+                prompt_version=event.prompt_version,
+                prompt_fingerprint=event.prompt_fingerprint,
                 application_version=event.application_version,
                 source_id=event.source_id,
                 source_family=event.source_family,
@@ -482,6 +489,12 @@ def _persist_preview_submission_records(
             preview_candidate.schema_snapshot_version = schema_snapshot.snapshot_version
             preview_candidate.authenticated_subject_id = subject_id
             preview_candidate.candidate_sql = None
+            preview_candidate.adapter_provider = None
+            preview_candidate.adapter_model = None
+            preview_candidate.adapter_version = None
+            preview_candidate.adapter_run_id = None
+            preview_candidate.prompt_version = None
+            preview_candidate.prompt_fingerprint = None
             preview_candidate.guard_status = PREVIEW_PENDING_GUARD_STATUS
             preview_candidate.candidate_state = "preview_ready"
             session.flush()
@@ -500,6 +513,57 @@ def _persist_preview_submission_records(
             raise PreviewSubmissionContractError(
                 "Preview submission could not be persisted consistently."
             ) from exc
+
+
+def persist_generated_candidate_audit_context(
+    session: Session,
+    *,
+    request_id: str,
+    candidate_id: str,
+    candidate_sql: str,
+    adapter_metadata: SQLGenerationAdapterRunMetadata,
+    audit_events: list[SourceAwareAuditEvent],
+) -> None:
+    try:
+        preview_request = session.execute(
+            select(PreviewRequest).where(PreviewRequest.request_id == request_id)
+        ).scalar_one_or_none()
+        preview_candidate = session.execute(
+            select(PreviewCandidate).where(
+                PreviewCandidate.request_id == request_id,
+                PreviewCandidate.candidate_id == candidate_id,
+            )
+        ).scalar_one_or_none()
+        if preview_request is None or preview_candidate is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Generated candidate metadata cannot be persisted without a bound preview record.",
+            )
+        if preview_candidate.preview_request_id != preview_request.id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Generated candidate metadata cannot be rebound to a different request.",
+            )
+
+        preview_candidate.candidate_sql = candidate_sql
+        preview_candidate.adapter_provider = adapter_metadata.adapter_provider
+        preview_candidate.adapter_model = adapter_metadata.adapter_model
+        preview_candidate.adapter_version = adapter_metadata.adapter_version
+        preview_candidate.adapter_run_id = adapter_metadata.adapter_run_id
+        preview_candidate.prompt_version = adapter_metadata.prompt_version
+        preview_candidate.prompt_fingerprint = adapter_metadata.prompt_fingerprint
+        _persist_preview_audit_events(
+            session,
+            preview_request=preview_request,
+            preview_candidate=preview_candidate,
+            audit_events=audit_events,
+        )
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise PreviewSubmissionContractError(
+            "Generated candidate metadata could not be persisted consistently."
+        ) from exc
 
 
 def _persist_preview_denial_records(

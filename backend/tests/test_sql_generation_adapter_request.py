@@ -13,6 +13,7 @@ from app.services.sql_generation_adapter import (
     SQLGenerationAdapterResponse,
     SQLGenerationContextReferences,
     SQLGenerationSourceBinding,
+    build_sql_generation_adapter_run_metadata,
     resolve_sql_generation_adapter,
 )
 
@@ -155,6 +156,51 @@ def test_sql_generation_adapter_response_shape_is_typed_and_credential_free() ->
         assert exc.errors()[0]["type"] == "extra_forbidden"
     else:
         raise AssertionError("Expected response validation to reject credentials.")
+
+
+def test_sql_generation_adapter_run_metadata_fingerprints_safe_request_projection() -> None:
+    request = SQLGenerationAdapterRequest(
+        request_id="req_79_preview",
+        question="Show approved vendors by quarterly spend",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+        ),
+    )
+    response = SQLGenerationAdapterResponse(
+        candidate_sql="select vendor_id from approved_vendor_spend limit 50",
+        provider="local_llm",
+        adapter_version="local_llm.v1",
+        model="safequery-local-sql",
+    )
+
+    metadata = build_sql_generation_adapter_run_metadata(
+        adapter_request=request,
+        adapter_response=response,
+        adapter_run_id="correlation-79",
+    )
+
+    assert metadata.model_dump(exclude_none=True) == {
+        "adapter_provider": "local_llm",
+        "adapter_version": "local_llm.v1",
+        "adapter_model": "safequery-local-sql",
+        "adapter_run_id": "correlation-79",
+        "prompt_version": "sql_generation_adapter_request.v1",
+        "prompt_fingerprint": metadata.prompt_fingerprint,
+    }
+    assert metadata.prompt_fingerprint.startswith("sha256:")
+    assert "Show approved vendors" not in metadata.prompt_fingerprint
+    assert "sap-approved-spend" not in metadata.prompt_fingerprint
 
 
 def test_sql_generation_adapter_registry_fails_closed_when_disabled() -> None:
