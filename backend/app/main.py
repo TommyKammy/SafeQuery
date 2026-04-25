@@ -20,6 +20,7 @@ from app.core.errors import (
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import require_preview_submission_session
+from app.features.auth.dev import attach_dev_authenticated_subject
 from app.features.auth.context import (
     AuthenticatedSubject,
     require_authenticated_subject,
@@ -91,6 +92,9 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+    if settings.dev_auth_enabled:
+        app.middleware("http")(attach_dev_authenticated_subject)
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):

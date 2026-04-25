@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     app_name: str = "SafeQuery API"
     environment: Literal["development", "test", "staging", "production"] = "development"
     app_postgres_url: PostgresDsn
+    dev_auth_enabled: bool = False
     business_postgres_source_url: Optional[PostgresDsn] = None
     business_mssql_source_connection_string: Optional[str] = None
     cors_origins: Annotated[list[str], NoDecode] = Field(
@@ -59,6 +60,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_distinct_postgres_roles(self) -> "Settings":
+        if self.dev_auth_enabled and self.environment not in {"development", "test"}:
+            raise ValueError(
+                "SAFEQUERY_DEV_AUTH_ENABLED is only allowed when "
+                "SAFEQUERY_ENVIRONMENT is development or test."
+            )
+
         source_url = self.business_postgres_source_url
         if source_url is not None and str(source_url) == str(self.app_postgres_url):
             raise ValueError(
