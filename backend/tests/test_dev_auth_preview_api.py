@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -17,7 +17,14 @@ from app.db.models.dataset_contract import DatasetContract
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.db.session import require_preview_submission_session
+from app.features.auth.dev import build_dev_authenticated_subject
+from app.features.auth.context import AuthenticatedSubject
+from app.features.auth.session import (
+    APPLICATION_SESSION_COOKIE,
+    create_test_application_session,
+)
 from app.services.demo_source_seed import (
+    DEMO_DEV_GOVERNANCE_BINDING,
     DEMO_DEV_SUBJECT_ID,
     DEMO_SOURCE_ID,
     seed_demo_source_governance,
@@ -32,6 +39,7 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
                 "SAFEQUERY_APP_POSTGRES_URL",
                 "SAFEQUERY_ENVIRONMENT",
                 "SAFEQUERY_DEV_AUTH_ENABLED",
+                "SAFEQUERY_SESSION_SIGNING_KEY",
             )
         }
         os.environ["SAFEQUERY_APP_POSTGRES_URL"] = (
@@ -39,6 +47,7 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
         )
         os.environ.pop("SAFEQUERY_ENVIRONMENT", None)
         os.environ.pop("SAFEQUERY_DEV_AUTH_ENABLED", None)
+        os.environ.pop("SAFEQUERY_SESSION_SIGNING_KEY", None)
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -115,9 +124,12 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
     def test_enabled_development_dev_auth_allows_demo_preview_http_request(self) -> None:
         os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
         os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+        app_session = create_test_application_session(build_dev_authenticated_subject())
 
         response = self._client().post(
             "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
             json={
                 "question": "Show approved vendors by quarterly spend",
                 "source_id": DEMO_SOURCE_ID,
@@ -131,6 +143,149 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
         self.assertEqual(
             payload["audit"]["events"][0]["user_subject"],
             DEMO_DEV_SUBJECT_ID,
+        )
+        self.assertEqual(
+            payload["audit"]["events"][0]["session_id"],
+            "application-session-redacted",
+        )
+        self.assertNotIn(app_session.csrf_token, response.text)
+        self.assertNotIn(app_session.cookie_value, response.text)
+
+    def test_enabled_dev_auth_without_session_or_csrf_blocks_preview_http_request(
+        self,
+    ) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+
+        response = self._client().post(
+            "/requests/preview",
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": DEMO_SOURCE_ID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "http_error",
+                    "message": "Forbidden",
+                }
+            },
+        )
+
+    def test_malformed_application_session_blocks_preview_http_request(self) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+
+        response = self._client().post(
+            "/requests/preview",
+            headers={"x-safequery-csrf": "csrf-token"},
+            cookies={APPLICATION_SESSION_COOKIE: "malformed-session"},
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": DEMO_SOURCE_ID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "http_error",
+                    "message": "Forbidden",
+                }
+            },
+        )
+
+    def test_mismatched_csrf_blocks_preview_http_request(self) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        response = self._client().post(
+            "/requests/preview",
+            headers={"x-safequery-csrf": "different-csrf-token"},
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": DEMO_SOURCE_ID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "http_error",
+                    "message": "Forbidden",
+                }
+            },
+        )
+
+    def test_mismatched_session_subject_blocks_preview_http_request(self) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+        app_session = create_test_application_session(
+            AuthenticatedSubject(
+                subject_id="user:different-local-operator",
+                governance_bindings=frozenset({DEMO_DEV_GOVERNANCE_BINDING}),
+            )
+        )
+
+        response = self._client().post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": DEMO_SOURCE_ID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "http_error",
+                    "message": "Forbidden",
+                }
+            },
+        )
+
+    def test_expired_application_session_blocks_preview_http_request(self) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+        app_session = create_test_application_session(
+            build_dev_authenticated_subject(),
+            now=datetime.now(timezone.utc) - timedelta(hours=2),
+            ttl=timedelta(minutes=5),
+        )
+
+        response = self._client().post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": DEMO_SOURCE_ID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "http_error",
+                    "message": "Forbidden",
+                }
+            },
         )
 
     def test_disabled_dev_auth_blocks_preview_http_request(self) -> None:
@@ -159,10 +314,13 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
     def test_enabled_dev_auth_still_enforces_preview_entitlement(self) -> None:
         os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
         os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+        app_session = create_test_application_session(build_dev_authenticated_subject())
         self._seed_restricted_source("restricted-business-postgres")
 
         response = self._client().post(
             "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
             json={
                 "question": "Show approved vendors by quarterly spend",
                 "source_id": "restricted-business-postgres",

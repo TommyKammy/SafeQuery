@@ -18,13 +18,22 @@ from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewSt
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.db.session import require_preview_submission_session
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
+from app.features.auth.session import create_test_application_session
 
 
 class RequestSourceSelectionTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        self._previous_env = {
+            name: os.environ.get(name)
+            for name in (
+                "SAFEQUERY_APP_POSTGRES_URL",
+                "SAFEQUERY_SESSION_SIGNING_KEY",
+            )
+        }
         os.environ["SAFEQUERY_APP_POSTGRES_URL"] = (
             "postgresql://safequery:safequery@db:5432/safequery"
         )
+        os.environ["SAFEQUERY_SESSION_SIGNING_KEY"] = "x" * 32
         get_settings.cache_clear()
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
@@ -48,9 +57,26 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         self.session.close()
         self.engine.dispose()
-        os.environ.pop("SAFEQUERY_APP_POSTGRES_URL", None)
+        for name, value in self._previous_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         get_settings.cache_clear()
         self.app.dependency_overrides.clear()
+
+    def _authenticated_subject(self) -> AuthenticatedSubject:
+        dependency = self.app.dependency_overrides[require_authenticated_subject]
+        return dependency()
+
+    def _post_preview(self, payload: dict[str, str]) -> object:
+        app_session = create_test_application_session(self._authenticated_subject())
+        return self.client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json=payload,
+        )
 
     def _seed_authoritative_source_governance(
         self,
@@ -132,9 +158,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         )
 
     def test_preview_submission_requires_explicit_source_id(self) -> None:
-        response = self.client.post(
-            "/requests/preview",
-            json={
+        response = self._post_preview(
+            {
                 "question": "Show approved vendors by quarterly spend",
             },
         )
@@ -151,9 +176,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         )
 
     def test_preview_submission_rejects_unknown_source_id(self) -> None:
-        response = self.client.post(
-            "/requests/preview",
-            json={
+        response = self._post_preview(
+            {
                 "question": "Show approved vendors by quarterly spend",
                 "source_id": "unregistered-source",
             },
@@ -176,9 +200,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             source_posture=SourceActivationPosture.PAUSED,
         )
 
-        response = self.client.post(
-            "/requests/preview",
-            json={
+        response = self._post_preview(
+            {
                 "question": "Show approved vendors by quarterly spend",
                 "source_id": "legacy-finance-archive",
             },
@@ -233,9 +256,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             "app.services.request_preview._resolve_authoritative_source_governance",
             return_value=(malformed_source, malformed_contract, malformed_snapshot),
         ):
-            response = self.client.post(
-                "/requests/preview",
-                json={
+            response = self._post_preview(
+                {
                     "question": "Show approved vendors by quarterly spend",
                     "source_id": "broken-source",
                 },
@@ -258,9 +280,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             source_posture=SourceActivationPosture.ACTIVE,
         )
 
-        response = self.client.post(
-            "/requests/preview",
-            json={
+        response = self._post_preview(
+            {
                 "question": "Show approved vendors by quarterly spend",
                 "source_id": "sap-approved-spend",
             },
@@ -392,9 +413,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             security_review_binding="group:security-reviewers",
         )
 
-        response = self.client.post(
-            "/requests/preview",
-            json={
+        response = self._post_preview(
+            {
                 "question": "Show approved vendors by quarterly spend",
                 "source_id": "sap-approved-spend",
             },
@@ -423,9 +443,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             exception_policy_binding="group:exception-approvers",
         )
 
-        response = self.client.post(
-            "/requests/preview",
-            json={
+        response = self._post_preview(
+            {
                 "question": "Show approved vendors by quarterly spend",
                 "source_id": "sap-approved-spend",
             },

@@ -1,7 +1,14 @@
 from functools import lru_cache
 from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, Field, PostgresDsn, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PostgresDsn,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -36,6 +43,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "staging", "production"] = "development"
     app_postgres_url: PostgresDsn
     dev_auth_enabled: bool = False
+    session_signing_key: Optional[SecretStr] = None
     business_postgres_source_url: Optional[PostgresDsn] = None
     business_mssql_source_connection_string: Optional[str] = None
     cors_origins: Annotated[list[str], NoDecode] = Field(
