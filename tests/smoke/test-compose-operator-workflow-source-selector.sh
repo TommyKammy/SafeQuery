@@ -20,8 +20,11 @@ cleanup() {
   if [[ -n "${tmp_dir:-}" ]]; then
     rm -rf "$tmp_dir"
   fi
-  if [[ "$keep_stack" != "1" ]]; then
-    compose down -v --remove-orphans >/dev/null
+  if [[ "$keep_stack" != "1" ]] \
+    && command -v docker-compose >/dev/null 2>&1 \
+    && [[ -f "$compose_file" ]] \
+    && [[ -f "$env_file" ]]; then
+    compose down -v --remove-orphans >/dev/null || true
   fi
 }
 
@@ -114,6 +117,7 @@ run_compose_source_selector_smoke() {
   response_file="$tmp_dir/response.json"
   curl_error_file="$tmp_dir/curl.err"
   frontend_file="$tmp_dir/frontend.html"
+  trap cleanup EXIT
 
   if ! command -v docker-compose >/dev/null 2>&1; then
     echo "compose smoke unavailable: docker-compose was not found on PATH" >&2
@@ -129,8 +133,6 @@ run_compose_source_selector_smoke() {
     echo "compose smoke setup failed: missing $env_file; copy .env.example to .env" >&2
     exit 1
   fi
-
-  trap cleanup EXIT
 
   echo "compose smoke: resetting disposable compose project"
   compose down -v --remove-orphans >/dev/null
