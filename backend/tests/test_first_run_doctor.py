@@ -63,6 +63,18 @@ def _ready_surface_probes() -> dict[str, object]:
     }
 
 
+def test_http_probe_rejects_non_http_schemes_before_urlopen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("urlopen should not be called for rejected schemes")
+
+    monkeypatch.setattr(first_run_doctor_service, "urlopen", fail_if_called)
+
+    with pytest.raises(ValueError, match="Only HTTP"):
+        first_run_doctor_service._http_get("file:///tmp/safequery-first-run")
+
+
 def test_first_run_doctor_fails_closed_when_migration_state_is_missing() -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.pool import StaticPool

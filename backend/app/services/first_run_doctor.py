@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 from urllib.error import HTTPError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from alembic.config import Config
@@ -517,9 +518,13 @@ def _normalize_base_url(base_url: str) -> str:
 
 
 def _http_get(url: str) -> HttpProbeResponse:
+    parsed_url = urlsplit(url)
+    if parsed_url.scheme not in {"http", "https"}:
+        raise ValueError("Only HTTP(S) probe URLs are supported.")
+
     request = Request(url, headers={"Accept": "application/json, text/html"})
     try:
-        with urlopen(request, timeout=2.0) as response:
+        with urlopen(request, timeout=2.0) as response:  # noqa: S310
             body = response.read(64_000).decode("utf-8", errors="replace")
             return HttpProbeResponse(
                 status_code=response.status,
@@ -552,7 +557,7 @@ def _check_backend_served_route(backend_base_url: str) -> FirstRunDoctorCheck:
         status="pass",
         message=(
             "Backend doctor route is serving this response; run the CLI doctor "
-            "to probe the configured browser-facing backend health URL."
+            "to probe the configured backend health URL."
         ),
         detail={
             "doctor_route": "/doctor/first-run",
@@ -574,7 +579,8 @@ def _check_backend_health(
             status="fail",
             message=(
                 "Backend health endpoint is not reachable. Start the backend "
-                "service and verify NEXT_PUBLIC_API_BASE_URL points at it."
+                "service and verify SAFEQUERY_BACKEND_BASE_URL "
+                "(or NEXT_PUBLIC_API_BASE_URL if unset) points at it."
             ),
             detail={"health_url": health_url, "error": exc.__class__.__name__},
         )
@@ -593,7 +599,7 @@ def _check_backend_health(
             message=(
                 "Backend health endpoint returned an unhealthy response. "
                 "Check backend logs, database connectivity, and "
-                "NEXT_PUBLIC_API_BASE_URL before product evaluation."
+                "SAFEQUERY_BACKEND_BASE_URL before product evaluation."
             ),
             detail=detail,
         )
