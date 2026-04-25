@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from typing import Iterator
+from uuid import UUID
 
 import pytest
 from sqlalchemy import text
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 import app.services.first_run_doctor as first_run_doctor_service
 from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
-from app.db.models.source_registry import RegisteredSource
+from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.services.demo_source_seed import DEMO_SOURCE_UUID, seed_demo_source_governance
 from app.services.first_run_doctor import run_first_run_doctor
 
@@ -117,6 +118,42 @@ def test_first_run_doctor_passes_after_demo_seed() -> None:
     assert sections["entitlement_seed"]["status"] == "pass"
     assert sections["backend"]["status"] == "pass"
     assert sections["frontend"]["status"] == "pass"
+
+
+def test_first_run_doctor_passes_when_any_active_demo_source_is_ready() -> None:
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+        broken_source = RegisteredSource(
+            id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            source_id="aaa-broken-demo",
+            display_label="Broken demo source",
+            source_family="postgresql",
+            source_flavor="demo",
+            activation_posture=SourceActivationPosture.ACTIVE,
+            connector_profile_id=None,
+            dialect_profile_id=None,
+            dataset_contract_id=None,
+            schema_snapshot_id=None,
+            execution_policy_id=None,
+            connection_reference="env:SAFEQUERY_BROKEN_DEMO_URL",
+        )
+        session.add(broken_source)
+        session.commit()
+
+        result = run_first_run_doctor(session, database_probe=lambda: None)
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "pass"
+    assert sections["source_registry"]["detail"]["source_ids"] == [
+        "aaa-broken-demo",
+        "demo-business-postgres",
+    ]
+    assert sections["dataset_contract"]["status"] == "pass"
+    assert sections["dataset_contract"]["detail"]["source_id"] == (
+        "demo-business-postgres"
+    )
+    assert sections["schema_snapshot"]["status"] == "pass"
+    assert sections["entitlement_seed"]["status"] == "pass"
 
 
 def test_first_run_doctor_fails_closed_when_source_seed_is_missing() -> None:

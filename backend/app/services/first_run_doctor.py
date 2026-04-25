@@ -214,6 +214,7 @@ def _check_dataset_contract(
     snapshot: SchemaSnapshot | None,
 ) -> FirstRunDoctorCheck:
     if source is None or contract is None:
+        detail = {"source_id": source.source_id} if source is not None else {}
         return FirstRunDoctorCheck(
             name="dataset_contract",
             status="fail",
@@ -221,18 +222,21 @@ def _check_dataset_contract(
                 "Active demo source has no linked dataset contract. Rerun "
                 "`python -m app.cli.seed_demo_source` and verify the seed completed."
             ),
+            detail=detail,
         )
     if contract.registered_source_id != source.id:
         return FirstRunDoctorCheck(
             name="dataset_contract",
             status="fail",
             message="Linked dataset contract does not belong to the active demo source.",
+            detail={"source_id": source.source_id},
         )
     if snapshot is not None and contract.schema_snapshot_id != snapshot.id:
         return FirstRunDoctorCheck(
             name="dataset_contract",
             status="fail",
             message="Linked dataset contract does not point at the source schema snapshot.",
+            detail={"source_id": source.source_id},
         )
 
     dataset_count = session.scalar(
@@ -248,6 +252,7 @@ def _check_dataset_contract(
                 "Linked dataset contract has no allowed datasets. Rerun "
                 "`python -m app.cli.seed_demo_source` before product evaluation."
             ),
+            detail={"source_id": source.source_id},
         )
 
     return FirstRunDoctorCheck(
@@ -255,6 +260,7 @@ def _check_dataset_contract(
         status="pass",
         message="Linked dataset contract and allowed datasets are present.",
         detail={
+            "source_id": source.source_id,
             "contract_version": contract.contract_version,
             "dataset_count": int(dataset_count),
         },
@@ -266,6 +272,7 @@ def _check_schema_snapshot(
     snapshot: SchemaSnapshot | None,
 ) -> FirstRunDoctorCheck:
     if source is None or snapshot is None:
+        detail = {"source_id": source.source_id} if source is not None else {}
         return FirstRunDoctorCheck(
             name="schema_snapshot",
             status="fail",
@@ -273,26 +280,34 @@ def _check_schema_snapshot(
                 "Active demo source has no linked schema snapshot. Rerun "
                 "`python -m app.cli.seed_demo_source` and verify migrations are current."
             ),
+            detail=detail,
         )
     if snapshot.registered_source_id != source.id:
         return FirstRunDoctorCheck(
             name="schema_snapshot",
             status="fail",
             message="Linked schema snapshot does not belong to the active demo source.",
+            detail={"source_id": source.source_id},
         )
     if snapshot.review_status is not SchemaSnapshotReviewStatus.APPROVED:
         return FirstRunDoctorCheck(
             name="schema_snapshot",
             status="fail",
             message="Linked schema snapshot is not approved for first-run evaluation.",
-            detail={"review_status": snapshot.review_status.value},
+            detail={
+                "source_id": source.source_id,
+                "review_status": snapshot.review_status.value,
+            },
         )
 
     return FirstRunDoctorCheck(
         name="schema_snapshot",
         status="pass",
         message="Approved schema snapshot is linked to the active demo source.",
-        detail={"snapshot_version": snapshot.snapshot_version},
+        detail={
+            "source_id": source.source_id,
+            "snapshot_version": snapshot.snapshot_version,
+        },
     )
 
 
@@ -305,6 +320,7 @@ def _check_entitlement_seed(
         governance_bindings=frozenset({DEMO_DEV_GOVERNANCE_BINDING}),
     )
     if source is None or contract is None:
+        detail = {"source_id": source.source_id} if source is not None else {}
         return FirstRunDoctorCheck(
             name="entitlement_seed",
             status="fail",
@@ -312,6 +328,7 @@ def _check_entitlement_seed(
                 "The dev/local entitlement seed cannot be evaluated until the "
                 "demo source and dataset contract are present."
             ),
+            detail=detail,
         )
     try:
         ensure_subject_is_entitled_for_source(subject, source, contract)
@@ -323,15 +340,49 @@ def _check_entitlement_seed(
                 "The dev/local entitlement seed is missing or incoherent. Rerun "
                 "`python -m app.cli.seed_demo_source` before product evaluation."
             ),
-            detail={"error": str(exc)},
+            detail={"source_id": source.source_id, "error": str(exc)},
         )
 
     return FirstRunDoctorCheck(
         name="entitlement_seed",
         status="pass",
         message="Dev/local entitlement seed is coherent for the demo operator.",
-        detail={"subject_id": DEMO_DEV_SUBJECT_ID},
+        detail={"source_id": source.source_id, "subject_id": DEMO_DEV_SUBJECT_ID},
     )
+
+
+def _source_governance_checks_for_source(
+    session: Session,
+    source: RegisteredSource,
+) -> list[FirstRunDoctorCheck]:
+    contract = _load_linked_contract(session, source)
+    snapshot = _load_linked_snapshot(session, source)
+    return [
+        _check_dataset_contract(session, source, contract, snapshot),
+        _check_schema_snapshot(source, snapshot),
+        _check_entitlement_seed(source, contract),
+    ]
+
+
+def _source_governance_checks(
+    session: Session,
+    active_sources: list[RegisteredSource],
+) -> list[FirstRunDoctorCheck]:
+    selected_checks: list[FirstRunDoctorCheck] | None = None
+    for source in active_sources:
+        candidate_checks = _source_governance_checks_for_source(session, source)
+        if all(check.status == "pass" for check in candidate_checks):
+            return candidate_checks
+        if selected_checks is None:
+            selected_checks = candidate_checks
+
+    if selected_checks is not None:
+        return selected_checks
+    return [
+        _check_dataset_contract(session, None, None, None),
+        _check_schema_snapshot(None, None),
+        _check_entitlement_seed(None, None),
+    ]
 
 
 def _source_governance_unavailable_checks(
@@ -422,18 +473,8 @@ def run_first_run_doctor(
 
     try:
         active_sources = _active_demo_sources(session)
-        primary_source = active_sources[0] if active_sources else None
-        contract = _load_linked_contract(session, primary_source)
-        snapshot = _load_linked_snapshot(session, primary_source)
-
-        checks.extend(
-            [
-                _check_source_registry(active_sources),
-                _check_dataset_contract(session, primary_source, contract, snapshot),
-                _check_schema_snapshot(primary_source, snapshot),
-                _check_entitlement_seed(primary_source, contract),
-            ]
-        )
+        checks.append(_check_source_registry(active_sources))
+        checks.extend(_source_governance_checks(session, active_sources))
     except SQLAlchemyError as exc:
         logger.exception("First-run doctor could not read source governance data.")
         checks.extend(_source_governance_unavailable_checks(exc))
