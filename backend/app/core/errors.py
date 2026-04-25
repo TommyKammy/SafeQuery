@@ -19,6 +19,8 @@ _SAFE_API_ERROR_CODES = frozenset(
         "session_invalid",
         "csrf_failed",
         "entitlement_denied",
+        "preview_source_malformed",
+        "preview_source_unavailable",
     }
 )
 

@@ -265,6 +265,12 @@ def create_app() -> FastAPI:
                 audit_events=_serialize_entitlement_denial_audit_events(exc),
             ) from exc
         except PreviewSubmissionContractError as exc:
+            if exc.public_code is not None and exc.public_message is not None:
+                raise api_error(
+                    422,
+                    exc.public_code,
+                    exc.public_message,
+                ) from exc
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/operator/workflow", response_model=OperatorWorkflowSnapshot)

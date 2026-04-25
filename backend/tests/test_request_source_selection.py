@@ -245,8 +245,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             response.json(),
             {
                 "error": {
-                    "code": "invalid_request",
-                    "message": "Request validation failed.",
+                    "code": "preview_source_unavailable",
+                    "message": "Selected source is unavailable for preview.",
                 }
             },
         )
@@ -301,8 +301,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             response.json(),
             {
                 "error": {
-                    "code": "invalid_request",
-                    "message": "Request validation failed.",
+                    "code": "preview_source_malformed",
+                    "message": "Selected source governance is malformed.",
                 }
             },
         )
