@@ -495,7 +495,8 @@ describe("HomePage", () => {
       {
         expectedCopy: /preview_submission_unavailable/i,
         response: {
-          ok: true,
+          ok: false,
+          status: 503,
           json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON"))
         }
       }
