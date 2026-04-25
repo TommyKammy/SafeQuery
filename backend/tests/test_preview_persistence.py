@@ -394,6 +394,12 @@ def test_http_preview_unavailable_source_persists_audit_event() -> None:
         )
 
         assert response.status_code == 422
+        assert response.json() == {
+            "error": {
+                "code": "preview_source_unavailable",
+                "message": "Selected source is unavailable for preview.",
+            }
+        }
         request_id = response.headers["X-Request-ID"]
         persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_event = session.execute(select(PreviewAuditEvent)).scalar_one()

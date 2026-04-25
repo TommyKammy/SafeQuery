@@ -79,6 +79,17 @@ class PreviewSubmissionResponse(BaseModel):
 class PreviewSubmissionContractError(ValueError):
     """Raised when a preview submission does not carry an executable source binding."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        public_code: str | None = None,
+        public_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.public_code = public_code
+        self.public_message = public_message
+
 
 class PreviewSubmissionEntitlementError(PreviewSubmissionContractError, PermissionError):
     """Raised when an authenticated subject lacks source execution entitlement."""
@@ -616,7 +627,19 @@ def submit_preview_request(
                     else "preview_unavailable"
                 ),
             )
-            raise PreviewSubmissionContractError(str(exc)) from exc
+            raise PreviewSubmissionContractError(
+                str(exc),
+                public_code=(
+                    "preview_source_malformed"
+                    if isinstance(exc.__cause__, ValueError)
+                    else "preview_source_unavailable"
+                ),
+                public_message=(
+                    "Selected source governance is malformed."
+                    if isinstance(exc.__cause__, ValueError)
+                    else "Selected source is unavailable for preview."
+                ),
+            ) from exc
         _enrich_preview_audit_context(
             audit_context,
             authenticated_subject=authenticated_subject,

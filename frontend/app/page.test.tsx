@@ -576,6 +576,34 @@ describe("HomePage", () => {
           status: 503,
           json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON"))
         }
+      },
+      {
+        expectedCopy: /preview_source_unavailable/i,
+        response: {
+          ok: false,
+          status: 422,
+          json: () =>
+            Promise.resolve({
+              error: {
+                code: "preview_source_unavailable",
+                message: "Selected source is unavailable for preview."
+              }
+            })
+        }
+      },
+      {
+        expectedCopy: /preview_source_malformed/i,
+        response: {
+          ok: false,
+          status: 422,
+          json: () =>
+            Promise.resolve({
+              error: {
+                code: "preview_source_malformed",
+                message: "Selected source governance is malformed."
+              }
+            })
+        }
       }
     ] as const;
 

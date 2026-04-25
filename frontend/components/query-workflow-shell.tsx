@@ -235,6 +235,33 @@ function parseApiErrorEnvelope(value: unknown): ApiErrorEnvelope | null {
   return { code, message };
 }
 
+function previewSubmissionStatusForApiError(
+  error: ApiErrorEnvelope | null
+): PreviewSubmissionStatus {
+  if (error?.code === "preview_source_malformed") {
+    return {
+      code: error.code,
+      message: error.message,
+      status: "malformed"
+    };
+  }
+
+  if (error?.code === "preview_source_unavailable") {
+    return {
+      code: error.code,
+      message: error.message,
+      status: "unavailable"
+    };
+  }
+
+  return {
+    code: error?.code ?? "preview_submission_failed",
+    message:
+      error?.message ?? "Preview submission failed before an authoritative candidate was returned.",
+    status: "failed"
+  };
+}
+
 function parsePreviewSubmissionResult(
   value: unknown,
   expectedSourceId: string
@@ -1084,13 +1111,7 @@ export function QueryWorkflowShell({
 
       if (!response.ok) {
         const error = parseApiErrorEnvelope(payload);
-        setPreviewSubmission({
-          code: error?.code ?? "preview_submission_failed",
-          message:
-            error?.message ??
-            "Preview submission failed before an authoritative candidate was returned.",
-          status: "failed"
-        });
+        setPreviewSubmission(previewSubmissionStatusForApiError(error));
         return;
       }
 
