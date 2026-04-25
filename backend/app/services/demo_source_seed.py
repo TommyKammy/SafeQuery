@@ -23,6 +23,8 @@ DEMO_DATASET_CONTRACT_UUID = UUID("33333333-3333-4333-8333-333333333333")
 DEMO_APPROVED_VENDORS_DATASET_UUID = UUID("44444444-4444-4444-8444-444444444444")
 DEMO_QUARTERLY_SPEND_DATASET_UUID = UUID("55555555-5555-4555-8555-555555555555")
 DEMO_REVIEWED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
+DEMO_DEV_SUBJECT_ID = "user:demo-local-operator"
+DEMO_DEV_GOVERNANCE_BINDING = "group:safequery-demo-local-operators"
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,9 @@ def _upsert_demo_dataset_contract(
     source: RegisteredSource,
     snapshot: SchemaSnapshot,
 ) -> DatasetContract:
+    # Dev/local fixture only. Later dev auth middleware may grant this exact
+    # binding to DEMO_DEV_SUBJECT_ID; production auth must supply trusted
+    # source-scoped bindings from its own identity boundary.
     contract = session.scalar(
         select(DatasetContract).where(DatasetContract.id == DEMO_DATASET_CONTRACT_UUID)
     )
@@ -134,7 +139,7 @@ def _upsert_demo_dataset_contract(
             schema_snapshot_id=snapshot.id,
             contract_version=1,
             display_name="Demo business PostgreSQL contract",
-            owner_binding="group:finance-analysts",
+            owner_binding=DEMO_DEV_GOVERNANCE_BINDING,
             security_review_binding="group:security-reviewers",
             exception_policy_binding=None,
         )
@@ -144,7 +149,7 @@ def _upsert_demo_dataset_contract(
     contract.schema_snapshot_id = snapshot.id
     contract.contract_version = 1
     contract.display_name = "Demo business PostgreSQL contract"
-    contract.owner_binding = "group:finance-analysts"
+    contract.owner_binding = DEMO_DEV_GOVERNANCE_BINDING
     contract.security_review_binding = "group:security-reviewers"
     contract.exception_policy_binding = None
     session.flush()

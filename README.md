@@ -151,7 +151,11 @@ The seed is safe to rerun against a local development database. It creates the
 `demo-business-postgres` source registry record, matching dataset contract, two
 minimal allow-listed demo datasets, and an approved schema snapshot pointer. The
 seed references `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL` for the business source
-and does not make application PostgreSQL a business target.
+and does not make application PostgreSQL a business target. The dataset contract
+owner binding is the dev/local-only fixture
+`group:safequery-demo-local-operators`, intended for later development auth
+middleware to attach to `user:demo-local-operator`; it is not a production trust
+source and does not bypass the source-scoped entitlement check.
 
 5. Confirm the UI is reachable:
 

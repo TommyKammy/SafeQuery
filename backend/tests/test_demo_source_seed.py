@@ -11,9 +11,18 @@ from app.db.models.dataset_contract import DatasetContract, DatasetContractDatas
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
-from app.services.demo_source_seed import DEMO_SOURCE_ID, seed_demo_source_governance
+from app.services.demo_source_seed import (
+    DEMO_DEV_GOVERNANCE_BINDING,
+    DEMO_DEV_SUBJECT_ID,
+    DEMO_SOURCE_ID,
+    seed_demo_source_governance,
+)
 from app.services.operator_workflow import get_operator_workflow_snapshot
-from app.services.request_preview import PreviewSubmissionRequest, submit_preview_request
+from app.services.request_preview import (
+    PreviewSubmissionContractError,
+    PreviewSubmissionRequest,
+    submit_preview_request,
+)
 
 
 @contextmanager
@@ -48,8 +57,8 @@ def test_demo_source_seed_creates_preview_governance_records() -> None:
                 source_id=DEMO_SOURCE_ID,
             ),
             AuthenticatedSubject(
-                subject_id="user:alice",
-                governance_bindings=frozenset({"group:finance-analysts"}),
+                subject_id=DEMO_DEV_SUBJECT_ID,
+                governance_bindings=frozenset({DEMO_DEV_GOVERNANCE_BINDING}),
             ),
             session,
         )
@@ -63,12 +72,37 @@ def test_demo_source_seed_creates_preview_governance_records() -> None:
     assert source.connection_reference == "env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL"
     assert contract is not None
     assert contract.contract_version == 1
-    assert contract.owner_binding == "group:finance-analysts"
+    assert contract.owner_binding == DEMO_DEV_GOVERNANCE_BINDING
     assert snapshot is not None
     assert snapshot.review_status == SchemaSnapshotReviewStatus.APPROVED
     assert response.candidate.source_id == DEMO_SOURCE_ID
     assert response.candidate.dataset_contract_version == 1
     assert response.candidate.schema_snapshot_version == 1
+
+
+def test_demo_source_seed_denies_unrelated_demo_subject() -> None:
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        try:
+            submit_preview_request(
+                PreviewSubmissionRequest(
+                    question="Show approved vendors by quarterly spend",
+                    source_id=DEMO_SOURCE_ID,
+                ),
+                AuthenticatedSubject(
+                    subject_id="user:unrelated-dev",
+                    governance_bindings=frozenset({"group:unrelated-devs"}),
+                ),
+                session,
+            )
+        except PreviewSubmissionContractError as exc:
+            assert str(exc) == (
+                "Authenticated subject 'user:unrelated-dev' is not entitled to use "
+                "registered source 'demo-business-postgres'."
+            )
+        else:
+            raise AssertionError("demo source unexpectedly accepted an unrelated subject")
 
 
 def test_demo_source_seed_is_idempotent_and_visible_to_operator_workflow() -> None:
