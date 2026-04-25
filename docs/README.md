@@ -4,7 +4,7 @@ This directory contains the current baseline documentation set for SafeQuery, a 
 
 The current Epic A repository shell should be read as a developer state demo, not the production information architecture. It helps contributors inspect baseline UI states and backend posture while the product-facing shell contract is being implemented against the reviewed docs baseline.
 
-The UX-1 workflow-first operator shell contract in `docs/design/operator-workflow-information-architecture.md` and the accompanying visual contract in `../DESIGN.md` are part of the current source-aware and UX-foundation baseline. Do not treat the current top-level prototype shell as the production information architecture.
+The UX-1 workflow-first operator shell contract in `docs/design/operator-workflow-information-architecture.md` and the accompanying visual contract in `../DESIGN.md` are part of the current source-aware and UX-foundation baseline and remain the authoritative UI direction. Do not treat the current top-level prototype shell as the production information architecture.
 
 The docs are organized to make three things clear from the start for current baseline contributors:
 

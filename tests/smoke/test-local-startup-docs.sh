@@ -61,6 +61,12 @@ for pattern in "${local_doc_hardening_patterns[@]}"; do
 done
 
 readme_hardening_patterns=(
+  "source-aware core service baseline"
+  "backend-owned source registry"
+  "candidate-only execution"
+  "no LLM or adapter execution authority"
+  "Product evaluation flow"
+  "docs/implementation-roadmap.md"
   "application PostgreSQL"
   "business PostgreSQL source"
   "business MSSQL source"
@@ -78,6 +84,39 @@ readme_hardening_patterns=(
 for pattern in "${readme_hardening_patterns[@]}"; do
   if ! grep -Fq "$pattern" "$readme_path"; then
     echo "missing hardened README detail: $pattern" >&2
+    missing=1
+  fi
+done
+
+product_baseline_doc_patterns=(
+  "Developer setup flow"
+  "Product evaluation flow"
+  "source registry readiness"
+  "backend-owned source registry"
+  "candidate-only execution"
+  "no LLM or adapter execution authority"
+  "Known Missing Product Wiring"
+  "Epic K Sequence"
+  "docs/implementation-roadmap.md"
+  "planned metadata only"
+)
+
+for pattern in "${product_baseline_doc_patterns[@]}"; do
+  if ! grep -Fq "$pattern" "$doc_path"; then
+    echo "missing product-baseline local-doc detail: $pattern" >&2
+    missing=1
+  fi
+done
+
+stale_readme_patterns=(
+  "The baseline intentionally stops at placeholder UI and health-oriented API behavior."
+  "frontend/  Next.js UI placeholder and local stack status surface"
+  "backend/   FastAPI API placeholder and PostgreSQL-backed health checks"
+)
+
+for pattern in "${stale_readme_patterns[@]}"; do
+  if grep -Fq "$pattern" "$readme_path"; then
+    echo "README still contains stale placeholder-baseline wording: $pattern" >&2
     missing=1
   fi
 done
