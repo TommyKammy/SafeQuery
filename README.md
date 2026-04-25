@@ -157,19 +157,29 @@ owner binding is the dev/local-only fixture
 middleware to attach to `user:demo-local-operator`; it is not a production trust
 source and does not bypass the source-scoped entitlement check.
 
-5. Confirm the UI is reachable:
+5. Run the first-run doctor:
+
+```bash
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend python -m app.cli.first_run_doctor
+```
+
+The doctor returns machine-readable JSON and fails closed when migrations,
+demo source registry records, linked dataset contracts, approved schema
+snapshots, or dev/local entitlement seed data are missing.
+
+6. Confirm the UI is reachable:
 
 ```bash
 curl -I http://localhost:3000
 ```
 
-6. Confirm the API health endpoint is reachable and healthy:
+7. Confirm the API health endpoint is reachable and healthy:
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-7. Stop the stack when finished:
+8. Stop the stack when finished:
 
 ```bash
 docker-compose --env-file .env -f infra/docker-compose.yml down
