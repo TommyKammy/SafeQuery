@@ -17,6 +17,7 @@ from app.db.models.dataset_contract import DatasetContract
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.db.session import require_preview_submission_session
+from app.features.auth.bridge import normalize_enterprise_auth_bridge_input
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 from app.features.auth.session import create_test_application_session
 
@@ -76,6 +77,38 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             headers=app_session.headers,
             cookies=app_session.cookies,
             json=payload,
+        )
+
+    def _override_subject_from_enterprise_bridge(
+        self,
+        *,
+        subject_id: str = "user:alice@example.com",
+        binding_type: str = "group",
+        binding_value: str = "finance-analysts",
+    ) -> None:
+        bridge_context = normalize_enterprise_auth_bridge_input(
+            {
+                "bridge_source": "saml-oidc-bridge",
+                "subject": {
+                    "subject_id": subject_id,
+                    "idp_subject": "00u-enterprise-subject",
+                    "issuer": "https://idp.example.test",
+                },
+                "session": {
+                    "session_id": "enterprise-session",
+                    "issuer": "https://idp.example.test",
+                },
+                "governance_bindings": [
+                    {
+                        "binding_type": binding_type,
+                        "value": binding_value,
+                        "source_claim": "groups",
+                    },
+                ],
+            }
+        )
+        self.app.dependency_overrides[require_authenticated_subject] = (
+            lambda: bridge_context.authenticated_subject
         )
 
     def _seed_authoritative_source_governance(
@@ -360,6 +393,94 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         self.assertEqual(audit["events"][2]["candidate_owner_subject"], "user:alice")
         self.assertEqual(audit["events"][3]["candidate_owner_subject"], "user:alice")
         self.assertEqual(audit["events"][3]["candidate_state"], "preview_ready")
+
+    def test_preview_submission_accepts_enterprise_bridge_normalized_binding(self) -> None:
+        self._override_subject_from_enterprise_bridge()
+        self._seed_authoritative_source_governance(
+            source_id="sap-approved-spend",
+            source_posture=SourceActivationPosture.ACTIVE,
+            owner_binding="group:finance-analysts",
+        )
+
+        response = self._post_preview(
+            {
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        response_body = response.json()
+        self.assertEqual(response_body["candidate"]["source_id"], "sap-approved-spend")
+        self.assertEqual(
+            response_body["audit"]["events"][0]["user_subject"],
+            "user:alice@example.com",
+        )
+
+    def test_preview_submission_rejects_enterprise_bridge_unrelated_binding(self) -> None:
+        self._override_subject_from_enterprise_bridge(binding_value="people-ops")
+        self._seed_authoritative_source_governance(
+            source_id="sap-approved-spend",
+            source_posture=SourceActivationPosture.ACTIVE,
+            owner_binding="group:finance-analysts",
+        )
+
+        response = self._post_preview(
+            {
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "Request validation failed.",
+                }
+            },
+        )
+        self.assertNotIn("candidate", response.text)
+
+    def test_client_supplied_governance_metadata_cannot_grant_preview_entitlement(
+        self,
+    ) -> None:
+        self.app.dependency_overrides[
+            require_authenticated_subject
+        ] = lambda: AuthenticatedSubject(
+            subject_id="user:alice", governance_bindings=frozenset({"group:people-ops"})
+        )
+        self._seed_authoritative_source_governance(
+            source_id="sap-approved-spend",
+            source_posture=SourceActivationPosture.ACTIVE,
+            owner_binding="group:finance-analysts",
+        )
+
+        app_session = create_test_application_session(self._authenticated_subject())
+        response = self.client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+                "governance_bindings": ["group:finance-analysts"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "Request validation failed.",
+                }
+            },
+        )
+        self.assertNotIn("candidate", response.text)
 
     def test_operator_workflow_snapshot_exposes_live_source_options_without_secrets(self) -> None:
         self._seed_authoritative_source_governance(

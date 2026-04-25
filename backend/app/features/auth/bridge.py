@@ -14,6 +14,7 @@ from typing_extensions import Annotated, Self
 
 from app.features.audit.event_model import NonEmptyTrimmedString
 from app.features.auth.context import AuthenticatedSubject
+from app.features.auth.governance_bindings import normalize_governance_binding
 
 
 BindingType = Literal["group", "role", "entitlement"]
@@ -53,7 +54,10 @@ class EnterpriseGovernanceBindingInput(BaseModel):
 
     @property
     def normalized_binding(self) -> str:
-        return f"{self.binding_type}:{self.value}"
+        normalized = normalize_governance_binding(f"{self.binding_type}:{self.value}")
+        if normalized is None:
+            raise ValueError("Governance binding is malformed.")
+        return normalized
 
 
 class EnterpriseAuthBridgeInput(BaseModel):
