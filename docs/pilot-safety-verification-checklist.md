@@ -8,12 +8,59 @@ MSSQL vertical slice and the business PostgreSQL vertical slice through the same
 trusted control path without weakening source binding, candidate lifecycle,
 audit, or release-gate behavior.
 
+It is also the product-readiness gate for Epic K first-run productization. Epic K
+must prove that a non-developer evaluator can start the local baseline, see the
+demo source, run the doctor, and inspect a workflow-first shell without
+mistaking that milestone for production auth, production LLM generation, real
+SQL execution, optional extension activation, or later source-family readiness.
+
 Use this checklist before optional extension tracks begin.
+
+## First-Run Productization Gate
+
+First-run productization is an explicit gate before SafeQuery proceeds to real
+auth, LLM adapter connectivity, safe execution API, or operator UI pilot work.
+Passing Epic K means the local product baseline is evaluable. Passing Epic K
+does not mean real LLM generation or real SQL execution is production-ready.
+
+Before Epic K is signed off, a non-developer evaluator should be able to:
+
+1. Copy the checked-in environment example and start the compose stack from the
+   repository root.
+2. Apply migrations through the compose-backed backend service.
+3. Seed demo source governance records without creating a production trust
+   source.
+4. Run the first-run doctor and see pass/fail JSON for migrations, source
+   registry readiness, dataset contract linkage, approved schema snapshots,
+   entitlement readiness, backend health, and frontend health.
+5. Open the operator shell and see demo source visibility through a non-empty
+   active source selector returned by the backend.
+6. Confirm preview submission remains source-scoped and entitlement-gated, while
+   execute authority remains candidate-only and not exposed as raw SQL input.
+
+The gate is product-readiness only. It is separate from later Epic L-P work:
+
+- real auth and session bridge wiring
+- production LLM adapter connectivity
+- safe execution API wiring for approved candidates
+- operator UI pilot completion beyond the first-run shell contract
+- optional search, analyst, and MLflow extension activation
+- future MySQL, MariaDB, Aurora, Oracle, Search, Analyst, or MLflow UI family
+  activation
+
+Do not advance later Epic L-P work by inferring readiness from service names,
+placeholder credentials, demo governance bindings, operator-facing summaries, or
+documentation proximity. The backend-owned source registry, migrations, doctor
+payload, entitlement checks, and workflow API remain the authoritative evidence
+for Epic K.
 
 ## Scope and Non-Requirements
 
 In scope:
 
+- first-run productization checks from Epic K
+- compose-backed migrations, seed data, doctor diagnostics, backend/frontend
+  health, and source selector visibility
 - MSSQL source path using `business-mssql-source`
 - business PostgreSQL source path using `business-postgres-source`
 - auth context and entitlement checks at the trusted backend boundary
@@ -31,6 +78,8 @@ In scope:
 
 Out of scope for core completion:
 
+- real authentication, production LLM connectivity, safe execution API pilot
+  rollout, and final operator UI pilot behavior remain later Epic L-P gates
 - optional search, analyst, and MLflow extension tracks are not required for
   the 2-source core path completion checklist
 - if optional search, analyst, or MLflow behavior is enabled for a deployment,
@@ -45,8 +94,12 @@ Run these focused checks from the repository root unless a command changes into
 ```bash
 bash tests/smoke/test-pilot-safety-checklist.sh
 bash tests/smoke/test-local-topology-roles.sh
+bash tests/smoke/test-local-startup-docs.sh
+bash tests/smoke/test-compose-operator-workflow-source-selector.sh
 cd backend
 python3 -m pytest \
+  tests/test_demo_source_seed.py \
+  tests/test_first_run_doctor.py \
   tests/test_request_source_selection.py \
   tests/test_source_entitlements.py \
   tests/test_generation_context_preparation.py \
@@ -81,11 +134,48 @@ Inspection points:
 - `backend/tests/test_release_gate.py` still proves source-aware release gate
   failures for missing evaluation coverage, missing audit coverage, stale audit
   coverage, malformed artifacts, and safety regressions.
+- `backend/tests/test_demo_source_seed.py` still proves local demo source
+  visibility, idempotent seed behavior, and dev/local entitlement binding.
+- `backend/tests/test_first_run_doctor.py` still proves migration, source
+  registry, dataset contract, schema snapshot, entitlement readiness, backend
+  health, and frontend health checks fail closed or pass from authoritative
+  records.
+- `tests/smoke/test-compose-operator-workflow-source-selector.sh` still proves
+  the compose-backed first-run path migrates, seeds demo governance data, passes
+  the first-run doctor, and exposes a non-empty active source selector.
 - `backend/tests/test_source_bound_execute_path.py`,
   `backend/tests/test_execution_runtime_controls.py`,
   `backend/tests/test_mssql_execution_connector.py`, and
   `backend/tests/test_postgresql_execution_connector.py` still cover
   candidate-only execution, runtime controls, and both connector paths.
+
+## Epic K Readiness Evidence
+
+Record Epic K evidence before treating the first-run productization gate as
+complete:
+
+- K-1 documentation refresh: `README.md` and `docs/local-development.md` explain
+  the product evaluation flow, role separation, path-hygienic commands, and the
+  boundary between Epic K and later Epic L-P work.
+- K-2 migration evidence: compose-backed `alembic upgrade head` and
+  `alembic current` succeed for the application-owned control plane.
+- K-3 seed evidence: `python -m app.cli.seed_demo_source` creates the demo
+  business PostgreSQL source, dataset contract, approved schema snapshot, and
+  dev/local entitlement binding without treating application PostgreSQL as a
+  business target.
+- K-4 doctor evidence: `python -m app.cli.first_run_doctor` reports pass/fail
+  status for migrations, active demo source registry records, dataset contract
+  linkage, schema snapshot approval, entitlement readiness, backend health, and
+  frontend health.
+- K-5 workflow evidence:
+  `tests/smoke/test-compose-operator-workflow-source-selector.sh` or the live
+  `/operator/workflow` payload shows a non-empty active source selector sourced
+  from backend records, not from client guesses or service-name inference.
+
+Epic K is complete only when those artifacts agree. If README instructions,
+local development guidance, doctor output, workflow payloads, or checklist
+evidence disagree, repair the derived surface rather than redefining readiness
+around the summary that happened to pass last.
 
 ## Source-Aware Checklist
 
