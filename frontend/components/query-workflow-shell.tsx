@@ -84,6 +84,17 @@ type PreviewSubmissionStatus =
       candidateState: string;
       requestState: string;
       sourceId: string;
+      status: "denied" | "pending";
+    }
+  | {
+      code: string;
+      message: string;
+      status: "malformed" | "unavailable";
+    }
+  | {
+      candidateState: string;
+      requestState: string;
+      sourceId: string;
       status: "succeeded";
     };
 
@@ -235,6 +246,37 @@ function parsePreviewSubmissionResult(
     requestState,
     sourceId: expectedSourceId
   };
+}
+
+function isPendingPreviewState(result: PreviewSubmissionResult): boolean {
+  const requestState = result.requestState.toLowerCase();
+  const candidateState = result.candidateState.toLowerCase();
+
+  return (
+    requestState === "pending" ||
+    requestState === "submitted" ||
+    candidateState === "pending" ||
+    candidateState === "pending_generation"
+  );
+}
+
+function isDeniedPreviewState(result: PreviewSubmissionResult): boolean {
+  const requestState = result.requestState.toLowerCase();
+  const candidateState = result.candidateState.toLowerCase();
+
+  return (
+    requestState === "blocked" ||
+    requestState === "review_denied" ||
+    requestState === "preview_denied" ||
+    candidateState === "blocked" ||
+    candidateState === "denied" ||
+    candidateState === "invalidated" ||
+    candidateState === "review_denied"
+  );
+}
+
+function isReadyPreviewState(result: PreviewSubmissionResult): boolean {
+  return result.candidateState.toLowerCase() === "preview_ready";
 }
 
 function resolveSourceBinding(
@@ -936,7 +978,17 @@ export function QueryWorkflowShell({
         headers,
         method: "POST"
       });
-      const payload = (await response.json()) as unknown;
+      let payload: unknown;
+      try {
+        payload = (await response.json()) as unknown;
+      } catch {
+        setPreviewSubmission({
+          code: "preview_submission_unavailable",
+          message: "Preview submission unavailable before an authoritative payload was returned.",
+          status: "unavailable"
+        });
+        return;
+      }
 
       if (!response.ok) {
         const error = parseApiErrorEnvelope(payload);
@@ -955,7 +1007,41 @@ export function QueryWorkflowShell({
         setPreviewSubmission({
           code: "malformed_preview_response",
           message: "Preview response did not match the submitted source binding.",
-          status: "failed"
+          status: "malformed"
+        });
+        return;
+      }
+
+      if (isDeniedPreviewState(result)) {
+        setSubmittedQuestion(submittedQuestionText);
+        setSubmittedSourceId(result.sourceId);
+        setSubmittedState("review_denied");
+        setPreviewSubmission({
+          candidateState: result.candidateState,
+          requestState: result.requestState,
+          sourceId: result.sourceId,
+          status: "denied"
+        });
+        return;
+      }
+
+      if (isPendingPreviewState(result) && !isReadyPreviewState(result)) {
+        setSubmittedQuestion(submittedQuestionText);
+        setSubmittedSourceId(result.sourceId);
+        setPreviewSubmission({
+          candidateState: result.candidateState,
+          requestState: result.requestState,
+          sourceId: result.sourceId,
+          status: "pending"
+        });
+        return;
+      }
+
+      if (!isReadyPreviewState(result)) {
+        setPreviewSubmission({
+          code: "malformed_preview_response",
+          message: "Preview response returned an unrecognized authoritative lifecycle state.",
+          status: "malformed"
         });
         return;
       }
@@ -973,7 +1059,7 @@ export function QueryWorkflowShell({
       setPreviewSubmission({
         code: "preview_submission_unavailable",
         message: "Preview submission transport is unavailable.",
-        status: "failed"
+        status: "unavailable"
       });
     }
   }
@@ -1148,7 +1234,38 @@ export function QueryWorkflowShell({
                   </p>
                 </div>
               ) : null}
+              {previewSubmission.status === "pending" ? (
+                <div className="state-callout state-callout-warning" role="status">
+                  <p className="state-callout-title">Preview generation pending</p>
+                  <p>
+                    Request state {previewSubmission.requestState}; candidate state{" "}
+                    {previewSubmission.candidateState}. The shell stays in query review until SQL
+                    preview is ready.
+                  </p>
+                </div>
+              ) : null}
+              {previewSubmission.status === "denied" ? (
+                <div className="state-callout state-callout-danger" role="status">
+                  <p className="state-callout-title">Preview denied</p>
+                  <p>
+                    Request state {previewSubmission.requestState}; candidate state{" "}
+                    {previewSubmission.candidateState}. No successful SQL preview is displayed.
+                  </p>
+                </div>
+              ) : null}
               {previewSubmission.status === "failed" ? (
+                <div className="state-callout state-callout-danger" role="alert">
+                  <p className="state-callout-title">{previewSubmission.code}</p>
+                  <p>{previewSubmission.message}</p>
+                </div>
+              ) : null}
+              {previewSubmission.status === "malformed" ? (
+                <div className="state-callout state-callout-danger" role="alert">
+                  <p className="state-callout-title">{previewSubmission.code}</p>
+                  <p>{previewSubmission.message}</p>
+                </div>
+              ) : null}
+              {previewSubmission.status === "unavailable" ? (
                 <div className="state-callout state-callout-danger" role="alert">
                   <p className="state-callout-title">{previewSubmission.code}</p>
                   <p>{previewSubmission.message}</p>

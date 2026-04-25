@@ -396,6 +396,144 @@ describe("HomePage", () => {
     expect(screen.getByText(/preview request accepted/i)).toBeInTheDocument();
   });
 
+  it("maps authoritative preview API states without presenting them as successful SQL previews", async () => {
+    const stateCases = [
+      {
+        candidateState: "pending_generation",
+        expectedCopy: /preview generation pending/i,
+        requestState: "submitted"
+      },
+      {
+        candidateState: "denied",
+        expectedCopy: /preview denied/i,
+        requestState: "blocked"
+      }
+    ] as const;
+
+    for (const stateCase of stateCases) {
+      cleanup();
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(workflowPayload())
+          });
+        }
+
+        if (url.endsWith("/requests/preview")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                audit: {
+                  events: [],
+                  source_id: "sap-approved-spend",
+                  state: "recorded"
+                },
+                candidate: {
+                  dataset_contract_version: 1,
+                  schema_snapshot_version: 1,
+                  source_family: "postgresql",
+                  source_flavor: "warehouse",
+                  source_id: "sap-approved-spend",
+                  state: stateCase.candidateState
+                },
+                evaluation: {
+                  source_id: "sap-approved-spend",
+                  state: "pending"
+                },
+                request: {
+                  question: "Show approved vendors by quarterly spend",
+                  source_id: "sap-approved-spend",
+                  state: stateCase.requestState
+                }
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(await HomePage({}));
+
+      fireEvent.change(screen.getByRole("combobox", { name: /source/i }), {
+        target: { value: "sap-approved-spend" }
+      });
+      fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+        target: { value: "Show approved vendors by quarterly spend" }
+      });
+      fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+      expect(await screen.findByText(stateCase.expectedCopy)).toBeInTheDocument();
+      expect(screen.queryByText(/preview request accepted/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /sql preview state/i })).not.toBeInTheDocument();
+    }
+  });
+
+  it("maps malformed and unavailable preview submission failures distinctly", async () => {
+    const failureCases = [
+      {
+        expectedCopy: /malformed_preview_response/i,
+        response: {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              candidate: {
+                source_id: "wrong-source",
+                state: "preview_ready"
+              },
+              request: {
+                source_id: "sap-approved-spend",
+                state: "submitted"
+              }
+            })
+        }
+      },
+      {
+        expectedCopy: /preview_submission_unavailable/i,
+        response: {
+          ok: true,
+          json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON"))
+        }
+      }
+    ] as const;
+
+    for (const failureCase of failureCases) {
+      cleanup();
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(workflowPayload())
+          });
+        }
+
+        if (url.endsWith("/requests/preview")) {
+          return Promise.resolve(failureCase.response);
+        }
+
+        return new Promise(() => {});
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(await HomePage({}));
+
+      fireEvent.change(screen.getByRole("combobox", { name: /source/i }), {
+        target: { value: "sap-approved-spend" }
+      });
+      fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(failureCase.expectedCopy);
+      expect(screen.queryByText(/preview request accepted/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /sql preview state/i })).not.toBeInTheDocument();
+    }
+  });
+
   it("renders preview API auth and entitlement failure envelopes without leaking details", async () => {
     const failureCases = [
       {
