@@ -59,6 +59,7 @@ from app.services.candidate_lifecycle import (
     SourceBoundCandidateMetadata,
     revalidate_candidate_lifecycle,
 )
+from app.services.sql_generation_adapter import SQLGenerationAdapterResponse
 
 
 MSSQL_TEST_CONNECTION_STRING = (
@@ -77,6 +78,15 @@ POSTGRESQL_TEST_URL = (
 APPLICATION_POSTGRESQL_TEST_URL = (
     "postgresql://placeholder_user:placeholder_password@app-postgres:5432/safequery"
 )
+
+
+def _adapter_response(canonical_sql: str) -> SQLGenerationAdapterResponse:
+    return SQLGenerationAdapterResponse(
+        candidate_sql=canonical_sql,
+        provider="local_llm",
+        adapter_version="test.local_llm.v1",
+        model="safequery-test-sql",
+    )
 
 
 def _mssql_scenarios_by_id() -> dict[str, MSSQLEvaluationScenario]:
@@ -404,7 +414,7 @@ def test_mssql_core_vertical_slice_submits_generates_guards_executes_and_audits(
     class RecordingAdapter:
         def generate_sql(self, request):
             captured["adapter_request"] = request
-            return scenario.expected.canonical_sql
+            return _adapter_response(scenario.expected.canonical_sql)
 
     def fake_query_runner(
         *,
@@ -551,7 +561,7 @@ def test_mssql_core_vertical_slice_denies_guard_rejection_before_execution() -> 
 
     class DeniedAdapter:
         def generate_sql(self, request):
-            return scenario.canonical_sql
+            return _adapter_response(scenario.canonical_sql)
 
     def fake_query_runner(**_: object) -> list[dict[str, object]]:
         raise AssertionError("MSSQL execution must not run after a guard rejection")
@@ -613,7 +623,7 @@ def test_mssql_core_vertical_slice_applies_runtime_kill_switch_before_execution(
 
     class RecordingAdapter:
         def generate_sql(self, request):
-            return scenario.expected.canonical_sql
+            return _adapter_response(scenario.expected.canonical_sql)
 
     def fake_query_runner(**_: object) -> list[dict[str, object]]:
         raise AssertionError("MSSQL execution must not run after runtime denial")
@@ -675,7 +685,7 @@ def test_mssql_core_vertical_slice_cancellation_probe_blocks_before_execution() 
 
     class RecordingAdapter:
         def generate_sql(self, request):
-            return scenario.expected.canonical_sql
+            return _adapter_response(scenario.expected.canonical_sql)
 
     def fake_query_runner(**_: object) -> list[dict[str, object]]:
         raise AssertionError("MSSQL execution must not run after cancellation")
@@ -795,7 +805,7 @@ def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_au
     class RecordingAdapter:
         def generate_sql(self, request):
             captured["adapter_request"] = request
-            return scenario.expected.canonical_sql
+            return _adapter_response(scenario.expected.canonical_sql)
 
     def fake_query_runner(
         *,
@@ -892,7 +902,7 @@ def test_postgresql_core_vertical_slice_denies_application_postgres_reuse_before
 
     class RecordingAdapter:
         def generate_sql(self, request):
-            return scenario.expected.canonical_sql
+            return _adapter_response(scenario.expected.canonical_sql)
 
     def fake_query_runner(**_: object) -> list[dict[str, object]]:
         raise AssertionError("PostgreSQL execution must not run for application reuse")
@@ -959,7 +969,7 @@ def test_postgresql_core_vertical_slice_applies_runtime_rate_limit_before_execut
 
     class RecordingAdapter:
         def generate_sql(self, request):
-            return scenario.expected.canonical_sql
+            return _adapter_response(scenario.expected.canonical_sql)
 
     def fake_query_runner(**_: object) -> list[dict[str, object]]:
         raise AssertionError("PostgreSQL execution must not run after runtime denial")
@@ -1024,7 +1034,7 @@ def test_postgresql_core_vertical_slice_cancellation_probe_blocks_before_executi
 
     class RecordingAdapter:
         def generate_sql(self, request):
-            return scenario.expected.canonical_sql
+            return _adapter_response(scenario.expected.canonical_sql)
 
     def fake_query_runner(**_: object) -> list[dict[str, object]]:
         raise AssertionError("PostgreSQL execution must not run after cancellation")

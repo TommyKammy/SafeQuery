@@ -80,6 +80,8 @@ class SettingsTestCase(unittest.TestCase):
             _env_prefix="SAFEQUERY_",
         )
 
+        self.assertEqual(settings.sql_generation.provider, "disabled")
+
         with self.assertRaisesRegex(
             RuntimeError, "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL"
         ):
@@ -89,6 +91,60 @@ class SettingsTestCase(unittest.TestCase):
             RuntimeError, "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING"
         ):
             settings.require_business_mssql_source()
+
+    def test_sql_generation_provider_settings_select_local_llm_without_source_credentials(
+        self,
+    ) -> None:
+        settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            sql_generation_provider="local_llm",
+            sql_generation_local_llm_base_url="http://local-llm:8080",
+            sql_generation_local_llm_model="safequery-local-sql",
+            business_postgres_source_url=(
+                "postgresql://source_reader:read-only@pg-source:5432/business"
+            ),
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+
+        self.assertEqual(settings.sql_generation.provider, "local_llm")
+        self.assertEqual(
+            str(settings.sql_generation.local_llm_base_url),
+            "http://local-llm:8080/",
+        )
+        self.assertEqual(
+            settings.sql_generation.local_llm_model,
+            "safequery-local-sql",
+        )
+        dumped = settings.sql_generation.model_dump(mode="json", exclude_none=True)
+        self.assertNotIn("business_postgres_source_url", dumped)
+        self.assertNotIn("business_mssql_source_connection_string", dumped)
+
+    def test_sql_generation_provider_fails_closed_when_selected_without_endpoint(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL must be configured",
+        ):
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                sql_generation_provider="local_llm",
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
+
+    def test_sql_generation_vanna_provider_requires_endpoint(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "SAFEQUERY_SQL_GENERATION_VANNA_BASE_URL must be configured",
+        ):
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                sql_generation_provider="vanna",
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
 
     def test_business_postgres_source_must_not_reuse_app_postgres_url(self) -> None:
         with self.assertRaisesRegex(

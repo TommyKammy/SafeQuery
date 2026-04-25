@@ -300,7 +300,8 @@ def run_mssql_core_vertical_slice(
         event_type="generation_requested",
     )
 
-    canonical_sql = sql_generation_adapter.generate_sql(adapter_request)
+    adapter_response = sql_generation_adapter.generate_sql(adapter_request)
+    canonical_sql = adapter_response.candidate_sql
     generated = GeneratedMSSQLCandidate(
         canonical_sql=canonical_sql,
         source=candidate_source,

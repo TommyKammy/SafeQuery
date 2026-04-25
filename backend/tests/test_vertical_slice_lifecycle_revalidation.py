@@ -38,6 +38,7 @@ from app.services.postgresql_vertical_slice import (
     run_postgresql_core_vertical_slice,
 )
 from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+from app.services.sql_generation_adapter import SQLGenerationAdapterResponse
 
 
 MSSQL_TEST_CONNECTION_STRING = (
@@ -55,6 +56,15 @@ POSTGRESQL_TEST_URL = (
 APPLICATION_POSTGRESQL_TEST_URL = (
     "postgresql://placeholder_user:placeholder_password@app-postgres:5432/safequery"
 )
+
+
+def _adapter_response(canonical_sql: str) -> SQLGenerationAdapterResponse:
+    return SQLGenerationAdapterResponse(
+        candidate_sql=canonical_sql,
+        provider="local_llm",
+        adapter_version="test.local_llm.v1",
+        model="safequery-test-sql",
+    )
 
 
 @contextmanager
@@ -180,12 +190,16 @@ def _audit_context(*, prefix: str) -> PreviewAuditContext:
 
 class _MSSQLAdapter:
     def generate_sql(self, request):
-        return "SELECT TOP 10 vendor_name FROM dbo.approved_vendor_spend"
+        return _adapter_response(
+            "SELECT TOP 10 vendor_name FROM dbo.approved_vendor_spend"
+        )
 
 
 class _PostgreSQLAdapter:
     def generate_sql(self, request):
-        return "SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10"
+        return _adapter_response(
+            "SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10"
+        )
 
 
 def _unexpected_query_runner(**_: object) -> list[dict[str, object]]:

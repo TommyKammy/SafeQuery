@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Optional, Protocol
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    SecretStr,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 from typing_extensions import Annotated
 
+from app.core.config import SQLGenerationProvider, SQLGenerationSettings
 from app.services.generation_context import PreparedGenerationContext
 
 
@@ -63,9 +72,116 @@ class SQLGenerationAdapterRequest(BaseModel):
         return self
 
 
+class SQLGenerationAdapterResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_sql: NonEmptyTrimmedString
+    provider: SQLGenerationProvider
+    adapter_version: NonEmptyTrimmedString
+    model: Optional[NonEmptyTrimmedString] = None
+
+
+class SQLGenerationAdapterError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: NonEmptyTrimmedString
+    message: NonEmptyTrimmedString
+    provider: Optional[SQLGenerationProvider] = None
+    retryable: bool = False
+
+
+class SQLGenerationAdapterConfigurationError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class SQLGenerationAdapter(Protocol):
-    def generate_sql(self, request: SQLGenerationAdapterRequest) -> str:
+    def generate_sql(
+        self,
+        request: SQLGenerationAdapterRequest,
+    ) -> SQLGenerationAdapterResponse:
         """Generate SQL from the adapter-safe request projection."""
+
+
+class ConfiguredSQLGenerationAdapter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: NonEmptyTrimmedString
+    adapter_version: NonEmptyTrimmedString
+    base_url: NonEmptyTrimmedString
+    model: Optional[NonEmptyTrimmedString] = None
+    api_key: Optional[SecretStr] = None
+    timeout_seconds: int
+
+    def generate_sql(
+        self,
+        request: SQLGenerationAdapterRequest,
+    ) -> SQLGenerationAdapterResponse:
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_provider_not_implemented",
+            f"Provider '{self.provider}' is configured but dispatch is not implemented.",
+        )
+
+
+def _settings_from_mapping(settings: Mapping[str, object]) -> SQLGenerationSettings:
+    try:
+        return SQLGenerationSettings.model_validate(settings)
+    except ValidationError as exc:
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_settings_invalid",
+            "SQL generation adapter settings are invalid.",
+        ) from exc
+
+
+def resolve_sql_generation_adapter(
+    settings: SQLGenerationSettings | Mapping[str, object],
+) -> SQLGenerationAdapter:
+    generation_settings = (
+        _settings_from_mapping(settings)
+        if isinstance(settings, Mapping)
+        else settings
+    )
+
+    if generation_settings.provider == "disabled":
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_disabled",
+            "SQL generation is disabled; no adapter can be used for candidate generation.",
+        )
+
+    if generation_settings.provider == "local_llm":
+        if generation_settings.local_llm_base_url is None:
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_local_llm_misconfigured",
+                "Local LLM SQL generation requires a configured base URL.",
+            )
+        return ConfiguredSQLGenerationAdapter(
+            provider="local_llm",
+            adapter_version="local_llm.v1",
+            base_url=str(generation_settings.local_llm_base_url),
+            model=generation_settings.local_llm_model,
+            timeout_seconds=generation_settings.timeout_seconds,
+        )
+
+    if generation_settings.provider == "vanna":
+        if generation_settings.vanna_base_url is None:
+            raise SQLGenerationAdapterConfigurationError(
+                "sql_generation_vanna_misconfigured",
+                "Vanna SQL generation requires a configured base URL.",
+            )
+        return ConfiguredSQLGenerationAdapter(
+            provider="vanna",
+            adapter_version="vanna.v1",
+            base_url=str(generation_settings.vanna_base_url),
+            model=generation_settings.vanna_model,
+            api_key=generation_settings.vanna_api_key,
+            timeout_seconds=generation_settings.timeout_seconds,
+        )
+
+    raise SQLGenerationAdapterConfigurationError(
+        "sql_generation_provider_unknown",
+        "SQL generation provider selection is not recognized.",
+    )
 
 
 def build_sql_generation_adapter_request(
