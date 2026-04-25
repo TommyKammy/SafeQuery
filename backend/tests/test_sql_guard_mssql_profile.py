@@ -128,6 +128,43 @@ def test_mssql_sql_guard_rejects_non_mssql_source_binding_fail_closed() -> None:
     }
 
 
+def test_mssql_sql_guard_rejects_postgresql_limit_syntax_fail_closed() -> None:
+    evaluation = evaluate_mssql_sql_guard(
+        {
+            "canonical_sql": (
+                "SELECT vendor_name FROM dbo.approved_vendor_spend LIMIT 10"
+            ),
+            "source": {
+                "source_id": "business-mssql-source",
+                "source_family": "mssql",
+                "source_flavor": "sqlserver",
+            },
+        }
+    )
+
+    assert evaluation.model_dump() == {
+        "decision": "reject",
+        "profile": "mssql",
+        "canonical_sql": (
+            "SELECT vendor_name FROM dbo.approved_vendor_spend LIMIT 10"
+        ),
+        "source": {
+            "source_id": "business-mssql-source",
+            "source_family": "mssql",
+            "source_flavor": "sqlserver",
+        },
+        "rejections": [
+            {
+                "code": "DENY_UNSUPPORTED_SQL_SYNTAX",
+                "detail": (
+                    "PostgreSQL LIMIT syntax is not allowed in the MSSQL guard profile."
+                ),
+                "path": "canonical_sql",
+            }
+        ],
+    }
+
+
 def test_mssql_sql_guard_rejects_waitfor_delay_fail_closed() -> None:
     evaluation = evaluate_mssql_sql_guard(
         {

@@ -41,6 +41,7 @@ from app.services.sql_generation_adapter import (
     SQLGenerationAdapterRunMetadata,
     build_sql_generation_adapter_run_metadata,
     build_sql_generation_adapter_request,
+    normalize_adapter_generated_sql,
 )
 
 
@@ -337,7 +338,7 @@ def run_mssql_core_vertical_slice(
         adapter_response=adapter_response,
         adapter_run_id=candidate_audit_context.correlation_id,
     )
-    canonical_sql = adapter_response.candidate_sql
+    canonical_sql = normalize_adapter_generated_sql(adapter_response.candidate_sql)
     generated = GeneratedMSSQLCandidate(
         canonical_sql=canonical_sql,
         source=candidate_source,
@@ -380,6 +381,9 @@ def run_mssql_core_vertical_slice(
             candidate_sql=canonical_sql,
             adapter_metadata=adapter_metadata,
             audit_events=audit_events,
+            request_state="blocked",
+            candidate_state="blocked",
+            guard_status="blocked",
         )
         raise MSSQLVerticalSliceDenied(
             deny_code=primary_deny_code,
@@ -438,6 +442,9 @@ def run_mssql_core_vertical_slice(
         candidate_sql=canonical_sql,
         adapter_metadata=adapter_metadata,
         audit_events=audit_events,
+        request_state="previewed",
+        candidate_state="preview_ready",
+        guard_status="allow",
     )
 
     selection = select_execution_connector(candidate_source=candidate_source)

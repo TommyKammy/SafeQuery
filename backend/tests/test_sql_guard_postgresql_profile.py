@@ -324,3 +324,40 @@ def test_postgresql_sql_guard_rejects_non_postgresql_source_binding_fail_closed(
             }
         ],
     }
+
+
+def test_postgresql_sql_guard_rejects_mssql_top_syntax_fail_closed() -> None:
+    evaluation = evaluate_postgresql_sql_guard(
+        {
+            "canonical_sql": (
+                "SELECT TOP 10 vendor_name FROM finance.approved_vendor_spend"
+            ),
+            "source": {
+                "source_id": "business-postgres-source",
+                "source_family": "postgresql",
+                "source_flavor": "warehouse",
+            },
+        }
+    )
+
+    assert evaluation.model_dump() == {
+        "decision": "reject",
+        "profile": "postgresql",
+        "canonical_sql": (
+            "SELECT TOP 10 vendor_name FROM finance.approved_vendor_spend"
+        ),
+        "source": {
+            "source_id": "business-postgres-source",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+        },
+        "rejections": [
+            {
+                "code": "DENY_UNSUPPORTED_SQL_SYNTAX",
+                "detail": (
+                    "MSSQL TOP syntax is not allowed in the PostgreSQL guard profile."
+                ),
+                "path": "canonical_sql",
+            }
+        ],
+    }

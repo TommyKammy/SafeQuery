@@ -482,3 +482,15 @@ def build_sql_generation_adapter_run_metadata(
             f"sha256:{hashlib.sha256(prompt_projection.encode('utf-8')).hexdigest()}"
         ),
     )
+
+
+def normalize_adapter_generated_sql(candidate_sql: str) -> NonEmptyTrimmedString:
+    normalized = candidate_sql.strip()
+    if normalized.endswith(";"):
+        normalized = normalized[:-1].strip()
+    if not normalized:
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_response_invalid",
+            "SQL generation adapter returned empty SQL after normalization.",
+        )
+    return normalized

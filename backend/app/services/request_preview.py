@@ -523,6 +523,9 @@ def persist_generated_candidate_audit_context(
     candidate_sql: str,
     adapter_metadata: SQLGenerationAdapterRunMetadata,
     audit_events: list[SourceAwareAuditEvent],
+    request_state: str | None = None,
+    candidate_state: str | None = None,
+    guard_status: GuardStatus | None = None,
 ) -> None:
     try:
         preview_request = session.execute(
@@ -545,6 +548,8 @@ def persist_generated_candidate_audit_context(
                 "Generated candidate metadata cannot be rebound to a different request.",
             )
 
+        if request_state is not None:
+            preview_request.request_state = request_state
         preview_candidate.candidate_sql = candidate_sql
         preview_candidate.adapter_provider = adapter_metadata.adapter_provider
         preview_candidate.adapter_model = adapter_metadata.adapter_model
@@ -552,6 +557,10 @@ def persist_generated_candidate_audit_context(
         preview_candidate.adapter_run_id = adapter_metadata.adapter_run_id
         preview_candidate.prompt_version = adapter_metadata.prompt_version
         preview_candidate.prompt_fingerprint = adapter_metadata.prompt_fingerprint
+        if candidate_state is not None:
+            preview_candidate.candidate_state = candidate_state
+        if guard_status is not None:
+            preview_candidate.guard_status = guard_status
         _persist_preview_audit_events(
             session,
             preview_request=preview_request,
