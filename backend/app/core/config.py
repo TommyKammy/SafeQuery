@@ -2,7 +2,9 @@ from functools import lru_cache
 from typing import Annotated, Literal, Optional
 
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
+    ConfigDict,
     Field,
     PostgresDsn,
     SecretStr,
@@ -26,6 +28,21 @@ class BusinessMssqlSourceSettings(BaseModel):
     connection_string: str
 
 
+SQLGenerationProvider = Literal["disabled", "local_llm", "vanna"]
+
+
+class SQLGenerationSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: SQLGenerationProvider = "disabled"
+    local_llm_base_url: Optional[AnyHttpUrl] = None
+    local_llm_model: Optional[str] = None
+    vanna_base_url: Optional[AnyHttpUrl] = None
+    vanna_model: Optional[str] = None
+    vanna_api_key: Optional[SecretStr] = None
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
+
+
 class SourceRoleTelemetry(BaseModel):
     application_postgres_persistence: Literal["configured"] = "configured"
     business_postgres_source_generation: Literal["configured", "unconfigured"]
@@ -46,6 +63,13 @@ class Settings(BaseSettings):
     session_signing_key: Optional[SecretStr] = None
     business_postgres_source_url: Optional[PostgresDsn] = None
     business_mssql_source_connection_string: Optional[str] = None
+    sql_generation_provider: SQLGenerationProvider = "disabled"
+    sql_generation_local_llm_base_url: Optional[AnyHttpUrl] = None
+    sql_generation_local_llm_model: Optional[str] = None
+    sql_generation_vanna_base_url: Optional[AnyHttpUrl] = None
+    sql_generation_vanna_model: Optional[str] = None
+    sql_generation_vanna_api_key: Optional[SecretStr] = None
+    sql_generation_timeout_seconds: int = Field(default=30, ge=1, le=300)
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
@@ -66,8 +90,40 @@ class Settings(BaseSettings):
 
         return value
 
+    @field_validator(
+        "business_mssql_source_connection_string",
+        "sql_generation_local_llm_model",
+        "sql_generation_vanna_model",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+
+        return value
+
+    @field_validator("sql_generation_vanna_api_key")
+    @classmethod
+    def _reject_placeholder_vanna_api_key(
+        cls,
+        value: Optional[SecretStr],
+    ) -> Optional[SecretStr]:
+        if value is None:
+            return value
+
+        normalized = value.get_secret_value().strip().lower()
+        if normalized in {"change-me", "changeme", "todo", "placeholder", "example"}:
+            raise ValueError(
+                "SAFEQUERY_SQL_GENERATION_VANNA_API_KEY must come from a trusted "
+                "credential source, not a placeholder value."
+            )
+
+        return value
+
     @model_validator(mode="after")
-    def _validate_distinct_postgres_roles(self) -> "Settings":
+    def _validate_distinct_postgres_roles_and_generation_provider(self) -> "Settings":
         if self.dev_auth_enabled and self.environment not in {"development", "test"}:
             raise ValueError(
                 "SAFEQUERY_DEV_AUTH_ENABLED is only allowed when "
@@ -79,6 +135,24 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse "
                 "SAFEQUERY_APP_POSTGRES_URL."
+            )
+
+        if (
+            self.sql_generation_provider == "local_llm"
+            and self.sql_generation_local_llm_base_url is None
+        ):
+            raise ValueError(
+                "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL must be configured "
+                "when SAFEQUERY_SQL_GENERATION_PROVIDER=local_llm."
+            )
+
+        if (
+            self.sql_generation_provider == "vanna"
+            and self.sql_generation_vanna_base_url is None
+        ):
+            raise ValueError(
+                "SAFEQUERY_SQL_GENERATION_VANNA_BASE_URL must be configured "
+                "when SAFEQUERY_SQL_GENERATION_PROVIDER=vanna."
             )
 
         return self
@@ -112,6 +186,18 @@ class Settings(BaseSettings):
 
         return BusinessMssqlSourceSettings(
             connection_string=normalized_connection_string
+        )
+
+    @property
+    def sql_generation(self) -> SQLGenerationSettings:
+        return SQLGenerationSettings(
+            provider=self.sql_generation_provider,
+            local_llm_base_url=self.sql_generation_local_llm_base_url,
+            local_llm_model=self.sql_generation_local_llm_model,
+            vanna_base_url=self.sql_generation_vanna_base_url,
+            vanna_model=self.sql_generation_vanna_model,
+            vanna_api_key=self.sql_generation_vanna_api_key,
+            timeout_seconds=self.sql_generation_timeout_seconds,
         )
 
     def source_posture_telemetry(self) -> SourcePostureTelemetry:
