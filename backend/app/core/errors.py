@@ -1,13 +1,37 @@
 import logging
 from http import HTTPStatus
+from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import get_logger
+
+
+_SAFE_API_ERROR_CODES = frozenset(
+    {
+        "unauthenticated",
+        "session_invalid",
+        "csrf_failed",
+        "entitlement_denied",
+    }
+)
+
+
+def api_error(status_code: int, code: str, message: str) -> HTTPException:
+    if code not in _SAFE_API_ERROR_CODES:
+        raise ValueError("Unsupported API error code.")
+
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "code": code,
+            "message": message,
+        },
+    )
 
 
 def _error_body(code: str, message: str) -> dict[str, dict[str, str]]:
@@ -52,13 +76,31 @@ def _http_error_message(status_code: int) -> str:
         return "HTTP error."
 
 
+def _safe_http_exception_error(
+    exc: StarletteHTTPException,
+) -> tuple[str, str]:
+    detail: Any = exc.detail
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        message = detail.get("message")
+        if (
+            isinstance(code, str)
+            and code.strip()
+            and code in _SAFE_API_ERROR_CODES
+            and isinstance(message, str)
+            and message.strip()
+        ):
+            return code, message
+
+    return _http_error_code(exc.status_code), _http_error_message(exc.status_code)
+
+
 async def handle_http_exception(
     request: Request, exc: StarletteHTTPException
 ) -> JSONResponse:
     logger = get_logger()
     status_code = exc.status_code
-    code = _http_error_code(status_code)
-    message = _http_error_message(status_code)
+    code, message = _safe_http_exception_error(exc)
 
     logger.warning(
         "request.http_error",

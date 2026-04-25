@@ -22,9 +22,20 @@ export type OperatorHistoryItem = {
 };
 
 export type OperatorWorkflowSnapshot = {
+  error?: {
+    code: string;
+    message: string;
+  };
   history: OperatorHistoryItem[];
   sources: SourceOption[];
-  status: "live" | "unavailable" | "malformed";
+  status:
+    | "live"
+    | "unavailable"
+    | "malformed"
+    | "unauthenticated"
+    | "session_invalid"
+    | "csrf_failed"
+    | "entitlement_denied";
 };
 
 type RawObject = Record<string, unknown>;
@@ -110,6 +121,37 @@ function unavailableSnapshot(status: OperatorWorkflowSnapshot["status"]): Operat
   };
 }
 
+function parseApiError(value: unknown): OperatorWorkflowSnapshot["error"] | undefined {
+  if (!isObject(value) || !isObject(value.error)) {
+    return undefined;
+  }
+
+  const code = readOptionalString(value.error.code);
+  const message = readOptionalString(value.error.message);
+  if (!code || !message) {
+    return undefined;
+  }
+
+  return { code, message };
+}
+
+function unavailableSnapshotForApiError(payload: unknown): OperatorWorkflowSnapshot {
+  const error = parseApiError(payload);
+  if (
+    error?.code === "unauthenticated" ||
+    error?.code === "session_invalid" ||
+    error?.code === "csrf_failed" ||
+    error?.code === "entitlement_denied"
+  ) {
+    return {
+      ...unavailableSnapshot(error.code),
+      error
+    };
+  }
+
+  return unavailableSnapshot("unavailable");
+}
+
 function isParsedSourceOption(value: SourceOption | null): value is SourceOption {
   return value !== null;
 }
@@ -127,7 +169,14 @@ export async function getOperatorWorkflowSnapshot(
     });
 
     if (!response.ok) {
-      return unavailableSnapshot("unavailable");
+      let payload: unknown;
+      try {
+        payload = (await response.json()) as unknown;
+      } catch {
+        return unavailableSnapshot("unavailable");
+      }
+
+      return unavailableSnapshotForApiError(payload);
     }
 
     let payload: unknown;

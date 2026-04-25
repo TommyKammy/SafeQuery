@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.errors import (
+    api_error,
     handle_http_exception,
     handle_unexpected_exception,
     handle_validation_exception,
@@ -34,6 +35,7 @@ from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_do
 from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
+    PreviewSubmissionEntitlementError,
     PreviewSubmissionRequest,
     PreviewSubmissionResponse,
     submit_preview_request,
@@ -216,6 +218,12 @@ def create_app() -> FastAPI:
                 session,
                 audit_context=audit_context,
             )
+        except PreviewSubmissionEntitlementError as exc:
+            raise api_error(
+                403,
+                "entitlement_denied",
+                "The signed-in operator is not entitled to use that source.",
+            ) from exc
         except PreviewSubmissionContractError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

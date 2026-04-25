@@ -20,6 +20,7 @@ from app.services.source_governance import (
     SourceGovernanceResolutionError,
     resolve_authoritative_source_governance,
 )
+from app.services.source_registry import SourceRegistryPostureError
 
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -67,6 +68,10 @@ class PreviewSubmissionResponse(BaseModel):
 
 class PreviewSubmissionContractError(ValueError):
     """Raised when a preview submission does not carry an executable source binding."""
+
+
+class PreviewSubmissionEntitlementError(PreviewSubmissionContractError, PermissionError):
+    """Raised when an authenticated subject lacks source execution entitlement."""
 
 
 class PreviewAuditContext(BaseModel):
@@ -171,7 +176,9 @@ def submit_preview_request(
             dataset_contract,
         )
     except SourceEntitlementError as exc:
-        raise PreviewSubmissionContractError(str(exc)) from exc
+        if isinstance(exc.__cause__, (SourceRegistryPostureError, ValueError)):
+            raise PreviewSubmissionContractError(str(exc)) from exc
+        raise PreviewSubmissionEntitlementError(str(exc)) from exc
 
     audit = AuditRecord(
         source_id=resolved_source.source_id,
