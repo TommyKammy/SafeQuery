@@ -123,6 +123,61 @@ class SQLGenerationAdapterConfigurationError(RuntimeError):
         self.code = code
 
 
+_FORBIDDEN_ADAPTER_RESPONSE_KEYS = frozenset(
+    {
+        "business_postgres_url",
+        "business_mssql_connection_string",
+        "connection_reference",
+        "connection_string",
+        "credentials",
+        "database_url",
+        "execute",
+        "execution_authority",
+        "execution_handle",
+        "execution_result",
+        "query_runner",
+        "raw_schema_inventory",
+        "rows",
+        "runtime_controls",
+        "source_credentials",
+    }
+)
+
+
+def _find_forbidden_adapter_response_key(value: object) -> str | None:
+    if isinstance(value, Mapping):
+        for key, nested_value in value.items():
+            normalized_key = str(key).strip().casefold()
+            if normalized_key in _FORBIDDEN_ADAPTER_RESPONSE_KEYS:
+                return str(key)
+            nested_match = _find_forbidden_adapter_response_key(nested_value)
+            if nested_match is not None:
+                return nested_match
+    elif isinstance(value, list):
+        for item in value:
+            nested_match = _find_forbidden_adapter_response_key(item)
+            if nested_match is not None:
+                return nested_match
+
+    return None
+
+
+def _require_adapter_response_has_no_execution_material(
+    decoded: Mapping[str, object],
+    *,
+    provider_label: str,
+) -> None:
+    forbidden_key = _find_forbidden_adapter_response_key(decoded)
+    if forbidden_key is not None:
+        raise SQLGenerationAdapterConfigurationError(
+            "sql_generation_response_forbidden_material",
+            (
+                f"{provider_label} SQL generation runtime returned forbidden "
+                f"adapter boundary material '{forbidden_key}'."
+            ),
+        )
+
+
 class SQLGenerationAdapter(Protocol):
     def generate_sql(
         self,
@@ -235,6 +290,10 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
                 "sql_generation_response_invalid",
                 "Local LLM SQL generation runtime returned an invalid response.",
             )
+        _require_adapter_response_has_no_execution_material(
+            decoded,
+            provider_label="Local LLM",
+        )
 
         candidate_sql = decoded.get("candidate_sql")
         model = decoded.get("model", self.model)
@@ -264,6 +323,11 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
         for _attempt in range(self.retry_count + 1):
             try:
                 response = self._dispatch_vanna_sql(request)
+            except SQLGenerationAdapterConfigurationError as exc:
+                if exc.code == "sql_generation_response_forbidden_material":
+                    raise
+                last_error = exc
+                continue
             except (
                 HTTPError,
                 URLError,
@@ -271,7 +335,6 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
                 OSError,
                 ValidationError,
                 json.JSONDecodeError,
-                SQLGenerationAdapterConfigurationError,
             ) as exc:
                 last_error = exc
                 continue
@@ -351,6 +414,10 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
                 "sql_generation_response_invalid",
                 "Vanna SQL generation runtime returned an invalid response.",
             )
+        _require_adapter_response_has_no_execution_material(
+            decoded,
+            provider_label="Vanna",
+        )
 
         candidate_sql = decoded.get("candidate_sql", decoded.get("sql"))
         model = decoded.get("model", self.model)

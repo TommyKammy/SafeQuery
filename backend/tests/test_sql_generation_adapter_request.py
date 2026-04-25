@@ -541,7 +541,6 @@ def test_vanna_generation_uses_curated_context_and_bounded_request(
                 {
                     "sql": "select vendor_id from approved_vendor_spend limit 50",
                     "model": "warehouse-assistant",
-                    "execution_result": [{"vendor_id": 1}],
                 }
             ).encode("utf-8")
 
@@ -600,6 +599,70 @@ def test_vanna_generation_uses_curated_context_and_bounded_request(
     assert "execution_result" not in json.dumps(response.model_dump())
 
 
+def test_vanna_generation_fails_closed_for_execution_material_response(
+    monkeypatch,
+) -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "vanna",
+            "vanna_base_url": "http://vanna:8084",
+            "retry_count": 0,
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_82_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+            datasets=[
+                {
+                    "schema_name": "finance",
+                    "dataset_name": "approved_vendor_spend",
+                    "dataset_kind": "table",
+                },
+            ],
+        ),
+    )
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "sql": "select vendor_id from approved_vendor_spend limit 50",
+                    "execution_result": [{"vendor_id": 1}],
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(adapter_module, "urlopen", lambda request, timeout=None: Response())
+
+    try:
+        adapter.generate_sql(request)
+    except SQLGenerationAdapterConfigurationError as exc:
+        assert exc.code == "sql_generation_response_forbidden_material"
+        assert "execution_result" in str(exc)
+    else:
+        raise AssertionError("Expected execution material response to fail closed.")
+
+
 def test_vanna_generation_fails_closed_for_malformed_response(monkeypatch) -> None:
     adapter = resolve_sql_generation_adapter(
         {
@@ -644,7 +707,7 @@ def test_vanna_generation_fails_closed_for_malformed_response(monkeypatch) -> No
             return None
 
         def read(self) -> bytes:
-            return json.dumps({"execution_result": [{"vendor_id": 1}]}).encode("utf-8")
+            return json.dumps({"model": "warehouse-assistant"}).encode("utf-8")
 
     monkeypatch.setattr(adapter_module, "urlopen", lambda request, timeout=None: Response())
 
