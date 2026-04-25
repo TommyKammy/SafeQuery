@@ -75,8 +75,8 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
         self.assertNotIn(test_token, response.text)
 
     def test_entitlement_denial_audit_events_are_allowlisted(self) -> None:
-        raw_token = "raw-token-should-not-render"
-        raw_cookie = "session-cookie-should-not-render"
+        raw_token = "raw-token-should-not-render"  # noqa: S105 - test sentinel
+        raw_cookie = "session-cookie-should-not-render"  # noqa: S105 - test sentinel
 
         @self.app.get("/_test/entitlement-denied-audit")
         def raise_entitlement_denial_with_raw_audit() -> None:
