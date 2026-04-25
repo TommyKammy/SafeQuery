@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
 from app.db.models.source_registry import RegisteredSource
 
 
@@ -50,6 +51,133 @@ def _source_description(source: RegisteredSource) -> str:
     )
 
 
+def _as_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _source_labels_by_id(sources: list[RegisteredSource]) -> dict[str, str]:
+    return {source.source_id: source.display_label for source in sources}
+
+
+def _request_labels_by_id(requests: list[PreviewRequest]) -> dict[str, str]:
+    return {request.request_id: request.request_text for request in requests}
+
+
+def _audit_event_sort_key(event: PreviewAuditEvent) -> tuple[datetime, int, str]:
+    return (
+        _as_utc_datetime(event.occurred_at),
+        event.lifecycle_order,
+        str(event.event_id),
+    )
+
+
+def _latest_request_events(
+    audit_events: list[PreviewAuditEvent],
+) -> dict[str, PreviewAuditEvent]:
+    latest: dict[str, PreviewAuditEvent] = {}
+    for event in audit_events:
+        current = latest.get(event.request_id)
+        if current is None or _audit_event_sort_key(event) > _audit_event_sort_key(
+            current
+        ):
+            latest[event.request_id] = event
+    return latest
+
+
+def _latest_candidate_events(
+    audit_events: list[PreviewAuditEvent],
+) -> dict[str, PreviewAuditEvent]:
+    latest: dict[str, PreviewAuditEvent] = {}
+    for event in audit_events:
+        if event.candidate_id is None:
+            continue
+        current = latest.get(event.candidate_id)
+        if current is None or _audit_event_sort_key(event) > _audit_event_sort_key(
+            current
+        ):
+            latest[event.candidate_id] = event
+    return latest
+
+
+def _history_occurred_at(
+    event: PreviewAuditEvent | None,
+    fallback: datetime,
+) -> datetime:
+    return _as_utc_datetime(event.occurred_at if event is not None else fallback)
+
+
+def _build_operator_history(
+    session: Session,
+    *,
+    sources: list[RegisteredSource],
+) -> list[OperatorWorkflowHistoryItem]:
+    requests = session.execute(select(PreviewRequest)).scalars().all()
+    candidates = session.execute(select(PreviewCandidate)).scalars().all()
+    audit_events = (
+        session.execute(
+            select(PreviewAuditEvent).order_by(
+                PreviewAuditEvent.occurred_at,
+                PreviewAuditEvent.lifecycle_order,
+                PreviewAuditEvent.event_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    source_labels = _source_labels_by_id(sources)
+    request_labels = _request_labels_by_id(requests)
+    request_events = _latest_request_events(audit_events)
+    candidate_events = _latest_candidate_events(audit_events)
+
+    history: list[OperatorWorkflowHistoryItem] = []
+    for candidate in candidates:
+        history.append(
+            OperatorWorkflowHistoryItem(
+                item_type="candidate",
+                record_id=candidate.candidate_id,
+                label=request_labels.get(candidate.request_id, "SQL preview"),
+                source_id=candidate.source_id,
+                source_label=source_labels.get(candidate.source_id, candidate.source_id),
+                lifecycle_state=candidate.candidate_state,
+                occurred_at=_history_occurred_at(
+                    candidate_events.get(candidate.candidate_id),
+                    candidate.updated_at or candidate.created_at,
+                ),
+                guard_status=candidate.guard_status,
+            )
+        )
+
+    for request in requests:
+        history.append(
+            OperatorWorkflowHistoryItem(
+                item_type="request",
+                record_id=request.request_id,
+                label=request.request_text,
+                source_id=request.source_id,
+                source_label=source_labels.get(request.source_id, request.source_id),
+                lifecycle_state=request.request_state,
+                occurred_at=_history_occurred_at(
+                    request_events.get(request.request_id),
+                    request.updated_at or request.created_at,
+                ),
+            )
+        )
+
+    item_priority = {"candidate": 0, "request": 1, "run": 2}
+    return sorted(
+        history,
+        key=lambda item: (
+            item.occurred_at,
+            -item_priority[item.item_type],
+            item.record_id,
+        ),
+        reverse=True,
+    )
+
+
 def get_operator_workflow_snapshot(session: Session) -> OperatorWorkflowSnapshot:
     sources = (
         session.execute(select(RegisteredSource).order_by(RegisteredSource.source_id))
@@ -69,4 +197,7 @@ def get_operator_workflow_snapshot(session: Session) -> OperatorWorkflowSnapshot
         for source in sources
     ]
 
-    return OperatorWorkflowSnapshot(sources=source_options, history=[])
+    return OperatorWorkflowSnapshot(
+        sources=source_options,
+        history=_build_operator_history(session, sources=sources),
+    )
