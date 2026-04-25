@@ -71,6 +71,7 @@ def test_sql_generation_adapter_request_is_source_aware_and_single_source() -> N
                 "context_id": "policy_generation_v1",
                 "source_id": "sap-approved-spend",
             },
+            "datasets": [],
         },
     }
 
@@ -255,6 +256,13 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
                 "context_id": "snapshot_finance_v3",
                 "source_id": "sap-approved-spend",
             },
+            datasets=[
+                {
+                    "schema_name": "finance",
+                    "dataset_name": "approved_vendor_spend",
+                    "dataset_kind": "table",
+                },
+            ],
         ),
     )
     calls: list[tuple[str, float | None, dict[str, object]]] = []
@@ -301,6 +309,7 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
     ]
     assert [call[1] for call in calls] == [7, 7]
     assert calls[0][2]["request"]["question"] == "Show approved vendors"
+    assert "datasets" not in calls[0][2]["request"]["context"]
     assert "credentials" not in json.dumps(calls[0][2])
 
 
@@ -418,7 +427,181 @@ def test_local_llm_generation_circuit_breaker_fails_closed(monkeypatch) -> None:
     assert calls == 1
 
 
-def test_vanna_adapter_still_fails_closed_before_dispatch() -> None:
+def test_vanna_generation_uses_curated_context_and_bounded_request(
+    monkeypatch,
+) -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "vanna",
+            "vanna_base_url": "http://vanna:8084",
+            "vanna_model": "warehouse-assistant",
+            "vanna_api_key": "trusted-vanna-token",
+            "timeout_seconds": 11,
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_82_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+            datasets=[
+                {
+                    "schema_name": "finance",
+                    "dataset_name": "approved_vendor_spend",
+                    "dataset_kind": "table",
+                },
+                {
+                    "schema_name": "analytics",
+                    "dataset_name": "vendor_spend_summary",
+                    "dataset_kind": "view",
+                },
+            ],
+        ),
+    )
+    seen: dict[str, object] = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "sql": "select vendor_id from approved_vendor_spend limit 50",
+                    "model": "warehouse-assistant",
+                    "execution_result": [{"vendor_id": 1}],
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(http_request, timeout=None):
+        seen["url"] = http_request.full_url
+        seen["timeout"] = timeout
+        seen["headers"] = dict(http_request.header_items())
+        seen["body"] = json.loads(http_request.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setattr(adapter_module, "urlopen", fake_urlopen)
+
+    response = adapter.generate_sql(request)
+
+    assert response.model_dump(exclude_none=True) == {
+        "candidate_sql": "select vendor_id from approved_vendor_spend limit 50",
+        "provider": "vanna",
+        "adapter_version": "vanna.v1",
+        "model": "warehouse-assistant",
+    }
+    assert seen["url"] == "http://vanna:8084/api/v0/generate_sql"
+    assert seen["timeout"] == 11
+    assert seen["headers"]["Authorization"] == "Bearer trusted-vanna-token"
+    assert seen["body"] == {
+        "question": "Show approved vendors",
+        "model": "warehouse-assistant",
+        "source": {
+            "source_id": "sap-approved-spend",
+            "source_family": "postgresql",
+            "source_flavor": None,
+        },
+        "context": {
+            "dataset_contract": {
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            "schema_snapshot": {
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+            "datasets": [
+                {
+                    "schema_name": "finance",
+                    "dataset_name": "approved_vendor_spend",
+                    "dataset_kind": "table",
+                },
+                {
+                    "schema_name": "analytics",
+                    "dataset_name": "vendor_spend_summary",
+                    "dataset_kind": "view",
+                },
+            ],
+        },
+    }
+    assert "credentials" not in json.dumps(seen["body"])
+    assert "execution_result" not in json.dumps(response.model_dump())
+
+
+def test_vanna_generation_fails_closed_for_malformed_response(monkeypatch) -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "vanna",
+            "vanna_base_url": "http://vanna:8084",
+            "retry_count": 0,
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_82_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+            datasets=[
+                {
+                    "schema_name": "finance",
+                    "dataset_name": "approved_vendor_spend",
+                    "dataset_kind": "table",
+                },
+            ],
+        ),
+    )
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps({"execution_result": [{"vendor_id": 1}]}).encode("utf-8")
+
+    monkeypatch.setattr(adapter_module, "urlopen", lambda request, timeout=None: Response())
+
+    try:
+        adapter.generate_sql(request)
+    except SQLGenerationAdapterConfigurationError as exc:
+        assert exc.code == "sql_generation_runtime_unhealthy"
+        assert "Vanna" in str(exc)
+    else:
+        raise AssertionError("Expected malformed Vanna response to fail closed.")
+
+
+def test_vanna_generation_fails_closed_without_curated_datasets(monkeypatch) -> None:
     adapter = resolve_sql_generation_adapter(
         {
             "provider": "vanna",
@@ -444,13 +627,17 @@ def test_vanna_adapter_still_fails_closed_before_dispatch() -> None:
         ),
     )
 
+    def unexpected_urlopen(http_request, timeout=None):
+        raise AssertionError("Vanna dispatch must not run without curated datasets.")
+
+    monkeypatch.setattr(adapter_module, "urlopen", unexpected_urlopen)
+
     try:
         adapter.generate_sql(request)
     except SQLGenerationAdapterConfigurationError as exc:
-        assert exc.code == "sql_generation_provider_not_implemented"
-        assert "dispatch is not implemented" in str(exc)
+        assert exc.code == "sql_generation_vanna_context_missing"
     else:
-        raise AssertionError("Expected configured adapter dispatch to fail closed.")
+        raise AssertionError("Expected missing curated context to fail closed.")
 
 
 def test_local_llm_runtime_health_payload_is_safe_and_bounded(monkeypatch) -> None:
