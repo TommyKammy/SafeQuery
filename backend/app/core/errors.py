@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from http import HTTPStatus
 from typing import Any
@@ -20,27 +22,62 @@ _SAFE_API_ERROR_CODES = frozenset(
     }
 )
 
+_SAFE_ENTITLEMENT_DENIAL_AUDIT_FIELDS = frozenset(
+    {
+        "event_id",
+        "event_type",
+        "occurred_at",
+        "request_id",
+        "correlation_id",
+        "user_subject",
+        "session_id",
+        "auth_source",
+        "governance_bindings",
+        "entitlement_decision",
+        "entitlement_source_bindings",
+        "application_version",
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "primary_deny_code",
+        "denial_cause",
+    }
+)
 
-def api_error(status_code: int, code: str, message: str) -> HTTPException:
+
+def api_error(
+    status_code: int,
+    code: str,
+    message: str,
+    *,
+    audit_events: list[dict[str, Any]] | None = None,
+) -> HTTPException:
     if code not in _SAFE_API_ERROR_CODES:
         raise ValueError("Unsupported API error code.")
 
+    detail: dict[str, Any] = {
+        "code": code,
+        "message": message,
+    }
+    if audit_events is not None:
+        detail["audit"] = {"events": audit_events}
+
     return HTTPException(
         status_code=status_code,
-        detail={
-            "code": code,
-            "message": message,
-        },
+        detail=detail,
     )
 
 
-def _error_body(code: str, message: str) -> dict[str, dict[str, str]]:
-    return {
+def _error_body(code: str, message: str) -> dict[str, Any]:
+    body: dict[str, Any] = {
         "error": {
             "code": code,
             "message": message,
         }
     }
+    return body
 
 
 def _request_log_context(request: Request) -> dict[str, str]:
@@ -95,6 +132,41 @@ def _safe_http_exception_error(
     return _http_error_code(exc.status_code), _http_error_message(exc.status_code)
 
 
+def _safe_http_exception_audit(
+    exc: StarletteHTTPException,
+    *,
+    code: str,
+) -> dict[str, list[dict[str, Any]]] | None:
+    if exc.status_code != 403 or code != "entitlement_denied":
+        return None
+
+    detail: Any = exc.detail
+    if not isinstance(detail, dict):
+        return None
+
+    audit = detail.get("audit")
+    if not isinstance(audit, dict):
+        return None
+
+    events = audit.get("events")
+    if not isinstance(events, list):
+        return None
+    if not all(isinstance(event, dict) for event in events):
+        return None
+
+    return {
+        "events": [
+            {
+                key: value
+                for key, value in event.items()
+                if isinstance(key, str)
+                and key in _SAFE_ENTITLEMENT_DENIAL_AUDIT_FIELDS
+            }
+            for event in events
+        ]
+    }
+
+
 async def handle_http_exception(
     request: Request, exc: StarletteHTTPException
 ) -> JSONResponse:
@@ -114,9 +186,14 @@ async def handle_http_exception(
         },
     )
 
+    content = _error_body(code, message)
+    audit = _safe_http_exception_audit(exc, code=code)
+    if audit is not None:
+        content["audit"] = audit
+
     return JSONResponse(
         status_code=status_code,
-        content=_error_body(code, message),
+        content=content,
         headers={"X-Request-ID": getattr(request.state, "request_id", "unknown")},
     )
 

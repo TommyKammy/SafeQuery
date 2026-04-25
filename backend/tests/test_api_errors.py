@@ -74,6 +74,93 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
         )
         self.assertNotIn(test_token, response.text)
 
+    def test_entitlement_denial_audit_events_are_allowlisted(self) -> None:
+        raw_token = "raw-token-should-not-render"  # noqa: S105 - test sentinel
+        raw_cookie = "session-cookie-should-not-render"  # noqa: S105 - test sentinel
+
+        @self.app.get("/_test/entitlement-denied-audit")
+        def raise_entitlement_denial_with_raw_audit() -> None:
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "entitlement_denied",
+                    "message": "Source entitlement denied.",
+                    "audit": {
+                        "events": [
+                            {
+                                "event_id": "event-123",
+                                "event_type": "generation_failed",
+                                "occurred_at": "2026-04-25T12:00:00Z",
+                                "request_id": "request-123",
+                                "correlation_id": "correlation-123",
+                                "user_subject": "subject-123",
+                                "session_id": "session-audit-123",
+                                "auth_source": "enterprise_bridge",
+                                "governance_bindings": ["finance"],
+                                "entitlement_decision": "deny",
+                                "entitlement_source_bindings": ["finance"],
+                                "application_version": "safequery-api/0.1.0",
+                                "source_id": "finance_postgres",
+                                "source_family": "postgresql",
+                                "source_flavor": "aurora",
+                                "dataset_contract_version": 3,
+                                "schema_snapshot_version": 7,
+                                "primary_deny_code": "DENY_SOURCE_ENTITLEMENT",
+                                "denial_cause": "entitlement_denied",
+                                "raw_token": raw_token,
+                                "cookie": raw_cookie,
+                                "csrf_token": "csrf-token-should-not-render",
+                            }
+                        ]
+                    },
+                },
+            )
+
+        response = self.client.get("/_test/entitlement-denied-audit")
+
+        self.assertEqual(response.status_code, 403)
+        body = response.json()
+        self.assertEqual(
+            body["error"],
+            {
+                "code": "entitlement_denied",
+                "message": "Source entitlement denied.",
+            },
+        )
+        self.assertEqual(
+            body["audit"],
+            {
+                "events": [
+                    {
+                        "event_id": "event-123",
+                        "event_type": "generation_failed",
+                        "occurred_at": "2026-04-25T12:00:00Z",
+                        "request_id": "request-123",
+                        "correlation_id": "correlation-123",
+                        "user_subject": "subject-123",
+                        "session_id": "session-audit-123",
+                        "auth_source": "enterprise_bridge",
+                        "governance_bindings": ["finance"],
+                        "entitlement_decision": "deny",
+                        "entitlement_source_bindings": ["finance"],
+                        "application_version": "safequery-api/0.1.0",
+                        "source_id": "finance_postgres",
+                        "source_family": "postgresql",
+                        "source_flavor": "aurora",
+                        "dataset_contract_version": 3,
+                        "schema_snapshot_version": 7,
+                        "primary_deny_code": "DENY_SOURCE_ENTITLEMENT",
+                        "denial_cause": "entitlement_denied",
+                    }
+                ]
+            },
+        )
+        self.assertNotIn(raw_token, response.text)
+        self.assertNotIn(raw_cookie, response.text)
+        self.assertNotIn("csrf-token-should-not-render", response.text)
+
     def test_unhandled_errors_and_logs_do_not_leak_secrets(self) -> None:
         test_token = "test-token-1234"
         stream = StringIO()

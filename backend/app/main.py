@@ -48,6 +48,44 @@ from app.services.operator_workflow import (
 configure_logging()
 
 
+_ENTITLEMENT_DENIAL_AUDIT_FIELDS = frozenset(
+    {
+        "event_id",
+        "event_type",
+        "occurred_at",
+        "request_id",
+        "correlation_id",
+        "user_subject",
+        "session_id",
+        "auth_source",
+        "governance_bindings",
+        "entitlement_decision",
+        "entitlement_source_bindings",
+        "application_version",
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "primary_deny_code",
+        "denial_cause",
+    }
+)
+
+
+def _serialize_entitlement_denial_audit_events(
+    exc: PreviewSubmissionEntitlementError,
+) -> list[dict[str, object]]:
+    return [
+        event.model_dump(
+            mode="json",
+            include=_ENTITLEMENT_DENIAL_AUDIT_FIELDS,
+            exclude_none=True,
+        )
+        for event in exc.audit_events
+    ]
+
+
 def create_app() -> FastAPI:
     logger = get_logger()
     try:
@@ -224,6 +262,7 @@ def create_app() -> FastAPI:
                 403,
                 "entitlement_denied",
                 "The signed-in operator is not entitled to use that source.",
+                audit_events=_serialize_entitlement_denial_audit_events(exc),
             ) from exc
         except PreviewSubmissionContractError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
