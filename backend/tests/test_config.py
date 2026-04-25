@@ -133,6 +133,40 @@ class SettingsTestCase(unittest.TestCase):
             "Driver={ODBC Driver 18 for SQL Server};Server=tcp:mssql,1433",
         )
 
+    def test_dev_auth_is_disabled_by_default_and_can_enable_for_development(self) -> None:
+        default_settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+        development_settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            dev_auth_enabled=True,
+            environment="development",
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+
+        self.assertFalse(default_settings.dev_auth_enabled)
+        self.assertTrue(development_settings.dev_auth_enabled)
+
+    def test_dev_auth_cannot_enable_for_production_or_staging(self) -> None:
+        for environment in ("production", "staging"):
+            with self.subTest(environment=environment):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "SAFEQUERY_DEV_AUTH_ENABLED is only allowed",
+                ):
+                    Settings(
+                        app_postgres_url=(
+                            "postgresql://safequery:safequery@db:5432/safequery"
+                        ),
+                        dev_auth_enabled=True,
+                        environment=environment,
+                        _env_file=None,
+                        _env_prefix="SAFEQUERY_",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
