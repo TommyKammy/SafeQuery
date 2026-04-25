@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.features.audit.event_model import AuditEventType, SourceAwareAuditEvent, SourceFamily
+from app.features.audit.event_model import (
+    AuditEventType,
+    SourceAwareAuditEvent,
+    SourceFamily,
+)
 from app.features.auth.context import AuthenticatedSubject
 from app.features.execution import execute_candidate_sql, select_execution_connector
 from app.features.execution.runtime import (
@@ -20,6 +25,11 @@ from app.features.execution.runtime import (
     QueryRunner,
 )
 from app.features.guard import SQLGuardEvaluation, evaluate_postgresql_sql_guard
+from app.features.mlflow_export import (
+    MLflowExportDecision,
+    MLflowExportPayload,
+    export_adapter_run_trace_from_audit_event,
+)
 from app.services.candidate_lifecycle import (
     CandidateLifecycleAuditContext,
     CandidateLifecycleRecord,
@@ -93,6 +103,9 @@ class PostgreSQLCoreVerticalSliceResult(BaseModel):
     guard: SQLGuardEvaluation
     execution: ExecutionResult
     audit_events: list[SourceAwareAuditEvent]
+    supplemental_mlflow_exports: list[MLflowExportDecision] = Field(
+        default_factory=list
+    )
 
 
 class PostgreSQLVerticalSliceDenied(PermissionError):
@@ -302,6 +315,11 @@ def run_postgresql_core_vertical_slice(
     runtime_safety_state: ExecutionRuntimeSafetyState | None = None,
     audit_context: PreviewAuditContext,
     candidate_lifecycle: CandidateLifecycleRecord | None = None,
+    mlflow_adapter_run_export_enabled: bool = False,
+    mlflow_adapter_run_export_sink: (
+        Callable[[MLflowExportPayload], object] | None
+    ) = None,
+    mlflow_run_id: str | None = None,
 ) -> PostgreSQLCoreVerticalSliceResult:
     normalized_business_postgres_url = _normalize_business_postgres_url(
         business_postgres_url
@@ -371,6 +389,14 @@ def run_postgresql_core_vertical_slice(
         candidate_state="generated",
         adapter_metadata=adapter_metadata,
     )
+    supplemental_mlflow_exports = [
+        export_adapter_run_trace_from_audit_event(
+            audit_events[-1],
+            enabled=mlflow_adapter_run_export_enabled,
+            export_sink=mlflow_adapter_run_export_sink,
+            mlflow_run_id=mlflow_run_id,
+        )
+    ]
 
     guard = evaluate_postgresql_sql_guard(
         {
@@ -492,4 +518,5 @@ def run_postgresql_core_vertical_slice(
         guard=guard,
         execution=execution,
         audit_events=audit_events,
+        supplemental_mlflow_exports=supplemental_mlflow_exports,
     )

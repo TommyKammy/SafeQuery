@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from collections.abc import Mapping
 from typing import Literal, Optional, Protocol
 from uuid import UUID
@@ -58,6 +59,11 @@ _PROHIBITED_SAMPLE_PATTERNS = (
     re.compile(r"\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b", re.IGNORECASE),
 )
 
+_RAW_WORKSTATION_PATH_PATTERNS = (
+    re.compile(r"(?<![A-Za-z0-9_.-])/(?:Users|home)/[^/\s]+/"),
+    re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z]:\\Users\\[^\\\s]+\\"),
+)
+
 
 PROHIBITED_EXPORT_FIELDS = frozenset(
     {
@@ -78,6 +84,8 @@ PROHIBITED_EXPORT_FIELDS = frozenset(
         "execution_approval_state",
         "guard_decision",
         "identity_claims",
+        "connection_reference",
+        "connection_references",
         "release_gate_status",
         "runtime_safety_state",
         "sql_guard_decision",
@@ -184,7 +192,10 @@ class MLflowExportPayload(BaseModel):
     prompt_version: Optional[NonEmptyTrimmedString] = None
     model_version: Optional[NonEmptyTrimmedString] = None
     application_version: Optional[NonEmptyTrimmedString] = None
+    adapter_provider: Optional[NonEmptyTrimmedString] = None
+    adapter_model: Optional[NonEmptyTrimmedString] = None
     adapter_version: Optional[NonEmptyTrimmedString] = None
+    adapter_run_id: Optional[NonEmptyTrimmedString] = None
 
     evaluation_scenario_id: Optional[NonEmptyTrimmedString] = None
     evaluation_kind: Optional[EvaluationScenarioKind] = None
@@ -202,6 +213,12 @@ class MLflowExportPayload(BaseModel):
             raise ValueError(
                 "MLflow export payload includes prohibited field(s): "
                 + ", ".join(prohibited)
+            )
+        raw_path_fields = _raw_workstation_path_fields_in_mapping(value)
+        if raw_path_fields:
+            raise ValueError(
+                "MLflow export payload includes raw workstation-local path field(s): "
+                + ", ".join(raw_path_fields)
             )
         return value
 
@@ -360,7 +377,10 @@ def build_mlflow_export_from_audit_event(
         prompt_version=prompt_version,
         model_version=model_version,
         application_version=audit_event.application_version,
+        adapter_provider=audit_event.adapter_provider,
+        adapter_model=audit_event.adapter_model,
         adapter_version=audit_event.adapter_version,
+        adapter_run_id=audit_event.adapter_run_id,
         redacted_samples=redacted_samples,
     )
 
@@ -423,6 +443,59 @@ def prepare_mlflow_export_from_audit_event(
         safequery_audit_event_id=audit_event.event_id,
         request_id=audit_event.request_id,
     )
+
+
+def export_adapter_run_trace_from_audit_event(
+    audit_event: SourceAwareAuditEvent,
+    *,
+    enabled: bool,
+    export_sink: Callable[[MLflowExportPayload], object] | None = None,
+    retention_days: int = 30,
+    authoritative_audit_retention_days: int = 90,
+    retention_extension_approval_id: Optional[str] = None,
+    access_roles: tuple[AccessRole, ...] = ("engineering", "operations"),
+    redacted_samples: tuple[MLflowRedactedSample, ...] = (),
+    latency_ms: Optional[int] = None,
+    mlflow_run_id: Optional[str] = None,
+    prompt_version: Optional[str] = None,
+    model_version: Optional[str] = None,
+) -> MLflowExportDecision:
+    decision = prepare_mlflow_export_from_audit_event(
+        audit_event,
+        enabled=enabled,
+        retention_days=retention_days,
+        authoritative_audit_retention_days=authoritative_audit_retention_days,
+        retention_extension_approval_id=retention_extension_approval_id,
+        access_roles=access_roles,
+        redacted_samples=redacted_samples,
+        latency_ms=latency_ms,
+        mlflow_run_id=mlflow_run_id,
+        prompt_version=prompt_version or audit_event.prompt_version,
+        model_version=model_version,
+    )
+    if not enabled or decision.payload is None:
+        return decision
+    if export_sink is None:
+        return MLflowExportDecision(
+            payload=decision.payload,
+            suppressed=True,
+            reasons=("export_sink_missing",),
+            safequery_audit_event_id=audit_event.event_id,
+            request_id=audit_event.request_id,
+        )
+
+    try:
+        export_sink(decision.payload)
+    except Exception as exc:
+        return MLflowExportDecision(
+            payload=decision.payload,
+            suppressed=True,
+            reasons=(f"export_sink_failed:{exc.__class__.__name__}",),
+            safequery_audit_event_id=audit_event.event_id,
+            request_id=audit_event.request_id,
+        )
+
+    return decision
 
 
 def build_mlflow_export_from_evaluation_scenario(
@@ -619,3 +692,22 @@ def _prohibited_export_fields_in_mapping(value: object) -> tuple[str, ...]:
 
     collect(value)
     return tuple(sorted(prohibited))
+
+
+def _raw_workstation_path_fields_in_mapping(value: object) -> tuple[str, ...]:
+    fields: set[str] = set()
+
+    def collect(candidate: object, field_name: str | None = None) -> None:
+        if isinstance(candidate, Mapping):
+            for key, nested_value in candidate.items():
+                collect(nested_value, key if isinstance(key, str) else field_name)
+        elif isinstance(candidate, (list, tuple)):
+            for item in candidate:
+                collect(item, field_name)
+        elif isinstance(candidate, str) and any(
+            pattern.search(candidate) for pattern in _RAW_WORKSTATION_PATH_PATTERNS
+        ):
+            fields.add(field_name or "<unknown>")
+
+    collect(value)
+    return tuple(sorted(fields))

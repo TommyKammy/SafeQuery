@@ -825,6 +825,7 @@ def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_au
         "postgresql-positive-approved-vendor-spend-top-vendors"
     ]
     captured: dict[str, object] = {}
+    exported_mlflow_traces: list[dict[str, object]] = []
 
     class RecordingAdapter:
         def generate_sql(self, request):
@@ -857,6 +858,13 @@ def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_au
             business_postgres_url=POSTGRESQL_TEST_URL,
             application_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
             query_runner=fake_query_runner,
+            mlflow_adapter_run_export_enabled=True,
+            mlflow_adapter_run_export_sink=(
+                lambda payload: exported_mlflow_traces.append(
+                    payload.model_dump(exclude_none=True)
+                )
+            ),
+            mlflow_run_id="mlflow-run-142",
             audit_context=PreviewAuditContext(
                 occurred_at=datetime.now(timezone.utc),
                 request_id="request-142",
@@ -906,6 +914,21 @@ def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_au
         "prompt_version": "sql_generation_adapter_request.v1",
         "prompt_fingerprint": persisted_candidate.prompt_fingerprint,
     }.items() <= persisted_generation_event.audit_payload.items()
+    assert len(exported_mlflow_traces) == 1
+    assert {
+        "mlflow_run_id": "mlflow-run-142",
+        "adapter_provider": "local_llm",
+        "adapter_model": "safequery-test-sql",
+        "adapter_version": "test.local_llm.v1",
+        "adapter_run_id": "correlation-142",
+        "prompt_version": "sql_generation_adapter_request.v1",
+        "source_id": scenario.source.source_id,
+    }.items() <= exported_mlflow_traces[0].items()
+    assert exported_mlflow_traces[0]["authority"] == "engineering_observability"
+    assert exported_mlflow_traces[0]["can_authorize_or_mutate_audit"] is False
+    assert "connection_reference" not in exported_mlflow_traces[0]
+    assert "canonical_sql" not in exported_mlflow_traces[0]
+    assert result.supplemental_mlflow_exports[0].suppressed is False
     assert result.guard.decision == "allow"
     assert result.execution.rows == [
         {"vendor_name": "Northwind", "approved_amount": 4200}
@@ -936,6 +959,88 @@ def test_postgresql_core_vertical_slice_submits_generates_guards_executes_and_au
             "execution_policy_version": scenario.source.execution_policy_version,
             "connector_profile_version": scenario.source.connector_profile_version,
         }.items() <= dumped.items()
+
+
+def test_postgresql_adapter_mlflow_failure_keeps_authoritative_preview_clean() -> None:
+    from app.services.postgresql_vertical_slice import run_postgresql_core_vertical_slice
+    from app.services.request_preview import PreviewAuditContext, PreviewSubmissionRequest
+
+    scenario = _postgresql_scenarios_by_id()[
+        "postgresql-positive-approved-vendor-spend-top-vendors"
+    ]
+
+    class RecordingAdapter:
+        def generate_sql(self, request):
+            return _adapter_response(scenario.expected.canonical_sql)
+
+    def fake_query_runner(
+        *,
+        database_url: str,
+        canonical_sql: str,
+    ) -> list[dict[str, object]]:
+        return [{"vendor_name": "Northwind", "approved_amount": 4200}]
+
+    def failing_mlflow_sink(payload) -> None:
+        raise RuntimeError("mlflow unavailable")
+
+    with _session_scope() as session:
+        _seed_postgresql_source(session, scenario=scenario)
+
+        result = run_postgresql_core_vertical_slice(
+            payload=PreviewSubmissionRequest(
+                question=scenario.prompt,
+                source_id=scenario.source.source_id,
+            ),
+            authenticated_subject=AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            session=session,
+            sql_generation_adapter=RecordingAdapter(),
+            business_postgres_url=POSTGRESQL_TEST_URL,
+            application_postgres_url=APPLICATION_POSTGRESQL_TEST_URL,
+            query_runner=fake_query_runner,
+            mlflow_adapter_run_export_enabled=True,
+            mlflow_adapter_run_export_sink=failing_mlflow_sink,
+            mlflow_run_id="mlflow-run-142",
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime.now(timezone.utc),
+                request_id="request-142-mlflow-failure",
+                correlation_id="correlation-142-mlflow-failure",
+                user_subject="user:alice",
+                session_id="session-142-mlflow-failure",
+                query_candidate_id="candidate-142-mlflow-failure",
+                candidate_owner_subject="user:alice",
+                guard_version="postgresql-guard-v1",
+                application_version="safequery-test",
+            ),
+        )
+        persisted_request = session.query(PreviewRequest).one()
+        persisted_candidate = session.query(PreviewCandidate).one()
+        persisted_events = (
+            session.query(PreviewAuditEvent)
+            .order_by(PreviewAuditEvent.lifecycle_order)
+            .all()
+        )
+
+    assert result.supplemental_mlflow_exports[0].suppressed is True
+    assert result.supplemental_mlflow_exports[0].reasons == (
+        "export_sink_failed:RuntimeError",
+    )
+    assert persisted_request.request_state == "previewed"
+    assert persisted_candidate.candidate_state == "preview_ready"
+    assert persisted_candidate.guard_status == "allow"
+    assert persisted_candidate.candidate_sql == scenario.expected.canonical_sql
+    assert persisted_candidate.adapter_run_id == "correlation-142-mlflow-failure"
+    assert [event.event_type for event in persisted_events] == [
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated",
+    ]
+    serialized_events = str([event.audit_payload for event in persisted_events])
+    assert "mlflow unavailable" not in serialized_events
+    assert "mlflow_run_id" not in serialized_events
 
 
 def test_postgresql_core_vertical_slice_blocks_mssql_adapter_output_before_preview_ready() -> None:
