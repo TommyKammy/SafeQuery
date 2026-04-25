@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage from "./page";
 import { resolveWorkflowState } from "../components/query-workflow-shell";
@@ -58,6 +58,9 @@ describe("HomePage", () => {
 
   afterEach(() => {
     cleanup();
+    document.head.querySelectorAll('meta[name="safequery-csrf-token"]').forEach((node) => {
+      node.remove();
+    });
     vi.unstubAllGlobals();
   });
 
@@ -310,6 +313,143 @@ describe("HomePage", () => {
     expect(screen.getByRole("heading", { name: /sql preview state/i })).toBeInTheDocument();
     expect(screen.getByDisplayValue("Show approved vendors by quarterly spend")).toBeInTheDocument();
     expect(screen.getAllByText(/sql preview placeholder/i)).not.toHaveLength(0);
+  });
+
+  it("submits the selected source and question to the preview API", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(workflowPayload())
+        });
+      }
+
+      if (url.endsWith("/requests/preview")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [],
+                source_id: "sap-approved-spend",
+                state: "recorded"
+              },
+              candidate: {
+                dataset_contract_version: 1,
+                schema_snapshot_version: 1,
+                source_family: "postgresql",
+                source_flavor: "warehouse",
+                source_id: "sap-approved-spend",
+                state: "preview_ready"
+              },
+              evaluation: {
+                source_id: "sap-approved-spend",
+                state: "pending"
+              },
+              request: {
+                question: "Show approved vendors by quarterly spend",
+                source_id: "sap-approved-spend",
+                state: "submitted"
+              }
+            })
+        });
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(await HomePage({}));
+
+    fireEvent.change(screen.getByRole("combobox", { name: /source/i }), {
+      target: { value: "sap-approved-spend" }
+    });
+    fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+      target: { value: "Show approved vendors by quarterly spend" }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8000/requests/preview",
+        expect.objectContaining({
+          body: JSON.stringify({
+            question: "Show approved vendors by quarterly spend",
+            source_id: "sap-approved-spend"
+          }),
+          credentials: "same-origin",
+          headers: expect.objectContaining({
+            "content-type": "application/json",
+            "x-safequery-csrf": "csrf-from-session-bootstrap"
+          }),
+          method: "POST"
+        })
+      );
+    });
+    expect(screen.getByText(/preview request accepted/i)).toBeInTheDocument();
+  });
+
+  it("renders preview API auth and entitlement failure envelopes without leaking details", async () => {
+    const failureCases = [
+      {
+        code: "csrf_failed",
+        message: "Refresh the page before submitting preview requests."
+      },
+      {
+        code: "entitlement_denied",
+        message: "The signed-in operator is not entitled to use that source."
+      }
+    ] as const;
+    const secretDetail = "session-cookie-should-not-render";
+
+    for (const failureCase of failureCases) {
+      cleanup();
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(workflowPayload())
+          });
+        }
+
+        if (url.endsWith("/requests/preview")) {
+          return Promise.resolve({
+            ok: false,
+            json: () =>
+              Promise.resolve({
+                error: {
+                  code: failureCase.code,
+                  message: failureCase.message,
+                  raw: secretDetail
+                }
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(await HomePage({}));
+
+      fireEvent.change(screen.getByRole("combobox", { name: /source/i }), {
+        target: { value: "sap-approved-spend" }
+      });
+      fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(failureCase.code);
+      expect(screen.getByRole("alert")).toHaveTextContent(failureCase.message);
+      expect(screen.queryByText(secretDetail)).not.toBeInTheDocument();
+    }
   });
 
   it("requires an explicit source selection before preview state can be entered", async () => {

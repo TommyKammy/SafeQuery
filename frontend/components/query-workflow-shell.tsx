@@ -1,3 +1,6 @@
+"use client";
+
+import { type FormEvent, useEffect, useState } from "react";
 import { HealthStatusCard } from "./health-status-card";
 import type { HealthSnapshot } from "../lib/health";
 import type {
@@ -63,6 +66,36 @@ type ResolvedSourceBinding = {
 type WorkflowHrefContext = {
   historyItemType?: OperatorHistoryItem["itemType"];
   historyRecordId?: string;
+};
+
+type PreviewSubmissionStatus =
+  | {
+      status: "idle";
+    }
+  | {
+      status: "submitting";
+    }
+  | {
+      code: string;
+      message: string;
+      status: "failed";
+    }
+  | {
+      candidateState: string;
+      requestState: string;
+      sourceId: string;
+      status: "succeeded";
+    };
+
+type PreviewSubmissionResult = {
+  candidateState: string;
+  requestState: string;
+  sourceId: string;
+};
+
+type ApiErrorEnvelope = {
+  code: string;
+  message: string;
 };
 
 const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
@@ -142,6 +175,66 @@ function findSourceOption(
   sourceId?: string
 ): SourceOption | undefined {
   return sourceOptions.find((source) => source.sourceId === sourceId);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readRequiredString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readCsrfToken(): string | undefined {
+  const token =
+    document.querySelector<HTMLMetaElement>('meta[name="safequery-csrf-token"]')?.content ??
+    document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ??
+    document.querySelector<HTMLInputElement>('input[name="csrf_token"]')?.value;
+
+  return readRequiredString(token);
+}
+
+function parseApiErrorEnvelope(value: unknown): ApiErrorEnvelope | null {
+  if (!isObject(value) || !isObject(value.error)) {
+    return null;
+  }
+
+  const code = readRequiredString(value.error.code);
+  const message = readRequiredString(value.error.message);
+  if (!code || !message) {
+    return null;
+  }
+
+  return { code, message };
+}
+
+function parsePreviewSubmissionResult(
+  value: unknown,
+  expectedSourceId: string
+): PreviewSubmissionResult | null {
+  if (!isObject(value) || !isObject(value.request) || !isObject(value.candidate)) {
+    return null;
+  }
+
+  const requestSourceId = readRequiredString(value.request.source_id);
+  const candidateSourceId = readRequiredString(value.candidate.source_id);
+  const requestState = readRequiredString(value.request.state);
+  const candidateState = readRequiredString(value.candidate.state);
+
+  if (
+    requestSourceId !== expectedSourceId ||
+    candidateSourceId !== expectedSourceId ||
+    !requestState ||
+    !candidateState
+  ) {
+    return null;
+  }
+
+  return {
+    candidateState,
+    requestState,
+    sourceId: expectedSourceId
+  };
 }
 
 function resolveSourceBinding(
@@ -765,15 +858,125 @@ export function QueryWorkflowShell({
   state
 }: QueryWorkflowShellProps) {
   const requestedState = resolveWorkflowState(state);
-  const sourceBinding = resolveSourceBinding(operatorWorkflow.sources, requestedState, sourceId);
+  const [previewSubmission, setPreviewSubmission] = useState<PreviewSubmissionStatus>({
+    status: "idle"
+  });
+  const [submittedQuestion, setSubmittedQuestion] = useState(question);
+  const [submittedSourceId, setSubmittedSourceId] = useState(sourceId);
+  const [submittedState, setSubmittedState] = useState(requestedState);
+
+  useEffect(() => {
+    setSubmittedQuestion(question);
+    setSubmittedSourceId(sourceId);
+    setSubmittedState(requestedState);
+    setPreviewSubmission({ status: "idle" });
+  }, [question, requestedState, sourceId]);
+
+  const sourceBinding = resolveSourceBinding(
+    operatorWorkflow.sources,
+    submittedState,
+    submittedSourceId
+  );
   const normalizedState = sourceBinding.state;
-  const sqlPreview = getSqlPreview(question);
+  const sqlPreview = getSqlPreview(submittedQuestion);
   const activeState = workflowStates[normalizedState];
-  const queryLocked = normalizedState === "signin";
+  const queryLocked = normalizedState === "signin" || previewSubmission.status === "submitting";
   const guardTone = getGuardTone(normalizedState);
   const workflowContext = getWorkflowContext(normalizedState, sourceBinding.source);
   const sourceSelectVisible = normalizedState === "query";
   const boundSourceId = sourceBinding.source?.sourceId;
+
+  async function submitPreview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (queryLocked) {
+      return;
+    }
+
+    const formData = new FormData(event.currentTarget);
+    const selectedSourceId = readRequiredString(formData.get("source_id"));
+    const submittedQuestionText = readRequiredString(formData.get("question"));
+    const selectedSource = findSourceOption(operatorWorkflow.sources, selectedSourceId);
+
+    if (!selectedSourceId || !submittedQuestionText) {
+      setPreviewSubmission({
+        code: "invalid_request",
+        message: "Select one executable source and enter a question before requesting preview.",
+        status: "failed"
+      });
+      return;
+    }
+
+    if (!selectedSource || selectedSource.activationPosture !== "active") {
+      setPreviewSubmission({
+        code: "source_not_executable",
+        message: "Select an executable source before preview can be requested.",
+        status: "failed"
+      });
+      return;
+    }
+
+    setPreviewSubmission({ status: "submitting" });
+
+    const headers: Record<string, string> = {
+      "content-type": "application/json"
+    };
+    const csrfToken = readCsrfToken();
+    if (csrfToken) {
+      headers["x-safequery-csrf"] = csrfToken;
+    }
+
+    try {
+      const response = await fetch(`${apiUrl}/requests/preview`, {
+        body: JSON.stringify({
+          question: submittedQuestionText,
+          source_id: selectedSourceId
+        }),
+        credentials: "same-origin",
+        headers,
+        method: "POST"
+      });
+      const payload = (await response.json()) as unknown;
+
+      if (!response.ok) {
+        const error = parseApiErrorEnvelope(payload);
+        setPreviewSubmission({
+          code: error?.code ?? "preview_submission_failed",
+          message:
+            error?.message ??
+            "Preview submission failed before an authoritative candidate was returned.",
+          status: "failed"
+        });
+        return;
+      }
+
+      const result = parsePreviewSubmissionResult(payload, selectedSourceId);
+      if (!result) {
+        setPreviewSubmission({
+          code: "malformed_preview_response",
+          message: "Preview response did not match the submitted source binding.",
+          status: "failed"
+        });
+        return;
+      }
+
+      setSubmittedQuestion(submittedQuestionText);
+      setSubmittedSourceId(result.sourceId);
+      setSubmittedState("preview");
+      setPreviewSubmission({
+        candidateState: result.candidateState,
+        requestState: result.requestState,
+        sourceId: result.sourceId,
+        status: "succeeded"
+      });
+    } catch {
+      setPreviewSubmission({
+        code: "preview_submission_unavailable",
+        message: "Preview submission transport is unavailable.",
+        status: "failed"
+      });
+    }
+  }
 
   return (
     <main className="app-shell">
@@ -871,14 +1074,19 @@ export function QueryWorkflowShell({
               </span>
             </div>
 
-            <form action="/" className="query-form" method="get">
-              <input name="state" type="hidden" value="preview" />
+            <form className="query-form" onSubmit={submitPreview}>
               {sourceSelectVisible ? (
                 <>
                   <label className="field-label" htmlFor="source_id">
                     Source
                   </label>
-                  <select defaultValue={boundSourceId ?? ""} id="source_id" name="source_id" required>
+                  <select
+                    defaultValue={boundSourceId ?? ""}
+                    disabled={queryLocked}
+                    id="source_id"
+                    name="source_id"
+                    required
+                  >
                     <option value="">Select one source</option>
                     {operatorWorkflow.sources.map((source) => (
                       <option
@@ -918,19 +1126,45 @@ export function QueryWorkflowShell({
                 Natural-language question
               </label>
               <textarea
-                defaultValue={question}
+                defaultValue={submittedQuestion}
                 disabled={queryLocked}
                 id="question"
                 name="question"
                 placeholder="Ask a governed business question."
                 rows={6}
               />
+              {previewSubmission.status === "submitting" ? (
+                <div className="state-callout state-callout-warning" role="status">
+                  <p className="state-callout-title">Preview submission in progress</p>
+                  <p>The draft is locked until the preview API returns an authoritative outcome.</p>
+                </div>
+              ) : null}
+              {previewSubmission.status === "succeeded" ? (
+                <div className="state-callout state-callout-success" role="status">
+                  <p className="state-callout-title">Preview request accepted</p>
+                  <p>
+                    Request state {previewSubmission.requestState}; candidate state{" "}
+                    {previewSubmission.candidateState}.
+                  </p>
+                </div>
+              ) : null}
+              {previewSubmission.status === "failed" ? (
+                <div className="state-callout state-callout-danger" role="alert">
+                  <p className="state-callout-title">{previewSubmission.code}</p>
+                  <p>{previewSubmission.message}</p>
+                </div>
+              ) : null}
               <div className="form-actions">
                 <button disabled={queryLocked} type="submit">
-                  Submit for preview
+                  {previewSubmission.status === "submitting"
+                    ? "Submitting preview"
+                    : "Submit for preview"}
                 </button>
-                {boundSourceId ? (
-                  <a className="ghost-link" href={buildStateHref("completed", question, boundSourceId)}>
+                {boundSourceId && previewSubmission.status !== "submitting" ? (
+                  <a
+                    className="ghost-link"
+                    href={buildStateHref("completed", submittedQuestion, boundSourceId)}
+                  >
                     Open completed state
                   </a>
                 ) : null}
