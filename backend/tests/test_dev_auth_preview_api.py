@@ -338,13 +338,15 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(
-            response.json(),
+            response.json()["error"],
             {
-                "error": {
-                    "code": "entitlement_denied",
-                    "message": "The signed-in operator is not entitled to use that source.",
-                }
+                "code": "entitlement_denied",
+                "message": "The signed-in operator is not entitled to use that source.",
             },
+        )
+        self.assertEqual(
+            response.json()["audit"]["events"][0]["primary_deny_code"],
+            "DENY_SOURCE_ENTITLEMENT",
         )
 
     def test_production_default_dev_auth_blocks_preview_http_request(self) -> None:

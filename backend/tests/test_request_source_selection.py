@@ -433,15 +433,38 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+        response_body = response.json()
         self.assertEqual(
-            response.json(),
+            response_body["error"],
             {
-                "error": {
-                    "code": "entitlement_denied",
-                    "message": "The signed-in operator is not entitled to use that source.",
-                }
+                "code": "entitlement_denied",
+                "message": "The signed-in operator is not entitled to use that source.",
             },
         )
+        self.assertEqual(len(response_body["audit"]["events"]), 1)
+        denial_event = response_body["audit"]["events"][0]
+        self.assertEqual(denial_event["event_type"], "generation_failed")
+        self.assertEqual(denial_event["request_id"], response.headers["X-Request-ID"])
+        self.assertTrue(denial_event["correlation_id"])
+        self.assertEqual(denial_event["user_subject"], "user:alice@example.com")
+        self.assertTrue(denial_event["session_id"])
+        self.assertEqual(denial_event["auth_source"], "test-helper")
+        self.assertEqual(denial_event["governance_bindings"], ["group:people-ops"])
+        self.assertEqual(denial_event["entitlement_decision"], "deny")
+        self.assertEqual(
+            denial_event["entitlement_source_bindings"],
+            ["group:finance-analysts"],
+        )
+        self.assertEqual(denial_event["source_id"], "sap-approved-spend")
+        self.assertEqual(denial_event["source_family"], "postgresql")
+        self.assertEqual(denial_event["source_flavor"], "warehouse")
+        self.assertEqual(denial_event["dataset_contract_version"], 1)
+        self.assertEqual(denial_event["schema_snapshot_version"], 1)
+        self.assertEqual(denial_event["primary_deny_code"], "DENY_SOURCE_ENTITLEMENT")
+        self.assertEqual(denial_event["denial_cause"], "entitlement_denied")
+        self.assertNotIn("csrf", response.text.lower())
+        self.assertNotIn("token", response.text.lower())
+        self.assertNotIn("cookie", response.text.lower())
         self.assertNotIn("candidate", response.text)
 
     def test_client_supplied_governance_metadata_cannot_grant_preview_entitlement(
@@ -543,13 +566,15 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(
-            response.json(),
+            response.json()["error"],
             {
-                "error": {
-                    "code": "entitlement_denied",
-                    "message": "The signed-in operator is not entitled to use that source.",
-                }
+                "code": "entitlement_denied",
+                "message": "The signed-in operator is not entitled to use that source.",
             },
+        )
+        self.assertEqual(
+            response.json()["audit"]["events"][0]["primary_deny_code"],
+            "DENY_SOURCE_ENTITLEMENT",
         )
 
     def test_preview_submission_rejects_subject_matching_only_exception_policy_binding(self) -> None:
@@ -573,13 +598,15 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(
-            response.json(),
+            response.json()["error"],
             {
-                "error": {
-                    "code": "entitlement_denied",
-                    "message": "The signed-in operator is not entitled to use that source.",
-                }
+                "code": "entitlement_denied",
+                "message": "The signed-in operator is not entitled to use that source.",
             },
+        )
+        self.assertEqual(
+            response.json()["audit"]["events"][0]["primary_deny_code"],
+            "DENY_SOURCE_ENTITLEMENT",
         )
 
 
