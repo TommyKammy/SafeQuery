@@ -221,6 +221,65 @@ describe("HomePage", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders normalized auth and entitlement workflow failures without leaking sensitive details", async () => {
+    const secretDetail = "idp-token-should-not-render";
+    const failureCases = [
+      {
+        code: "unauthenticated",
+        message: "Sign in before submitting preview requests.",
+        statusCopy: /sign in before loading the operator workflow/i
+      },
+      {
+        code: "session_invalid",
+        message: "Sign in again before submitting preview requests.",
+        statusCopy: /operator session is no longer valid/i
+      },
+      {
+        code: "csrf_failed",
+        message: "Refresh the page before submitting preview requests.",
+        statusCopy: /request freshness check failed/i
+      },
+      {
+        code: "entitlement_denied",
+        message: "The signed-in operator is not entitled to use that source.",
+        statusCopy: /this source or workflow context/i
+      }
+    ] as const;
+
+    for (const failureCase of failureCases) {
+      cleanup();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) => {
+          const url = input.toString();
+
+          if (url.endsWith("/operator/workflow")) {
+            return Promise.resolve({
+              ok: false,
+              json: () =>
+                Promise.resolve({
+                  error: {
+                    code: failureCase.code,
+                    message: failureCase.message,
+                    raw: secretDetail
+                  }
+                })
+            });
+          }
+
+          return new Promise(() => {});
+        })
+      );
+
+      render(await HomePage({}));
+
+      expect(screen.getByLabelText(/operator history/i)).toHaveTextContent(failureCase.code);
+      expect(screen.getByText(failureCase.statusCopy)).toBeInTheDocument();
+      expect(screen.getByText(failureCase.message)).toBeInTheDocument();
+      expect(screen.queryByText(secretDetail)).not.toBeInTheDocument();
+    }
+  });
+
   it("renders the shell before the health probe completes", async () => {
     const fetchMock = stubWorkflowFetch();
     vi.stubGlobal("fetch", fetchMock);

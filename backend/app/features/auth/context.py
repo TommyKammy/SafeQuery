@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 
+from app.core.errors import api_error
 from app.features.auth.governance_bindings import normalize_governance_binding
 
 
@@ -15,9 +16,10 @@ class AuthenticatedSubject:
     def normalized_subject_id(self) -> str:
         normalized = self.subject_id.strip()
         if not normalized:
-            raise HTTPException(
-                status_code=403,
-                detail="Authenticated subject context is malformed.",
+            raise api_error(
+                401,
+                "unauthenticated",
+                "Sign in before submitting preview requests.",
             )
         return normalized
 
@@ -33,9 +35,10 @@ class AuthenticatedSubject:
 def require_authenticated_subject(request: Request) -> AuthenticatedSubject:
     subject = getattr(request.state, "authenticated_subject", None)
     if not isinstance(subject, AuthenticatedSubject):
-        raise HTTPException(
-            status_code=403,
-            detail="Authenticated subject context is required.",
+        raise api_error(
+            401,
+            "unauthenticated",
+            "Sign in before submitting preview requests.",
         )
 
     return AuthenticatedSubject(

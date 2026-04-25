@@ -9,10 +9,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, Request
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 from typing_extensions import Annotated
 
+from app.core.errors import api_error
 from app.core.config import Settings, get_settings
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 
@@ -109,18 +110,20 @@ def _session_signing_key(settings: Settings) -> bytes:
                 or signing_key.lower() in _PLACEHOLDER_SIGNING_KEYS
             )
         ):
-            raise HTTPException(
-                status_code=403,
-                detail="Application session signing key is not trusted.",
+            raise api_error(
+                401,
+                "session_invalid",
+                "Sign in again before submitting preview requests.",
             )
         return signing_key.encode("utf-8")
 
     if settings.dev_auth_enabled and settings.environment in {"development", "test"}:
         return DEV_SESSION_SIGNING_KEY.encode("utf-8")
 
-    raise HTTPException(
-        status_code=403,
-        detail="Application session signing key is required.",
+    raise api_error(
+        401,
+        "session_invalid",
+        "Sign in again before submitting preview requests.",
     )
 
 
@@ -152,15 +155,17 @@ def _decode_signed_payload(token: str, *, signing_key: bytes) -> dict[str, Any]:
 
         payload = json.loads(_b64decode(encoded_payload))
     except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
-        raise HTTPException(
-            status_code=403,
-            detail="Application session context is malformed.",
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
         ) from None
 
     if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=403,
-            detail="Application session context is malformed.",
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
         )
     return payload
 
@@ -210,10 +215,17 @@ def require_application_session(
     settings = get_settings()
     session_cookie = request.cookies.get(APPLICATION_SESSION_COOKIE)
     csrf_token = request.headers.get(CSRF_HEADER)
-    if not session_cookie or not csrf_token:
-        raise HTTPException(
-            status_code=403,
-            detail="Application session and CSRF context are required.",
+    if not session_cookie:
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
+        )
+    if not csrf_token:
+        raise api_error(
+            403,
+            "csrf_failed",
+            "Refresh the page before submitting preview requests.",
         )
 
     payload = _decode_signed_payload(
@@ -223,49 +235,56 @@ def require_application_session(
     try:
         claims = ApplicationSessionClaims.model_validate(payload)
     except ValidationError:
-        raise HTTPException(
-            status_code=403,
-            detail="Application session context is malformed.",
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
         ) from None
 
     if claims.version != _SESSION_VERSION:
-        raise HTTPException(
-            status_code=403,
-            detail="Application session context is malformed.",
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
         )
 
     now = int(datetime.now(timezone.utc).timestamp())
     if claims.issued_at > now or claims.expires_at <= claims.issued_at:
-        raise HTTPException(
-            status_code=403,
-            detail="Application session context is malformed.",
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
         )
 
     if claims.expires_at <= now:
-        raise HTTPException(
-            status_code=403,
-            detail="Application session context is expired.",
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
         )
 
     subject_id = authenticated_subject.normalized_subject_id()
     governance_bindings = authenticated_subject.normalized_governance_bindings()
     if claims.subject_id != subject_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Application session subject does not match authenticated subject.",
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
         )
 
     session_bindings = frozenset(claims.governance_bindings)
     if session_bindings != governance_bindings:
-        raise HTTPException(
-            status_code=403,
-            detail="Application session governance context does not match.",
+        raise api_error(
+            401,
+            "session_invalid",
+            "Sign in again before submitting preview requests.",
         )
 
     if not hmac.compare_digest(claims.csrf_token_hash, _csrf_token_hash(csrf_token)):
-        raise HTTPException(
-            status_code=403,
-            detail="Application session CSRF context does not match.",
+        raise api_error(
+            403,
+            "csrf_failed",
+            "Refresh the page before submitting preview requests.",
         )
 
     return ApplicationSessionContext(

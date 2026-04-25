@@ -43,6 +43,37 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
         self.assertEqual(_http_error_message(499), "HTTP error.")
         self.assertEqual(_http_error_message(599), "HTTP error.")
 
+    def test_unknown_http_detail_dict_does_not_become_public_error_message(
+        self,
+    ) -> None:
+        test_token = "idp-token-should-not-render"
+
+        @self.app.get("/_test/detail-dict")
+        def raise_detail_dict_error() -> None:
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "unexpected_auth_error",
+                    "message": f"Raw identity detail {test_token}",
+                },
+            )
+
+        response = self.client.get("/_test/detail-dict")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "http_error",
+                    "message": "Forbidden",
+                }
+            },
+        )
+        self.assertNotIn(test_token, response.text)
+
     def test_unhandled_errors_and_logs_do_not_leak_secrets(self) -> None:
         test_token = "test-token-1234"
         stream = StringIO()

@@ -264,6 +264,22 @@ function getWorkflowDataStatusCopy(status: OperatorWorkflowSnapshot["status"]): 
     return "Source registry and history summary loaded from the backend workflow contract.";
   }
 
+  if (status === "unauthenticated") {
+    return "Sign in before loading the operator workflow. No source or history data is trusted yet.";
+  }
+
+  if (status === "session_invalid") {
+    return "The operator session is no longer valid. Sign in again before continuing.";
+  }
+
+  if (status === "csrf_failed") {
+    return "The request freshness check failed. Refresh the page before continuing.";
+  }
+
+  if (status === "entitlement_denied") {
+    return "The signed-in operator is not entitled to this source or workflow context.";
+  }
+
   if (status === "malformed") {
     return "Backend workflow payload was malformed, so the source selector remains blocked.";
   }
@@ -818,6 +834,12 @@ export function QueryWorkflowShell({
               </span>
             </div>
             <p className="section-copy">{getWorkflowDataStatusCopy(operatorWorkflow.status)}</p>
+            {operatorWorkflow.error ? (
+              <div className="state-callout state-callout-danger">
+                <p className="state-callout-title">{operatorWorkflow.error.code}</p>
+                <p>{operatorWorkflow.error.message}</p>
+              </div>
+            ) : null}
             <div className="history-list">
               {operatorWorkflow.history.length > 0 ? (
                 operatorWorkflow.history.map(renderHistoryItem)

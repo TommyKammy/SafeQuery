@@ -179,13 +179,13 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 401)
         self.assertEqual(
             response.json(),
             {
                 "error": {
-                    "code": "http_error",
-                    "message": "Forbidden",
+                    "code": "unauthenticated",
+                    "message": "Sign in before submitting preview requests.",
                 }
             },
         )
@@ -432,13 +432,13 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.status_code, 403)
         self.assertEqual(
             response.json(),
             {
                 "error": {
-                    "code": "invalid_request",
-                    "message": "Request validation failed.",
+                    "code": "entitlement_denied",
+                    "message": "The signed-in operator is not entitled to use that source.",
                 }
             },
         )
@@ -541,13 +541,13 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.status_code, 403)
         self.assertEqual(
             response.json(),
             {
                 "error": {
-                    "code": "invalid_request",
-                    "message": "Request validation failed.",
+                    "code": "entitlement_denied",
+                    "message": "The signed-in operator is not entitled to use that source.",
                 }
             },
         )
@@ -571,13 +571,13 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.status_code, 403)
         self.assertEqual(
             response.json(),
             {
                 "error": {
-                    "code": "invalid_request",
-                    "message": "Request validation failed.",
+                    "code": "entitlement_denied",
+                    "message": "The signed-in operator is not entitled to use that source.",
                 }
             },
         )
