@@ -99,9 +99,11 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["preview_request_id"],
-            ["preview_requests.id"],
-            name=op.f("fk_preview_candidates_preview_request_id_preview_requests"),
+            ["preview_request_id", "registered_source_id"],
+            ["preview_requests.id", "preview_requests.registered_source_id"],
+            name=op.f(
+                "fk_preview_candidates_preview_request_id_registered_source_id_preview_requests"
+            ),
         ),
         sa.ForeignKeyConstraint(
             ["registered_source_id"],

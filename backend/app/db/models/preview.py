@@ -4,7 +4,16 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy import Uuid as SqlAlchemyUuid
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -64,6 +73,10 @@ class PreviewRequest(Base):
 class PreviewCandidate(Base):
     __tablename__ = "preview_candidates"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ("preview_request_id", "registered_source_id"),
+            ("preview_requests.id", "preview_requests.registered_source_id"),
+        ),
         UniqueConstraint("candidate_id"),
         UniqueConstraint("request_id", "source_id"),
     )
@@ -74,10 +87,7 @@ class PreviewCandidate(Base):
         default=uuid.uuid4,
     )
     candidate_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    preview_request_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("preview_requests.id"),
-        nullable=False,
-    )
+    preview_request_id: Mapped[uuid.UUID] = mapped_column(SqlAlchemyUuid, nullable=False)
     request_id: Mapped[str] = mapped_column(String(255), nullable=False)
     registered_source_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("registered_sources.id"),
