@@ -199,6 +199,7 @@ def _enrich_preview_audit_context(
     if audit_context is None:
         return
 
+    audit_context.user_subject = authenticated_subject.normalized_subject_id()
     audit_context.governance_bindings = sorted(
         authenticated_subject.normalized_governance_bindings()
     )

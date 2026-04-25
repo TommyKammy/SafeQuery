@@ -200,7 +200,7 @@ Required evidence:
   provider internals.
 
 Focused verification:
-  `cd backend && python3 -m pytest tests/test_dev_auth_preview_api.py tests/test_preview_source_governance_resolution.py tests/test_operator_history_payloads.py`.
+  `cd backend && python3 -m pytest tests/test_audit_event_model.py tests/test_dev_auth_preview_api.py tests/test_preview_source_governance_resolution.py tests/test_operator_history_payloads.py`.
 
 ## Source-Aware Checklist
 
@@ -216,7 +216,7 @@ Focused verification:
 - Confirm missing, malformed, placeholder, or mismatched auth context blocks
   before generation or execution.
 - Focused verification:
-  `cd backend && python3 -m pytest tests/test_source_entitlements.py tests/test_dev_auth_preview_api.py tests/test_preview_source_governance_resolution.py tests/test_operator_history_payloads.py`.
+  `cd backend && python3 -m pytest tests/test_source_entitlements.py tests/test_audit_event_model.py tests/test_dev_auth_preview_api.py tests/test_preview_source_governance_resolution.py tests/test_operator_history_payloads.py`.
 
 ### Explicit Source Selection
 

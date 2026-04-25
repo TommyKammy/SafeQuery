@@ -244,7 +244,7 @@ def test_operator_history_auth_context_rejects_raw_identity_provider_material() 
             session_id="application-session-redacted",
             auth_source="enterprise-bridge",
             entitlement_decision="allow",
-            csrf_token="csrf-token-123",
+            csrf_token="csrf-token-123",  # noqa: S106 - secret-like negative test value
         )
 
 

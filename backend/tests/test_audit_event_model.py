@@ -84,6 +84,7 @@ def test_source_aware_audit_event_retains_auth_context_without_raw_session_mater
     assert dumped["auth_source"] == "enterprise-bridge"
     assert dumped["governance_bindings"] == ["group:finance-analysts"]
     assert dumped["entitlement_decision"] == "allow"
+    assert dumped["entitlement_source_bindings"] == ["group:finance-analysts"]
 
     with pytest.raises(ValidationError):
         SourceAwareAuditEvent(
