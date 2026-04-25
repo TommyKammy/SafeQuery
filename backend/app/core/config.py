@@ -41,6 +41,8 @@ class SQLGenerationSettings(BaseModel):
     vanna_model: Optional[str] = None
     vanna_api_key: Optional[SecretStr] = None
     timeout_seconds: int = Field(default=30, ge=1, le=300)
+    retry_count: int = Field(default=1, ge=0, le=3)
+    circuit_breaker_failure_threshold: int = Field(default=3, ge=1, le=10)
 
 
 class SourceRoleTelemetry(BaseModel):
@@ -70,6 +72,12 @@ class Settings(BaseSettings):
     sql_generation_vanna_model: Optional[str] = None
     sql_generation_vanna_api_key: Optional[SecretStr] = None
     sql_generation_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    sql_generation_retry_count: int = Field(default=1, ge=0, le=3)
+    sql_generation_circuit_breaker_failure_threshold: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+    )
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
@@ -91,7 +99,6 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
-        "business_mssql_source_connection_string",
         "sql_generation_local_llm_model",
         "sql_generation_vanna_model",
         mode="before",
@@ -198,6 +205,10 @@ class Settings(BaseSettings):
             vanna_model=self.sql_generation_vanna_model,
             vanna_api_key=self.sql_generation_vanna_api_key,
             timeout_seconds=self.sql_generation_timeout_seconds,
+            retry_count=self.sql_generation_retry_count,
+            circuit_breaker_failure_threshold=(
+                self.sql_generation_circuit_breaker_failure_threshold
+            ),
         )
 
     def source_posture_telemetry(self) -> SourcePostureTelemetry:

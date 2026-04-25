@@ -30,7 +30,10 @@ from app.features.auth.session import (
     ApplicationSessionContext,
     require_application_session,
 )
-from app.services.health import check_database_health
+from app.services.health import (
+    check_database_health,
+    check_sql_generation_runtime_health,
+)
 from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_doctor
 from app.services.request_preview import (
     PreviewAuditContext,
@@ -202,7 +205,13 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def read_health() -> JSONResponse:
         database = check_database_health(str(settings.app_postgres_url))
-        healthy = database["status"] == "ok"
+        sql_generation = check_sql_generation_runtime_health(settings.sql_generation)
+        sql_generation_status = sql_generation["status"]
+        healthy = database["status"] == "ok" and sql_generation_status in {
+            "ok",
+            "disabled",
+            "unchecked",
+        }
 
         return JSONResponse(
             status_code=200 if healthy else 503,
@@ -210,6 +219,7 @@ def create_app() -> FastAPI:
                 "status": "ok" if healthy else "degraded",
                 "service": "safequery-api",
                 "database": database,
+                "sql_generation": sql_generation,
             },
         )
 

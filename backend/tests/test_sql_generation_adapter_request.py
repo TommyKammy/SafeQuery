@@ -1,5 +1,12 @@
+import json
+from urllib.error import URLError
+
 from pydantic import ValidationError
 
+import app.services.health as health_module
+import app.services.sql_generation_adapter as adapter_module
+from app.core.config import SQLGenerationSettings
+from app.services.health import check_sql_generation_runtime_health
 from app.services.sql_generation_adapter import (
     SQLGenerationAdapterConfigurationError,
     SQLGenerationAdapterRequest,
@@ -181,6 +188,8 @@ def test_sql_generation_adapter_registry_selects_configured_providers() -> None:
         "base_url": "http://local-llm:8080/",
         "model": "safequery-local-sql",
         "timeout_seconds": 30,
+        "retry_count": 1,
+        "circuit_breaker_failure_threshold": 3,
     }
     assert vanna_adapter.model_dump(exclude_none=True) == {
         "provider": "vanna",
@@ -188,6 +197,8 @@ def test_sql_generation_adapter_registry_selects_configured_providers() -> None:
         "base_url": "http://vanna:8084/",
         "model": "warehouse-assistant",
         "timeout_seconds": 30,
+        "retry_count": 1,
+        "circuit_breaker_failure_threshold": 3,
     }
 
 
@@ -219,15 +230,203 @@ def test_sql_generation_adapter_registry_wraps_mapping_validation_errors() -> No
         raise AssertionError("Expected invalid adapter settings to fail closed.")
 
 
-def test_configured_sql_generation_adapter_fails_closed_before_dispatch() -> None:
+def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
     adapter = resolve_sql_generation_adapter(
         {
             "provider": "local_llm",
             "local_llm_base_url": "http://local-llm:8080",
+            "retry_count": 1,
+            "timeout_seconds": 7,
         }
     )
     request = SQLGenerationAdapterRequest(
         request_id="req_80_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+        ),
+    )
+    calls: list[tuple[str, float | None, dict[str, object]]] = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "candidate_sql": (
+                        "select vendor_id from approved_vendor_spend limit 50"
+                    ),
+                    "model": "safequery-local-sql",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(http_request, timeout=None):
+        body = json.loads(http_request.data.decode("utf-8"))
+        calls.append((http_request.full_url, timeout, body))
+        if len(calls) == 1:
+            raise URLError("slow local runtime")
+        return Response()
+
+    monkeypatch.setattr(adapter_module, "urlopen", fake_urlopen)
+
+    response = adapter.generate_sql(request)
+
+    assert response.model_dump(exclude_none=True) == {
+        "candidate_sql": "select vendor_id from approved_vendor_spend limit 50",
+        "provider": "local_llm",
+        "adapter_version": "local_llm.v1",
+        "model": "safequery-local-sql",
+    }
+    assert [call[0] for call in calls] == [
+        "http://local-llm:8080/generate-sql",
+        "http://local-llm:8080/generate-sql",
+    ]
+    assert [call[1] for call in calls] == [7, 7]
+    assert calls[0][2]["request"]["question"] == "Show approved vendors"
+    assert "credentials" not in json.dumps(calls[0][2])
+
+
+def test_local_llm_generation_retries_malformed_json_response(monkeypatch) -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "local_llm",
+            "local_llm_base_url": "http://local-llm:8080",
+            "retry_count": 1,
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_80_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+        ),
+    )
+    calls = 0
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            if calls == 1:
+                return b'{"candidate_sql":'
+            return json.dumps(
+                {
+                    "candidate_sql": (
+                        "select vendor_id from approved_vendor_spend limit 50"
+                    ),
+                    "model": "safequery-local-sql",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(http_request, timeout=None):
+        nonlocal calls
+        calls += 1
+        return Response()
+
+    monkeypatch.setattr(adapter_module, "urlopen", fake_urlopen)
+
+    response = adapter.generate_sql(request)
+
+    assert calls == 2
+    assert response.candidate_sql == (
+        "select vendor_id from approved_vendor_spend limit 50"
+    )
+
+
+def test_local_llm_generation_circuit_breaker_fails_closed(monkeypatch) -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "local_llm",
+            "local_llm_base_url": "http://local-llm:8080",
+            "retry_count": 0,
+            "circuit_breaker_failure_threshold": 1,
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_81_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+        ),
+    )
+    calls = 0
+
+    def fake_urlopen(http_request, timeout=None):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("local runtime timed out")
+
+    monkeypatch.setattr(adapter_module, "urlopen", fake_urlopen)
+
+    for expected_code in (
+        "sql_generation_runtime_unhealthy",
+        "sql_generation_runtime_circuit_open",
+    ):
+        try:
+            adapter.generate_sql(request)
+        except SQLGenerationAdapterConfigurationError as exc:
+            assert exc.code == expected_code
+        else:
+            raise AssertionError("Expected unhealthy runtime to fail closed.")
+
+    assert calls == 1
+
+
+def test_vanna_adapter_still_fails_closed_before_dispatch() -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "vanna",
+            "vanna_base_url": "http://vanna:8084",
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_82_preview",
         question="Show approved vendors",
         source=SQLGenerationSourceBinding(
             source_id="sap-approved-spend",
@@ -252,3 +451,80 @@ def test_configured_sql_generation_adapter_fails_closed_before_dispatch() -> Non
         assert "dispatch is not implemented" in str(exc)
     else:
         raise AssertionError("Expected configured adapter dispatch to fail closed.")
+
+
+def test_local_llm_runtime_health_payload_is_safe_and_bounded(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            return b'{"status":"ok","prompt":"raw prompt must not pass through"}'
+
+    def fake_urlopen(http_request, timeout=None):
+        seen["url"] = http_request.full_url
+        seen["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(health_module, "urlopen", fake_urlopen)
+
+    result = check_sql_generation_runtime_health(
+        SQLGenerationSettings(
+            provider="local_llm",
+            local_llm_base_url="http://local-llm:8080",
+            local_llm_model="safequery-local-sql",
+            timeout_seconds=9,
+            retry_count=2,
+            circuit_breaker_failure_threshold=4,
+        )
+    )
+
+    assert result == {
+        "status": "ok",
+        "detail": "ready",
+        "provider": "local_llm",
+        "endpoint": "http://local-llm:8080",
+        "timeout_seconds": 9,
+        "retry_count": 2,
+        "circuit_breaker_failure_threshold": 4,
+    }
+    assert seen == {"url": "http://local-llm:8080/health", "timeout": 9}
+    assert "prompt" not in json.dumps(result)
+
+
+def test_local_llm_runtime_health_fails_closed_without_leaking_endpoint_body(
+    monkeypatch,
+) -> None:
+    class Response:
+        status = 503
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            return b'{"status":"error","token":"secret-runtime-token"}'
+
+    monkeypatch.setattr(health_module, "urlopen", lambda request, timeout=None: Response())
+
+    result = check_sql_generation_runtime_health(
+        SQLGenerationSettings(
+            provider="local_llm",
+            local_llm_base_url="http://local-llm:8080",
+            timeout_seconds=9,
+        )
+    )
+
+    assert result["status"] == "error"
+    assert result["detail"] == "unhealthy_response"
+    assert result["provider"] == "local_llm"
+    assert "secret-runtime-token" not in json.dumps(result)
