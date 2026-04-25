@@ -25,6 +25,7 @@ from app.features.auth.context import (
     require_authenticated_subject,
 )
 from app.services.health import check_database_health
+from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_doctor
 from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
@@ -163,6 +164,12 @@ def create_app() -> FastAPI:
                 "database": database,
             },
         )
+
+    @app.get("/doctor/first-run", response_model=FirstRunDoctorResult)
+    def read_first_run_doctor(
+        session: Session = Depends(require_preview_submission_session),
+    ) -> FirstRunDoctorResult:
+        return run_first_run_doctor(session)
 
     @app.post("/requests/preview", response_model=PreviewSubmissionResponse)
     def create_request_preview(

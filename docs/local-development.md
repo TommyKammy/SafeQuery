@@ -207,7 +207,25 @@ The backend `/health` endpoint is the baseline health check for the app and the
 database connection.
 
 For product evaluation, backend health is necessary but not sufficient. Also
-confirm that the frontend can render the operator workflow shell and that source
+run the first-run doctor after migrations and demo seed data are applied:
+
+```bash
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend python -m app.cli.first_run_doctor
+```
+
+The doctor emits JSON with pass/fail/degraded checks for application database
+connectivity, Alembic posture, active demo source registry records, linked
+dataset contracts, approved schema snapshots, dev/local entitlement seed data,
+and backend/frontend URL expectations. Missing registry data, contract links,
+schema snapshots, entitlements, or migrations are failures, not empty UI states.
+
+The same payload is available from the running backend:
+
+```bash
+curl http://localhost:8000/doctor/first-run
+```
+
+Confirm that the frontend can render the operator workflow shell and that source
 registry data is available to the shell. Missing registry data should block
 preview submission rather than letting the UI guess an executable source.
 
