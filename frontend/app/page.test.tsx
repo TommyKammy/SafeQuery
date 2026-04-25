@@ -312,7 +312,9 @@ describe("HomePage", () => {
 
     expect(screen.getByRole("heading", { name: /sql preview state/i })).toBeInTheDocument();
     expect(screen.getByDisplayValue("Show approved vendors by quarterly spend")).toBeInTheDocument();
-    expect(screen.getAllByText(/sql preview placeholder/i)).not.toHaveLength(0);
+    expect(screen.getByText(/authoritative sql preview/i)).toBeInTheDocument();
+    expect(screen.getByText(/no authoritative candidate selected/i)).toBeInTheDocument();
+    expect(screen.queryByText(/placeholder sql generated from the question review surface/i)).not.toBeInTheDocument();
   });
 
   it("submits the selected source and question to the preview API", async () => {
@@ -342,7 +344,10 @@ describe("HomePage", () => {
                 state: "recorded"
               },
               candidate: {
+                candidate_id: "candidate-accepted-123",
+                candidate_sql: null,
                 dataset_contract_version: 1,
+                guard_status: "pending",
                 schema_snapshot_version: 1,
                 source_family: "postgresql",
                 source_flavor: "warehouse",
@@ -355,6 +360,7 @@ describe("HomePage", () => {
               },
               request: {
                 question: "Show approved vendors by quarterly spend",
+                request_id: "request-accepted-123",
                 source_id: "sap-approved-spend",
                 state: "submitted"
               }
@@ -394,6 +400,9 @@ describe("HomePage", () => {
       );
     });
     expect(screen.getByText(/preview request accepted/i)).toBeInTheDocument();
+    expect(screen.getByText("candidate-accepted-123")).toBeInTheDocument();
+    expect(screen.getByText(/canonical sql has not been generated for this candidate/i)).toBeInTheDocument();
+    expect(screen.queryByText(/placeholder sql generated from the question review surface/i)).not.toBeInTheDocument();
   });
 
   it("maps authoritative preview API states without presenting them as successful SQL previews", async () => {
@@ -433,7 +442,10 @@ describe("HomePage", () => {
                   state: "recorded"
                 },
                 candidate: {
+                  candidate_id: `candidate-${stateCase.candidateState}`,
+                  candidate_sql: null,
                   dataset_contract_version: 1,
+                  guard_status: stateCase.candidateState === "denied" ? "blocked" : "pending",
                   schema_snapshot_version: 1,
                   source_family: "postgresql",
                   source_flavor: "warehouse",
@@ -446,6 +458,7 @@ describe("HomePage", () => {
                 },
                 request: {
                   question: "Show approved vendors by quarterly spend",
+                  request_id: `request-${stateCase.requestState}`,
                   source_id: "sap-approved-spend",
                   state: stateCase.requestState
                 }
@@ -660,8 +673,8 @@ describe("HomePage", () => {
         state: "review_denied",
         heading: /review denied state/i,
         status: /review denied before execution/i,
-        lifecycle: /candidate state/i,
-        identity: /candidate-sq-204/i
+        lifecycle: /lifecycle state/i,
+        identity: /^Draft only$/i
       },
       {
         state: "completed",
@@ -708,9 +721,9 @@ describe("HomePage", () => {
       expect(screen.getByRole("heading", { name: terminalState.heading })).toBeInTheDocument();
       expect(screen.getByText(terminalState.status)).toBeInTheDocument();
       expect(screen.getByText(/source identity/i)).toBeInTheDocument();
-      expect(screen.getByText(/request identity/i)).toBeInTheDocument();
+      expect(screen.getByText(/request (identity|posture)/i)).toBeInTheDocument();
       expect(screen.getByText(terminalState.lifecycle)).toBeInTheDocument();
-      expect(screen.getByText(terminalState.identity)).toBeInTheDocument();
+      expect(screen.getAllByText(terminalState.identity).length).toBeGreaterThan(0);
     }
   });
 

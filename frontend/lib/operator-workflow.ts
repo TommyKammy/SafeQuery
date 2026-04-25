@@ -10,12 +10,14 @@ export type SourceOption = {
 };
 
 export type OperatorHistoryItem = {
+  candidateSql?: string | null;
   guardStatus?: string | null;
   itemType: "request" | "candidate" | "run";
   label: string;
   lifecycleState: string;
   occurredAt: string;
   recordId: string;
+  requestId?: string | null;
   runState?: string | null;
   sourceId: string;
   sourceLabel: string;
@@ -101,12 +103,14 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
   }
 
   return {
+    candidateSql: readOptionalString(value.candidateSql) ?? null,
     guardStatus: readOptionalString(value.guardStatus) ?? null,
     itemType,
     label,
     lifecycleState,
     occurredAt,
     recordId,
+    requestId: readOptionalString(value.requestId) ?? null,
     runState: readOptionalString(value.runState) ?? null,
     sourceId,
     sourceLabel

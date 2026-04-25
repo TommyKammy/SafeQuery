@@ -50,6 +50,7 @@ type StateDefinition = {
 type WorkflowContext = {
   candidateIdentity?: string;
   candidateState?: string;
+  guardStatus?: string;
   lifecycleTimestamp?: string;
   requestIdentity?: string;
   runIdentity?: string;
@@ -99,9 +100,23 @@ type PreviewSubmissionStatus =
     };
 
 type PreviewSubmissionResult = {
+  candidateId: string;
+  candidateSql: string | null;
   candidateState: string;
+  guardStatus: string;
+  requestId: string;
   requestState: string;
   sourceId: string;
+};
+
+type AuthoritativeCandidatePreview = {
+  candidateId: string;
+  candidateSql: string | null;
+  candidateState: string;
+  guardStatus: string;
+  requestId?: string;
+  sourceId: string;
+  sourceLabel?: string;
 };
 
 type ApiErrorEnvelope = {
@@ -131,7 +146,7 @@ const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
     label: "Failed"
   },
   preview: {
-    description: "The operator request has been staged for governed review with generated SQL still in placeholder mode.",
+    description: "The operator request has been staged for governed candidate review.",
     label: "SQL preview"
   },
   query: {
@@ -228,13 +243,24 @@ function parsePreviewSubmissionResult(
   }
 
   const requestSourceId = readRequiredString(value.request.source_id);
+  const requestId = readRequiredString(value.request.request_id);
   const candidateSourceId = readRequiredString(value.candidate.source_id);
+  const candidateId = readRequiredString(value.candidate.candidate_id);
+  const candidateSql =
+    typeof value.candidate.candidate_sql === "string" &&
+    value.candidate.candidate_sql.trim().length > 0
+      ? value.candidate.candidate_sql
+      : null;
+  const guardStatus = readRequiredString(value.candidate.guard_status);
   const requestState = readRequiredString(value.request.state);
   const candidateState = readRequiredString(value.candidate.state);
 
   if (
+    !requestId ||
     requestSourceId !== expectedSourceId ||
+    !candidateId ||
     candidateSourceId !== expectedSourceId ||
+    !guardStatus ||
     !requestState ||
     !candidateState
   ) {
@@ -242,7 +268,11 @@ function parsePreviewSubmissionResult(
   }
 
   return {
+    candidateId,
+    candidateSql,
     candidateState,
+    guardStatus,
+    requestId,
     requestState,
     sourceId: expectedSourceId
   };
@@ -445,31 +475,82 @@ function buildStateHref(
   return `/?${params.toString()}`;
 }
 
-function getSqlPreview(question: string): string {
-  return [
-    "-- placeholder SQL generated from the question review surface",
-    "SELECT vendor_name, SUM(quarterly_spend) AS quarterly_spend",
-    "FROM approved_vendor_spend",
-    `WHERE review_prompt = '${question.replace(/'/g, "''")}'`,
-    "GROUP BY vendor_name",
-    "ORDER BY quarterly_spend DESC",
-    "LIMIT 10;"
-  ].join("\n");
+function findAuthoritativeCandidatePreview(
+  history: OperatorHistoryItem[],
+  sourceId?: string,
+  historyRecordId?: string
+): AuthoritativeCandidatePreview | null {
+  const candidates = history.filter(
+    (item) =>
+      item.itemType === "candidate" &&
+      (!sourceId || item.sourceId === sourceId) &&
+      (!historyRecordId || item.recordId === historyRecordId)
+  );
+  const candidate = candidates[0];
+  if (!candidate) {
+    return null;
+  }
+
+  return {
+    candidateId: candidate.recordId,
+    candidateSql: candidate.candidateSql ?? null,
+    candidateState: candidate.lifecycleState,
+    guardStatus: candidate.guardStatus ?? "pending",
+    requestId: candidate.requestId ?? undefined,
+    sourceId: candidate.sourceId,
+    sourceLabel: candidate.sourceLabel
+  };
+}
+
+function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null) {
+  if (!preview) {
+    return (
+      <div className="placeholder-block">
+        <p className="placeholder-title">No authoritative candidate selected</p>
+        <p>
+          Submit the question for preview or reopen a candidate history row before SQL preview can
+          be shown.
+        </p>
+      </div>
+    );
+  }
+
+  if (!preview.candidateSql) {
+    return (
+      <div className="placeholder-block">
+        <p className="placeholder-title">Canonical SQL pending</p>
+        <p>Canonical SQL has not been generated for this candidate.</p>
+      </div>
+    );
+  }
+
+  return (
+    <pre className="sql-preview">
+      <code>{preview.candidateSql}</code>
+    </pre>
+  );
 }
 
 function getWorkflowContext(
   state: CanonicalWorkflowState,
-  source?: SourceOption
+  source?: SourceOption,
+  candidatePreview?: AuthoritativeCandidatePreview | null
 ): WorkflowContext {
-  const sourceIdentity = source?.displayLabel ?? "No source selected yet";
-  const requestIdentity = "req-sq-204";
+  const sourceIdentity =
+    candidatePreview?.sourceLabel ?? source?.displayLabel ?? "No source selected yet";
+
+  if (candidatePreview && (state === "preview" || state === "review_denied")) {
+    return {
+      candidateIdentity: candidatePreview.candidateId,
+      candidateState: candidatePreview.candidateState,
+      guardStatus: candidatePreview.guardStatus,
+      requestIdentity: candidatePreview.requestId,
+      sourceIdentity
+    };
+  }
 
   if (state === "preview" || state === "review_denied") {
     return {
-      candidateIdentity: "candidate-sq-204",
-      candidateState: state === "review_denied" ? "guard_denied" : "preview_ready",
-      lifecycleTimestamp: state === "review_denied" ? "2026-04-21 14:24 JST" : "2026-04-21 14:18 JST",
-      requestIdentity,
       sourceIdentity
     };
   }
@@ -481,8 +562,6 @@ function getWorkflowContext(
   }
 
   return {
-    candidateIdentity: "candidate-sq-204",
-    candidateState: "approved_previewed",
     lifecycleTimestamp:
       state === "completed"
         ? "2026-04-21 14:32 JST"
@@ -493,7 +572,6 @@ function getWorkflowContext(
             : state === "failed"
               ? "2026-04-21 14:35 JST"
               : "2026-04-21 14:33 JST",
-    requestIdentity,
     runIdentity: "run-sq-204",
     runState:
       state === "completed"
@@ -578,7 +656,7 @@ function getGuardCopy(state: CanonicalWorkflowState): string {
     return "Cancellation is distinct from denial and failure. The shell preserves run lineage and lifecycle context so the operator can see that execution started but did not finish.";
   }
 
-  return "The first shell stops at review boundaries. No real auth, SQL generation, or execution path is trusted in this issue.";
+  return "The shell stops at review boundaries unless an authoritative candidate record supplies guard posture and SQL preview data.";
 }
 
 function getResultTitle(state: CanonicalWorkflowState): string {
@@ -903,6 +981,8 @@ export function QueryWorkflowShell({
   const [previewSubmission, setPreviewSubmission] = useState<PreviewSubmissionStatus>({
     status: "idle"
   });
+  const [submittedCandidatePreview, setSubmittedCandidatePreview] =
+    useState<AuthoritativeCandidatePreview | null>(null);
   const [submittedQuestion, setSubmittedQuestion] = useState(question);
   const [submittedSourceId, setSubmittedSourceId] = useState(sourceId);
   const [submittedState, setSubmittedState] = useState(requestedState);
@@ -912,6 +992,7 @@ export function QueryWorkflowShell({
     setSubmittedSourceId(sourceId);
     setSubmittedState(requestedState);
     setPreviewSubmission({ status: "idle" });
+    setSubmittedCandidatePreview(null);
   }, [question, requestedState, sourceId]);
 
   const sourceBinding = resolveSourceBinding(
@@ -920,11 +1001,19 @@ export function QueryWorkflowShell({
     submittedSourceId
   );
   const normalizedState = sourceBinding.state;
-  const sqlPreview = getSqlPreview(submittedQuestion);
   const activeState = workflowStates[normalizedState];
   const queryLocked = normalizedState === "signin" || previewSubmission.status === "submitting";
   const guardTone = getGuardTone(normalizedState);
-  const workflowContext = getWorkflowContext(normalizedState, sourceBinding.source);
+  const historyCandidatePreview = findAuthoritativeCandidatePreview(
+    operatorWorkflow.history,
+    submittedSourceId
+  );
+  const candidatePreview = submittedCandidatePreview ?? historyCandidatePreview;
+  const workflowContext = getWorkflowContext(
+    normalizedState,
+    sourceBinding.source,
+    candidatePreview
+  );
   const sourceSelectVisible = normalizedState === "query";
   const boundSourceId = sourceBinding.source?.sourceId;
 
@@ -1016,6 +1105,15 @@ export function QueryWorkflowShell({
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
         setSubmittedState("review_denied");
+        setSubmittedCandidatePreview({
+          candidateId: result.candidateId,
+          candidateSql: result.candidateSql,
+          candidateState: result.candidateState,
+          guardStatus: result.guardStatus,
+          requestId: result.requestId,
+          sourceId: result.sourceId,
+          sourceLabel: selectedSource.displayLabel
+        });
         setPreviewSubmission({
           candidateState: result.candidateState,
           requestState: result.requestState,
@@ -1028,6 +1126,15 @@ export function QueryWorkflowShell({
       if (isPendingPreviewState(result) && !isReadyPreviewState(result)) {
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
+        setSubmittedCandidatePreview({
+          candidateId: result.candidateId,
+          candidateSql: result.candidateSql,
+          candidateState: result.candidateState,
+          guardStatus: result.guardStatus,
+          requestId: result.requestId,
+          sourceId: result.sourceId,
+          sourceLabel: selectedSource.displayLabel
+        });
         setPreviewSubmission({
           candidateState: result.candidateState,
           requestState: result.requestState,
@@ -1049,6 +1156,15 @@ export function QueryWorkflowShell({
       setSubmittedQuestion(submittedQuestionText);
       setSubmittedSourceId(result.sourceId);
       setSubmittedState("preview");
+      setSubmittedCandidatePreview({
+        candidateId: result.candidateId,
+        candidateSql: result.candidateSql,
+        candidateState: result.candidateState,
+        guardStatus: result.guardStatus,
+        requestId: result.requestId,
+        sourceId: result.sourceId,
+        sourceLabel: selectedSource.displayLabel
+      });
       setPreviewSubmission({
         candidateState: result.candidateState,
         requestState: result.requestState,
@@ -1295,13 +1411,11 @@ export function QueryWorkflowShell({
             <div className="section-header">
               <div>
                 <p className="eyebrow">Generated SQL</p>
-                <h2 className="panel-title">SQL preview placeholder</h2>
+                <h2 className="panel-title">Authoritative SQL preview</h2>
               </div>
               <span className="surface-badge surface-badge-code">Preview</span>
             </div>
-            <pre className="sql-preview">
-              <code>{sqlPreview}</code>
-            </pre>
+            {renderCandidateSqlPreview(candidatePreview)}
           </section>
 
           <section className="surface surface-secondary">
@@ -1335,6 +1449,12 @@ export function QueryWorkflowShell({
                 </span>
                 <strong>{workflowContext.candidateState ?? "drafting"}</strong>
               </div>
+              {workflowContext.guardStatus ? (
+                <div className="guard-item">
+                  <span className="meta-label">Guard status</span>
+                  <strong>{workflowContext.guardStatus}</strong>
+                </div>
+              ) : null}
               {workflowContext.runIdentity ? (
                 <>
                   <div className="guard-item">
@@ -1371,8 +1491,8 @@ export function QueryWorkflowShell({
                 <strong>Placeholder only</strong>
               </div>
               <div className="guard-item">
-                <span className="meta-label">Approval record</span>
-                <strong>Not yet wired</strong>
+                <span className="meta-label">Candidate guard</span>
+                <strong>{candidatePreview?.guardStatus ?? "No candidate record"}</strong>
               </div>
               <div className="guard-item">
                 <span className="meta-label">Execution path</span>

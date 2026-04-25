@@ -90,11 +90,15 @@ def test_preview_candidate_carries_authoritative_source_metadata() -> None:
             session,
         )
 
-    assert response.model_dump()["candidate"] == {
+    candidate = response.model_dump()["candidate"]
+    assert {
         "source_id": "sap-approved-spend",
         "source_family": "postgresql",
         "source_flavor": "warehouse",
         "dataset_contract_version": 3,
         "schema_snapshot_version": 7,
         "state": "preview_ready",
-    }
+        "candidate_sql": None,
+        "guard_status": "pending",
+    }.items() <= candidate.items()
+    assert candidate["candidate_id"]

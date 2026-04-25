@@ -41,11 +41,15 @@ class PreviewSubmissionRequest(BaseModel):
 
 class RequestRecord(BaseModel):
     question: str
+    request_id: str
     source_id: str
     state: str
 
 
 class CandidateRecord(BaseModel):
+    candidate_id: str
+    candidate_sql: Optional[str]
+    guard_status: GuardStatus
     source_id: str
     source_family: str
     source_flavor: Optional[str]
@@ -359,7 +363,7 @@ def _persist_preview_submission_records(
     authenticated_subject: AuthenticatedSubject,
     audit_context: PreviewAuditContext | None,
     audit_events: list[SourceAwareAuditEvent],
-) -> None:
+) -> tuple[str, str]:
     request_id = (
         audit_context.request_id
         if audit_context is not None and audit_context.request_id.strip()
@@ -477,7 +481,7 @@ def _persist_preview_submission_records(
                 audit_events=audit_events,
             )
             session.commit()
-            return
+            return request_id, candidate_id
         except IntegrityError as exc:
             session.rollback()
             if attempt == 0:
@@ -657,7 +661,7 @@ def submit_preview_request(
             audit_context=audit_context,
         ),
     )
-    _persist_preview_submission_records(
+    request_id, candidate_id = _persist_preview_submission_records(
         session,
         payload=payload,
         resolved_source=resolved_source,
@@ -671,10 +675,14 @@ def submit_preview_request(
     return PreviewSubmissionResponse(
         request=RequestRecord(
             question=payload.question,
+            request_id=request_id,
             source_id=resolved_source.source_id,
             state="submitted",
         ),
         candidate=CandidateRecord(
+            candidate_id=candidate_id,
+            candidate_sql=None,
+            guard_status=PREVIEW_PENDING_GUARD_STATUS,
             source_id=resolved_source.source_id,
             source_family=resolved_source.source_family,
             source_flavor=resolved_source.source_flavor,

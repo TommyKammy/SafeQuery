@@ -322,16 +322,16 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         response_body = response.json()
-        self.assertEqual(
-            response_body["request"],
+        self.assertLessEqual(
             {
                 "question": "Show approved vendors by quarterly spend",
                 "source_id": "sap-approved-spend",
                 "state": "submitted",
-            },
+            }.items(),
+            response_body["request"].items(),
         )
-        self.assertEqual(
-            response_body["candidate"],
+        self.assertTrue(response_body["request"]["request_id"])
+        self.assertLessEqual(
             {
                 "source_id": "sap-approved-spend",
                 "source_family": "postgresql",
@@ -339,8 +339,12 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
                 "dataset_contract_version": 1,
                 "schema_snapshot_version": 1,
                 "state": "preview_ready",
-            },
+                "candidate_sql": None,
+                "guard_status": "pending",
+            }.items(),
+            response_body["candidate"].items(),
         )
+        self.assertTrue(response_body["candidate"]["candidate_id"])
         self.assertEqual(
             response_body["evaluation"],
             {
