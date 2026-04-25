@@ -43,6 +43,7 @@ def _seed_source_governance(
     source_id: str,
     owner_binding: str = "group:finance-analysts",
     snapshot_status: SchemaSnapshotReviewStatus = SchemaSnapshotReviewStatus.APPROVED,
+    include_datasets: bool = True,
     link_active_contract: bool = True,
     link_active_snapshot: bool = True,
     link_contract_snapshot: bool = True,
@@ -99,24 +100,25 @@ def _seed_source_governance(
     session.add(contract)
     session.flush()
 
-    session.add_all(
-        [
-            DatasetContractDataset(
-                id=uuid4(),
-                dataset_contract_id=contract.id,
-                schema_name="finance",
-                dataset_name=f"{source_id}_spend",
-                dataset_kind=DatasetContractDatasetKind.TABLE,
-            ),
-            DatasetContractDataset(
-                id=uuid4(),
-                dataset_contract_id=contract.id,
-                schema_name="analytics",
-                dataset_name=f"{source_id}_summary",
-                dataset_kind=DatasetContractDatasetKind.VIEW,
-            ),
-        ]
-    )
+    if include_datasets:
+        session.add_all(
+            [
+                DatasetContractDataset(
+                    id=uuid4(),
+                    dataset_contract_id=contract.id,
+                    schema_name="finance",
+                    dataset_name=f"{source_id}_spend",
+                    dataset_kind=DatasetContractDatasetKind.TABLE,
+                ),
+                DatasetContractDataset(
+                    id=uuid4(),
+                    dataset_contract_id=contract.id,
+                    schema_name="analytics",
+                    dataset_name=f"{source_id}_summary",
+                    dataset_kind=DatasetContractDatasetKind.VIEW,
+                ),
+            ]
+        )
 
     if link_active_contract:
         source.dataset_contract_id = contract.id
@@ -195,7 +197,7 @@ def test_prepare_generation_context_rejects_missing_active_contract_linkage() ->
         with pytest.raises(
             GenerationContextPreparationError,
             match=r"Registered source 'sap-approved-spend' has no active dataset contract\.",
-        ):
+        ) as exc_info:
             prepare_generation_context(
                 request_id="req_preview_80",
                 question="Show approved vendors by quarterly spend",
@@ -206,6 +208,8 @@ def test_prepare_generation_context_rejects_missing_active_contract_linkage() ->
                 ),
                 session=session,
             )
+
+    assert exc_info.value.code == "governance_resolution_failed"
 
 
 def test_prepare_generation_context_rejects_non_approved_schema_snapshot() -> None:
@@ -221,7 +225,7 @@ def test_prepare_generation_context_rejects_non_approved_schema_snapshot() -> No
             match=(
                 r"Registered source 'sap-approved-spend' requires an approved schema snapshot\."
             ),
-        ):
+        ) as exc_info:
             prepare_generation_context(
                 request_id="req_preview_80",
                 question="Show approved vendors by quarterly spend",
@@ -232,6 +236,8 @@ def test_prepare_generation_context_rejects_non_approved_schema_snapshot() -> No
                 ),
                 session=session,
             )
+
+    assert exc_info.value.code == "governance_resolution_failed"
 
 
 def test_prepare_generation_context_rejects_contract_snapshot_drift() -> None:
@@ -248,7 +254,7 @@ def test_prepare_generation_context_rejects_contract_snapshot_drift() -> None:
                 r"Registered source 'sap-approved-spend' is missing "
                 r"authoritative source-scoped governance artifacts\."
             ),
-        ):
+        ) as exc_info:
             prepare_generation_context(
                 request_id="req_preview_80",
                 question="Show approved vendors by quarterly spend",
@@ -259,3 +265,62 @@ def test_prepare_generation_context_rejects_contract_snapshot_drift() -> None:
                 ),
                 session=session,
             )
+
+    assert exc_info.value.code == "governance_resolution_failed"
+
+
+def test_prepare_generation_context_rejects_unentitled_subject_with_specific_code() -> None:
+    with _session_scope() as session:
+        _seed_source_governance(
+            session,
+            source_id="sap-approved-spend",
+        )
+
+        with pytest.raises(
+            GenerationContextPreparationError,
+            match=(
+                r"Authenticated subject 'user:alice' is not entitled to use "
+                r"registered source 'sap-approved-spend'\."
+            ),
+        ) as exc_info:
+            prepare_generation_context(
+                request_id="req_preview_80",
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:sales-analysts"}),
+                ),
+                session=session,
+            )
+
+    assert exc_info.value.code == "entitlement_check_failed"
+
+
+def test_prepare_generation_context_rejects_missing_datasets_with_specific_code() -> None:
+    with _session_scope() as session:
+        _seed_source_governance(
+            session,
+            source_id="sap-approved-spend",
+            include_datasets=False,
+        )
+
+        with pytest.raises(
+            GenerationContextPreparationError,
+            match=(
+                r"Registered source 'sap-approved-spend' has no approved datasets "
+                r"in the active contract\."
+            ),
+        ) as exc_info:
+            prepare_generation_context(
+                request_id="req_preview_80",
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+            )
+
+    assert exc_info.value.code == "no_approved_datasets"

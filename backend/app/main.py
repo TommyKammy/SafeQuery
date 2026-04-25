@@ -43,6 +43,7 @@ from app.services.request_preview import (
     PreviewSubmissionResponse,
     submit_preview_request,
 )
+from app.services.sql_generation_adapter import resolve_sql_generation_adapter
 from app.services.operator_workflow import (
     OperatorWorkflowSnapshot,
     get_operator_workflow_snapshot,
@@ -130,6 +131,11 @@ def create_app() -> FastAPI:
         version="0.1.0",
         summary="Minimum SafeQuery control-plane baseline.",
         lifespan=lifespan,
+    )
+    sql_generation_adapter = (
+        None
+        if settings.sql_generation.provider == "disabled"
+        else resolve_sql_generation_adapter(settings.sql_generation)
     )
 
     app.add_middleware(
@@ -266,6 +272,7 @@ def create_app() -> FastAPI:
                 authenticated_subject,
                 session,
                 audit_context=audit_context,
+                sql_generation_adapter=sql_generation_adapter,
             )
         except PreviewSubmissionEntitlementError as exc:
             raise api_error(
