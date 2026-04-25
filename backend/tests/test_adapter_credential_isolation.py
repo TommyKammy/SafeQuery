@@ -5,8 +5,10 @@ from app.services.generation_context import (
     PreparedGenerationContext,
 )
 from app.services.sql_generation_adapter import (
+    SQLGenerationAdapterConfigurationError,
     SQLGenerationAdapterRequest,
     build_sql_generation_adapter_request,
+    resolve_sql_generation_adapter,
 )
 
 
@@ -71,3 +73,31 @@ def test_build_sql_generation_adapter_request_uses_only_adapter_safe_fields() ->
     assert "connection_reference" not in str(dumped)
     assert "connector_profile_id" not in str(dumped)
     assert "execution_policy_id" not in str(dumped)
+
+
+def test_adapter_configuration_rejects_source_execution_material() -> None:
+    try:
+        resolve_sql_generation_adapter(
+            {
+                "provider": "vanna",
+                "vanna_base_url": "http://vanna:8084",
+                "business_postgres_url": (
+                    "postgresql://safequery_source:<credential>@business:5432/source"
+                ),
+                "connection_reference": "vault:sap-approved-spend",
+                "execution_authority": True,
+            }
+        )
+    except SQLGenerationAdapterConfigurationError as exc:
+        assert exc.code == "sql_generation_settings_invalid"
+        assert {
+            error["loc"][0]
+            for error in exc.__cause__.errors()
+            if error["type"] == "extra_forbidden"
+        } == {
+            "business_postgres_url",
+            "connection_reference",
+            "execution_authority",
+        }
+    else:
+        raise AssertionError("Expected source execution material to fail closed.")
