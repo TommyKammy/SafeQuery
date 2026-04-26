@@ -884,6 +884,236 @@ describe("HomePage", () => {
     }
   });
 
+  it("renders successful execute response rows and audit context without sensitive extras", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              history: [
+                {
+                  candidateSql: "select vendor_name, total_spend from approved_vendor_spend;",
+                  guardStatus: "passed",
+                  itemType: "candidate",
+                  label: "Selected candidate",
+                  lifecycleState: "preview_ready",
+                  occurredAt: "2026-04-21T14:24:00Z",
+                  recordId: "candidate-selected",
+                  requestId: "request-selected",
+                  sourceId: "sap-approved-spend",
+                  sourceLabel: "SAP spend cube / approved_vendor_spend"
+                }
+              ],
+              sources: workflowPayload().sources
+            })
+        });
+      }
+
+      if (url.endsWith("/candidates/candidate-selected/execute")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [
+                  {
+                    candidate_state: "executed",
+                    event_id: "00000000-0000-4000-8000-000000000298",
+                    event_type: "execution_completed",
+                    execution_row_count: 2,
+                    occurred_at: "2026-04-21T14:42:17+09:00",
+                    query_candidate_id: "candidate-selected",
+                    request_id: "request-selected",
+                    result_truncated: false,
+                    session_id: "session-secret-should-not-render",
+                    source_id: "sap-approved-spend"
+                  }
+                ],
+                session_token: "token-secret-should-not-render"
+              },
+              candidate_id: "candidate-selected",
+              connector_id: "postgresql_readonly",
+              metadata: {
+                candidate_id: "candidate-selected",
+                execution_run_id: "00000000-0000-4000-8000-000000000298",
+                result_truncated: false,
+                row_count: 2,
+                source_family: "postgresql",
+                source_flavor: "warehouse",
+                source_id: "sap-approved-spend"
+              },
+              rows: [
+                {
+                  connection_string: "postgres://secret-should-not-render",
+                  total_spend: 1200,
+                  vendor_name: "Acme Supplies"
+                },
+                {
+                  session_token: "row-token-should-not-render",
+                  total_spend: 980,
+                  vendor_name: "Globex Services"
+                }
+              ],
+              source_id: "sap-approved-spend"
+            })
+        });
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-selected",
+          question: "Selected candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /execute reviewed candidate/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/execution completed/i).length).toBeGreaterThan(0);
+    });
+
+    const resultsSection = screen.getByRole("heading", { name: /completed result set/i }).closest("section");
+    expect(resultsSection).not.toBeNull();
+    const results = within(resultsSection!);
+    expect(results.getByRole("table", { name: /execute response result rows/i })).toBeInTheDocument();
+    expect(results.getByText("vendor_name")).toBeInTheDocument();
+    expect(results.getByText("total_spend")).toBeInTheDocument();
+    expect(results.getByText("Acme Supplies")).toBeInTheDocument();
+    expect(results.getByText("Globex Services")).toBeInTheDocument();
+    expect(results.getByText("1200")).toBeInTheDocument();
+
+    expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent("execution_completed");
+    expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent(
+      "00000000-0000-4000-8000-000000000298"
+    );
+    expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent(
+      "backend_execution_result"
+    );
+    expect(screen.queryByText(/postgres:\/\/secret-should-not-render/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/row-token-should-not-render/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/session-secret-should-not-render/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/token-secret-should-not-render/i)).not.toBeInTheDocument();
+  });
+
+  it("renders zero-row execute response audit context on the empty state", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend where 1 = 0;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Selected candidate",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-selected",
+                    requestId: "request-selected",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        if (url.endsWith("/candidates/candidate-selected/execute")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                audit: {
+                  events: [
+                    {
+                      candidate_state: "executed",
+                      event_id: "00000000-0000-4000-8000-000000000299",
+                      event_type: "execution_completed",
+                      execution_row_count: 0,
+                      occurred_at: "2026-04-21T14:43:17+09:00",
+                      query_candidate_id: "candidate-selected",
+                      request_id: "request-selected",
+                      result_truncated: false,
+                      source_id: "sap-approved-spend"
+                    }
+                  ]
+                },
+                candidate_id: "candidate-selected",
+                connector_id: "postgresql_readonly",
+                metadata: {
+                  candidate_id: "candidate-selected",
+                  execution_run_id: "00000000-0000-4000-8000-000000000299",
+                  result_truncated: false,
+                  row_count: 0,
+                  source_family: "postgresql",
+                  source_flavor: "warehouse",
+                  source_id: "sap-approved-spend"
+                },
+                rows: [],
+                source_id: "sap-approved-spend"
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-selected",
+          question: "Selected candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /execute reviewed candidate/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /empty state/i })).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/0 rows returned; result payload not truncated/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent("execution_completed");
+    expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent(
+      "00000000-0000-4000-8000-000000000299"
+    );
+    expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent("0 rows");
+  });
+
   it("keeps execute disabled for non-authorized candidate states", async () => {
     vi.stubGlobal(
       "fetch",
