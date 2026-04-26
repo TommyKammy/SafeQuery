@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from time import perf_counter
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -46,7 +46,9 @@ from app.features.execution import (
     ExecutionConnectorSelectionError,
     ExecutionRuntimeCancelledError,
     ExecutionRuntimeFailureError,
+    ExecutionRuntimeSafetyState,
     execute_candidate_sql,
+    preflight_execution_runtime_controls,
     select_execution_connector,
 )
 from app.services.candidate_lifecycle import (
@@ -147,6 +149,58 @@ class CandidateExecuteResponse(BaseModel):
     rows: list[dict[str, Any]]
     metadata: dict[str, Any]
     audit: dict[str, list[dict[str, Any]]]
+
+
+def _operator_runtime_safety_state(request: Request) -> ExecutionRuntimeSafetyState | None:
+    state = getattr(request.app.state, "execution_runtime_safety_state", None)
+    if state is None:
+        return None
+    if not isinstance(state, ExecutionRuntimeSafetyState):
+        raise api_error(
+            503,
+            "execution_unavailable",
+            "Candidate execution is unavailable.",
+        )
+    return state
+
+
+def _operator_control_values(values: object) -> frozenset[str]:
+    if isinstance(values, (set, frozenset, list, tuple)):
+        normalized = frozenset(str(value).strip() for value in values)
+        if all(normalized):
+            return normalized
+    raise api_error(
+        503,
+        "execution_unavailable",
+        "Candidate execution is unavailable.",
+    )
+
+
+def _operator_cancellation_probe(
+    request: Request,
+    *,
+    candidate_id: str,
+    source_id: str,
+) -> Callable[[], bool]:
+    cancelled_candidate_ids = _operator_control_values(
+        getattr(
+            request.app.state,
+            "execution_cancelled_candidate_ids",
+            frozenset(),
+        )
+    )
+    cancelled_source_ids = _operator_control_values(
+        getattr(
+            request.app.state,
+            "execution_cancelled_source_ids",
+            frozenset(),
+        )
+    )
+
+    def probe() -> bool:
+        return candidate_id in cancelled_candidate_ids or source_id in cancelled_source_ids
+
+    return probe
 
 
 def _serialize_entitlement_denial_audit_events(
@@ -529,11 +583,13 @@ def create_app() -> FastAPI:
         try:
             candidate: ExecutableCandidateRecord | None = None
             selection: ExecutionConnectorSelection | None = None
+            cancellation_probe = None
+            runtime_safety_state = _operator_runtime_safety_state(http_request)
 
             def prepare_execution(
                 revalidation_result: CandidateLifecycleRevalidationResult,
             ) -> None:
-                nonlocal candidate, selection
+                nonlocal candidate, selection, cancellation_probe
                 approved_sql = revalidation_result.approved_sql
                 if approved_sql is None:
                     raise api_error(
@@ -554,6 +610,34 @@ def create_app() -> FastAPI:
                     connector_id=prepared_selection.connector_id,
                     audit_context=lifecycle_audit_context,
                 )
+                prepared_cancellation_probe = _operator_cancellation_probe(
+                    http_request,
+                    candidate_id=candidate_id,
+                    source_id=prepared_candidate.source.source_id,
+                )
+                preflight_audit_context = ExecutionAuditContext(
+                    event_id=uuid4(),
+                    occurred_at=occurred_at,
+                    request_id=audit_request_id,
+                    correlation_id=lifecycle_audit_context.correlation_id,
+                    user_subject=user_subject,
+                    session_id=application_session.audit_session_id,
+                    query_candidate_id=candidate_id,
+                    candidate_owner_subject=user_subject,
+                    execution_policy_version=(
+                        prepared_candidate.source.execution_policy_version
+                    ),
+                    connector_profile_version=(
+                        prepared_candidate.source.connector_profile_version
+                    ),
+                )
+                preflight_execution_runtime_controls(
+                    candidate_source=prepared_candidate.source,
+                    selection=prepared_selection,
+                    cancellation_probe=prepared_cancellation_probe,
+                    runtime_safety_state=runtime_safety_state,
+                    audit_context=preflight_audit_context,
+                )
                 _require_execution_connector_configuration(
                     connector_id=prepared_selection.connector_id,
                     business_postgres_source_url=settings.business_postgres_source_url,
@@ -563,6 +647,7 @@ def create_app() -> FastAPI:
                 )
                 candidate = prepared_candidate
                 selection = prepared_selection
+                cancellation_probe = prepared_cancellation_probe
 
             revalidate_authoritative_candidate_approval(
                 session=session,
@@ -609,6 +694,8 @@ def create_app() -> FastAPI:
                 ),
                 application_postgres_url=str(settings.app_postgres_url),
                 query_runner=query_runner,
+                cancellation_probe=cancellation_probe,
+                runtime_safety_state=runtime_safety_state,
                 audit_context=execution_audit_context,
             )
         except CandidateLifecycleRevalidationError as exc:
