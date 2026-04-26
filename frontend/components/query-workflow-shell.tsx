@@ -4,7 +4,10 @@ import { type FormEvent, useEffect, useState } from "react";
 import { HealthStatusCard } from "./health-status-card";
 import type { HealthSnapshot } from "../lib/health";
 import type {
+  OperatorWorkflowAuditEvent,
+  OperatorWorkflowExecutedEvidence,
   OperatorHistoryItem,
+  OperatorWorkflowRetrievedCitation,
   OperatorWorkflowSnapshot,
   SourceOption
 } from "../lib/operator-workflow";
@@ -129,19 +132,25 @@ type PreviewSubmissionResult = {
 };
 
 type AuthoritativeCandidatePreview = {
+  auditEvents: OperatorWorkflowAuditEvent[];
   candidateId: string;
   candidateSql: string | null;
   candidateState: string;
+  executedEvidence: OperatorWorkflowExecutedEvidence[];
   guardStatus: string;
   requestId?: string;
+  retrievedCitations: OperatorWorkflowRetrievedCitation[];
   sourceId: string;
   sourceLabel?: string;
 };
 
 type AuthoritativeRunContext = {
+  auditEvents: OperatorWorkflowAuditEvent[];
+  executedEvidence: OperatorWorkflowExecutedEvidence[];
   lifecycleState: string;
   lifecycleTimestamp: string;
   primaryDenyCode?: string | null;
+  retrievedCitations: OperatorWorkflowRetrievedCitation[];
   resultTruncated?: boolean | null;
   rowCount?: number | null;
   runIdentity: string;
@@ -626,11 +635,14 @@ function findAuthoritativeCandidatePreview(
   }
 
   return {
+    auditEvents: candidate.auditEvents,
     candidateId: candidate.recordId,
     candidateSql: candidate.candidateSql ?? null,
     candidateState: candidate.lifecycleState,
+    executedEvidence: candidate.executedEvidence,
     guardStatus: candidate.guardStatus ?? "pending",
     requestId: candidate.requestId ?? undefined,
+    retrievedCitations: candidate.retrievedCitations,
     sourceId: candidate.sourceId,
     sourceLabel: candidate.sourceLabel
   };
@@ -657,9 +669,12 @@ function findAuthoritativeRunContext(
   }
 
   return {
+    auditEvents: run.auditEvents,
+    executedEvidence: run.executedEvidence,
     lifecycleState: run.lifecycleState,
     lifecycleTimestamp: run.occurredAt,
     primaryDenyCode: run.primaryDenyCode,
+    retrievedCitations: run.retrievedCitations,
     resultTruncated: run.resultTruncated,
     rowCount: run.rowCount,
     runIdentity: run.recordId,
@@ -958,6 +973,83 @@ function renderResultContent(
   );
 }
 
+function renderAuditEvidencePanel(
+  auditEvents: OperatorWorkflowAuditEvent[],
+  executedEvidence: OperatorWorkflowExecutedEvidence[],
+  retrievedCitations: OperatorWorkflowRetrievedCitation[]
+) {
+  return (
+    <section className="surface surface-secondary">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Audit and evidence</p>
+          <h2 className="panel-title">Operator evidence context</h2>
+        </div>
+        <span className="surface-badge surface-badge-code">Read only</span>
+      </div>
+
+      {auditEvents.length === 0 &&
+      executedEvidence.length === 0 &&
+      retrievedCitations.length === 0 ? (
+        <div className="placeholder-block">
+          <p className="placeholder-title">No audit evidence selected</p>
+          <p>Open a history row with persisted audit context to inspect lifecycle evidence.</p>
+        </div>
+      ) : null}
+
+      {auditEvents.length > 0 ? (
+        <div className="evidence-list" aria-label="audit lifecycle events">
+          {auditEvents.map((event) => (
+            <div className="evidence-item" key={event.eventId}>
+              <span className="meta-label">Audit event</span>
+              <strong>{event.eventType}</strong>
+              <span>{event.eventId}</span>
+              <span>{event.occurredAt}</span>
+              <span>Request {event.requestId}</span>
+              {event.candidateId ? <span>Candidate {event.candidateId}</span> : null}
+              {event.rowCount !== null ? <span>{event.rowCount} rows</span> : null}
+              {event.resultTruncated !== null ? (
+                <span>{event.resultTruncated ? "Result truncated" : "Result not truncated"}</span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {executedEvidence.length > 0 ? (
+        <div className="evidence-list" aria-label="executed evidence">
+          {executedEvidence.map((evidence) => (
+            <div className="evidence-item" key={evidence.executionAuditEventId}>
+              <span className="meta-label">Executed evidence</span>
+              <strong>{evidence.authority}</strong>
+              <span>{evidence.sourceId}</span>
+              <span>Candidate {evidence.candidateId}</span>
+              <span>{evidence.rowCount} rows</span>
+              <span>{evidence.resultTruncated ? "Result truncated" : "Result not truncated"}</span>
+              <span>Cannot authorize execution: {String(evidence.canAuthorizeExecution)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {retrievedCitations.length > 0 ? (
+        <div className="evidence-list" aria-label="retrieved citation context">
+          {retrievedCitations.map((citation) => (
+            <div className="evidence-item" key={`${citation.assetKind}:${citation.assetId}`}>
+              <span className="meta-label">Retrieved citation context</span>
+              <strong>{citation.citationLabel}</strong>
+              <span>{citation.assetKind}</span>
+              <span>{citation.assetId}</span>
+              <span>{citation.authority}</span>
+              <span>Cannot authorize execution: {String(citation.canAuthorizeExecution)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function renderStatePanel(
   state: CanonicalWorkflowState,
   question: string,
@@ -1235,6 +1327,12 @@ export function QueryWorkflowShell({
           historyRecordId
         }
       : undefined;
+  const selectedAuditEvents =
+    historyRunContext?.auditEvents ?? candidatePreview?.auditEvents ?? [];
+  const selectedExecutedEvidence =
+    historyRunContext?.executedEvidence ?? candidatePreview?.executedEvidence ?? [];
+  const selectedRetrievedCitations =
+    historyRunContext?.retrievedCitations ?? candidatePreview?.retrievedCitations ?? [];
 
   async function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1319,11 +1417,14 @@ export function QueryWorkflowShell({
         setSubmittedSourceId(result.sourceId);
         setSubmittedState("review_denied");
         setSubmittedCandidatePreview({
+          auditEvents: [],
           candidateId: result.candidateId,
           candidateSql: result.candidateSql,
           candidateState: result.candidateState,
+          executedEvidence: [],
           guardStatus: result.guardStatus,
           requestId: result.requestId,
+          retrievedCitations: [],
           sourceId: result.sourceId,
           sourceLabel: selectedSource.displayLabel
         });
@@ -1340,11 +1441,14 @@ export function QueryWorkflowShell({
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
         setSubmittedCandidatePreview({
+          auditEvents: [],
           candidateId: result.candidateId,
           candidateSql: result.candidateSql,
           candidateState: result.candidateState,
+          executedEvidence: [],
           guardStatus: result.guardStatus,
           requestId: result.requestId,
+          retrievedCitations: [],
           sourceId: result.sourceId,
           sourceLabel: selectedSource.displayLabel
         });
@@ -1370,11 +1474,14 @@ export function QueryWorkflowShell({
       setSubmittedSourceId(result.sourceId);
       setSubmittedState("preview");
       setSubmittedCandidatePreview({
+        auditEvents: [],
         candidateId: result.candidateId,
         candidateSql: result.candidateSql,
         candidateState: result.candidateState,
+        executedEvidence: [],
         guardStatus: result.guardStatus,
         requestId: result.requestId,
+        retrievedCitations: [],
         sourceId: result.sourceId,
         sourceLabel: selectedSource.displayLabel
       });
@@ -1435,8 +1542,11 @@ export function QueryWorkflowShell({
         if (hasCanceledAuditEvent(payload)) {
           setSubmittedState("canceled");
           setSubmittedRunContext({
+            auditEvents: [],
+            executedEvidence: [],
             lifecycleState: "canceled",
             lifecycleTimestamp: new Date().toISOString(),
+            retrievedCitations: [],
             runIdentity: candidatePreview.candidateId,
             runState: "canceled",
             sourceLabel:
@@ -1489,8 +1599,11 @@ export function QueryWorkflowShell({
       const nextState = result.rowCount === 0 ? "empty" : "completed";
       setSubmittedState(nextState);
       setSubmittedRunContext({
+        auditEvents: [],
+        executedEvidence: [],
         lifecycleState: nextState,
         lifecycleTimestamp: new Date().toISOString(),
+        retrievedCitations: [],
         resultTruncated: result.resultTruncated,
         rowCount: result.rowCount,
         runIdentity: result.executionRunId ?? result.candidateId,
@@ -1913,6 +2026,12 @@ export function QueryWorkflowShell({
               </div>
             </div>
           </section>
+
+          {renderAuditEvidencePanel(
+            selectedAuditEvents,
+            selectedExecutedEvidence,
+            selectedRetrievedCitations
+          )}
 
           <section className="surface surface-secondary">
             <div className="section-header">

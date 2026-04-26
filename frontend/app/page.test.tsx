@@ -1148,6 +1148,116 @@ describe("HomePage", () => {
     expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
   });
 
+  it("renders audit context, executed evidence, and retrieved citations without sensitive fields", async () => {
+    const unsafeLocalPath = "/" + ["Users", "example", "secret-should-not-render"].join("/");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    auditEvents: [
+                      {
+                        eventId: "00000000-0000-4000-8000-000000000012",
+                        eventType: "execution_completed",
+                        occurredAt: "2026-04-21T14:42:17+09:00",
+                        requestId: "request-selected",
+                        candidateId: "candidate-selected",
+                        sourceId: "sap-approved-spend",
+                        rowCount: 12,
+                        resultTruncated: false,
+                        sessionId: "session-secret-should-not-render"
+                      }
+                    ],
+                    executedEvidence: [
+                      {
+                        authority: "backend_execution_result",
+                        canAuthorizeExecution: false,
+                        candidateId: "candidate-selected",
+                        executionAuditEventId: "00000000-0000-4000-8000-000000000012",
+                        executionAuditEventType: "execution_completed",
+                        rowCount: 12,
+                        resultTruncated: false,
+                        sourceId: "sap-approved-spend",
+                        sourceFamily: "postgresql",
+                        sourceFlavor: "warehouse",
+                        connectionString: "postgres://secret-should-not-render"
+                      }
+                    ],
+                    itemType: "run",
+                    label: "Selected completed run",
+                    lifecycleState: "completed",
+                    occurredAt: "2026-04-21T14:42:17+09:00",
+                    recordId: "run-authoritative-287",
+                    retrievedCitations: [
+                      {
+                        assetId: "spend-metric-definition",
+                        assetKind: "metric_definition",
+                        authority: "advisory_context",
+                        canAuthorizeExecution: false,
+                        citationLabel: "Approved spend metric definition",
+                        sourceId: "sap-approved-spend",
+                        sourceFamily: "postgresql",
+                        sourceFlavor: "warehouse",
+                        localPath: unsafeLocalPath
+                      }
+                    ],
+                    resultTruncated: false,
+                    rowCount: 12,
+                    runState: "completed",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-authoritative-287",
+          question: "Selected completed run",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    expect(screen.getByRole("heading", { name: /operator evidence context/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent("execution_completed");
+    expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent(
+      "00000000-0000-4000-8000-000000000012"
+    );
+    expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent(
+      "backend_execution_result"
+    );
+    expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent("12 rows");
+    expect(screen.getByLabelText(/retrieved citation context/i)).toHaveTextContent(
+      "Approved spend metric definition"
+    );
+    expect(screen.getByLabelText(/retrieved citation context/i)).toHaveTextContent(
+      "advisory_context"
+    );
+    expect(screen.getAllByText(/cannot authorize execution: false/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/session-secret-should-not-render/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/postgres:\/\/secret-should-not-render/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(unsafeLocalPath)).not.toBeInTheDocument();
+  });
+
   it("renders explicit empty and review-denied unavailable states", async () => {
     const { rerender } = render(
       await HomePage({
