@@ -28,6 +28,14 @@ class BusinessMssqlSourceSettings(BaseModel):
     connection_string: str
 
 
+class ProductionIdentityBridgeSettings(BaseModel):
+    identity: Literal["production_identity_bridge"] = "production_identity_bridge"
+    enabled: bool = False
+    trusted_issuer: Optional[AnyHttpUrl] = None
+    trusted_source: Optional[str] = None
+    shared_secret: Optional[SecretStr] = None
+
+
 SQLGenerationProvider = Literal["disabled", "local_llm", "vanna"]
 
 
@@ -62,6 +70,10 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "staging", "production"] = "development"
     app_postgres_url: PostgresDsn
     dev_auth_enabled: bool = False
+    production_identity_bridge_enabled: bool = False
+    production_identity_bridge_trusted_issuer: Optional[AnyHttpUrl] = None
+    production_identity_bridge_trusted_source: Optional[str] = None
+    production_identity_bridge_shared_secret: Optional[SecretStr] = None
     session_signing_key: Optional[SecretStr] = None
     business_postgres_source_url: Optional[PostgresDsn] = None
     business_mssql_source_connection_string: Optional[str] = None
@@ -111,6 +123,15 @@ class Settings(BaseSettings):
 
         return value
 
+    @field_validator("production_identity_bridge_trusted_source", mode="before")
+    @classmethod
+    def _normalize_production_identity_bridge_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+
+        return value
+
     @field_validator("sql_generation_vanna_api_key")
     @classmethod
     def _reject_placeholder_vanna_api_key(
@@ -129,6 +150,24 @@ class Settings(BaseSettings):
 
         return value
 
+    @field_validator("production_identity_bridge_shared_secret")
+    @classmethod
+    def _reject_placeholder_production_identity_bridge_shared_secret(
+        cls,
+        value: Optional[SecretStr],
+    ) -> Optional[SecretStr]:
+        if value is None:
+            return value
+
+        normalized = value.get_secret_value().strip().lower()
+        if normalized in {"change-me", "changeme", "todo", "placeholder", "example"}:
+            raise ValueError(
+                "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET must come from "
+                "a trusted credential source, not a placeholder value."
+            )
+
+        return value
+
     @model_validator(mode="after")
     def _validate_distinct_postgres_roles_and_generation_provider(self) -> "Settings":
         if self.dev_auth_enabled and self.environment not in {"development", "test"}:
@@ -136,6 +175,28 @@ class Settings(BaseSettings):
                 "SAFEQUERY_DEV_AUTH_ENABLED is only allowed when "
                 "SAFEQUERY_ENVIRONMENT is development or test."
             )
+
+        if self.production_identity_bridge_enabled:
+            if self.production_identity_bridge_trusted_issuer is None:
+                raise ValueError(
+                    "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_TRUSTED_ISSUER must be "
+                    "configured when SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_ENABLED "
+                    "is true."
+                )
+
+            if self.production_identity_bridge_trusted_source is None:
+                raise ValueError(
+                    "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_TRUSTED_SOURCE must be "
+                    "configured when SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_ENABLED "
+                    "is true."
+                )
+
+            if self.production_identity_bridge_shared_secret is None:
+                raise ValueError(
+                    "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET must be "
+                    "configured when SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_ENABLED "
+                    "is true."
+                )
 
         source_url = self.business_postgres_source_url
         if source_url is not None and str(source_url) == str(self.app_postgres_url):
@@ -167,6 +228,37 @@ class Settings(BaseSettings):
     @property
     def app_postgres_identity(self) -> Literal["application_postgres_persistence"]:
         return "application_postgres_persistence"
+
+    @property
+    def production_identity_bridge(self) -> ProductionIdentityBridgeSettings:
+        return ProductionIdentityBridgeSettings(
+            enabled=self.production_identity_bridge_enabled,
+            trusted_issuer=self.production_identity_bridge_trusted_issuer,
+            trusted_source=self.production_identity_bridge_trusted_source,
+            shared_secret=self.production_identity_bridge_shared_secret,
+        )
+
+    def require_production_identity_bridge(self) -> ProductionIdentityBridgeSettings:
+        bridge_settings = self.production_identity_bridge
+        if not bridge_settings.enabled:
+            raise RuntimeError(
+                "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_ENABLED must be true before "
+                "the production identity bridge can be used."
+            )
+
+        if (
+            bridge_settings.trusted_issuer is None
+            or bridge_settings.trusted_source is None
+            or bridge_settings.shared_secret is None
+        ):
+            raise RuntimeError(
+                "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_TRUSTED_ISSUER, "
+                "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_TRUSTED_SOURCE, and "
+                "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET must be "
+                "configured before the production identity bridge can be used."
+            )
+
+        return bridge_settings
 
     def require_business_postgres_source(self) -> BusinessPostgresSourceSettings:
         source_url = self.business_postgres_source_url
