@@ -106,6 +106,12 @@ class EnterpriseAuthBridgeInput(BaseModel):
                 "before SafeQuery can grant application authority."
             )
 
+        if self.actor.issuer != self.subject.issuer:
+            raise ValueError(
+                "Production identity bridge actor issuer must match subject issuer "
+                "before SafeQuery can grant application authority."
+            )
+
         seen: set[str] = set()
         for binding in self.governance_bindings:
             normalized = binding.normalized_binding

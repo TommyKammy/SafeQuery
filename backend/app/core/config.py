@@ -141,8 +141,20 @@ class Settings(BaseSettings):
         if value is None:
             return value
 
-        normalized = value.get_secret_value().strip().lower()
-        if normalized in {"change-me", "changeme", "todo", "placeholder", "example"}:
+        normalized = value.get_secret_value().strip()
+        if not normalized:
+            raise ValueError(
+                "SAFEQUERY_SQL_GENERATION_VANNA_API_KEY must be non-empty."
+            )
+
+        normalized_lower = normalized.lower()
+        if normalized_lower in {
+            "change-me",
+            "changeme",
+            "todo",
+            "placeholder",
+            "example",
+        }:
             raise ValueError(
                 "SAFEQUERY_SQL_GENERATION_VANNA_API_KEY must come from a trusted "
                 "credential source, not a placeholder value."
@@ -159,8 +171,21 @@ class Settings(BaseSettings):
         if value is None:
             return value
 
-        normalized = value.get_secret_value().strip().lower()
-        if normalized in {"change-me", "changeme", "todo", "placeholder", "example"}:
+        normalized = value.get_secret_value().strip()
+        if not normalized:
+            raise ValueError(
+                "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET must be "
+                "non-empty."
+            )
+
+        normalized_lower = normalized.lower()
+        if normalized_lower in {
+            "change-me",
+            "changeme",
+            "todo",
+            "placeholder",
+            "example",
+        }:
             raise ValueError(
                 "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET must come from "
                 "a trusted credential source, not a placeholder value."

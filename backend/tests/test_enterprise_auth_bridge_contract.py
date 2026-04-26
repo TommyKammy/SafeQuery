@@ -120,6 +120,23 @@ class EnterpriseAuthBridgeContractTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "actor.*subject"):
             normalize_enterprise_auth_bridge_input(payload)
 
+    def test_actor_and_subject_must_share_authoritative_issuer(self) -> None:
+        payload = _valid_bridge_payload()
+        payload["actor"] = {
+            "actor_id": "user:alice@example.com",
+            "actor_type": "human_user",
+            "issuer": "https://idp-a.example.test",
+        }
+        payload["subject"] = {
+            "subject_id": "user:alice@example.com",
+            "subject_type": "human_user",
+            "idp_subject": "00u-enterprise-alice",
+            "issuer": "https://idp-b.example.test",
+        }
+
+        with self.assertRaisesRegex(ValidationError, "actor issuer.*subject issuer"):
+            normalize_enterprise_auth_bridge_input(payload)
+
     def test_missing_governance_bindings_fail_closed(self) -> None:
         payload = _valid_bridge_payload()
         payload["governance_bindings"] = []

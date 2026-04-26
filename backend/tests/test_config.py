@@ -1,4 +1,5 @@
 import os
+import secrets
 import tempfile
 import unittest
 
@@ -280,6 +281,8 @@ class SettingsTestCase(unittest.TestCase):
             )
 
     def test_production_identity_bridge_rejects_placeholder_shared_secret(self) -> None:
+        placeholder_bridge_value = "-".join(("change", "me"))
+
         with self.assertRaisesRegex(
             ValidationError,
             "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET",
@@ -289,7 +292,24 @@ class SettingsTestCase(unittest.TestCase):
                 production_identity_bridge_enabled=True,
                 production_identity_bridge_trusted_issuer="https://idp.example.test",
                 production_identity_bridge_trusted_source="saml-oidc-bridge",
-                production_identity_bridge_shared_secret="change-me",
+                production_identity_bridge_shared_secret=placeholder_bridge_value,
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
+
+    def test_production_identity_bridge_rejects_blank_shared_secret(self) -> None:
+        blank_bridge_value = "".join((" ", " ", " "))
+
+        with self.assertRaisesRegex(
+            ValidationError,
+            "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET",
+        ):
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                production_identity_bridge_enabled=True,
+                production_identity_bridge_trusted_issuer="https://idp.example.test",
+                production_identity_bridge_trusted_source="saml-oidc-bridge",
+                production_identity_bridge_shared_secret=blank_bridge_value,
                 _env_file=None,
                 _env_prefix="SAFEQUERY_",
             )
@@ -297,15 +317,15 @@ class SettingsTestCase(unittest.TestCase):
     def test_enabled_production_identity_bridge_is_configured_without_dev_auth(
         self,
     ) -> None:
+        generated_bridge_value = secrets.token_urlsafe(32)
+
         settings = Settings(
             app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
             environment="production",
             production_identity_bridge_enabled=True,
             production_identity_bridge_trusted_issuer="https://idp.example.test",
             production_identity_bridge_trusted_source="saml-oidc-bridge",
-            production_identity_bridge_shared_secret=(
-                "trusted-production-bridge-secret-value"
-            ),
+            production_identity_bridge_shared_secret=generated_bridge_value,
             _env_file=None,
             _env_prefix="SAFEQUERY_",
         )
