@@ -1,0 +1,320 @@
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.core.config import Settings
+from app.db.models.dataset_contract import DatasetContract
+from app.db.models.schema_snapshot import SchemaSnapshot
+from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
+from app.services.first_run_doctor import _alembic_heads
+from app.services.health import build_operator_health
+from app.services.operator_workflow import get_operator_workflow_snapshot
+
+
+_APP_VERSION = "0.1.0"
+_WINDOWS_USER_PROFILE_SEGMENT = "Users"
+_FORBIDDEN_VALUE_PATTERNS = (
+    re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\\s\"']+"),
+    re.compile(r"(?i)\b(driver|server|database|uid|pwd)\s*="),
+    re.compile(r"(?i)\b(sk|pk|ghp|github_pat)-[a-z0-9][a-z0-9_-]{8,}"),
+    re.compile(r"(?i)(^|[\\/])Users[\\/][^\\/\"]+"),
+    re.compile(rf"(?i)[a-z]:\\{_WINDOWS_USER_PROFILE_SEGMENT}\\[^\\\"]+"),
+)
+
+
+class SupportBundleApplication(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    service: Literal["safequery-api"] = "safequery-api"
+    version: str
+    environment: str
+
+
+class SupportBundleMigrationPosture(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["current", "outdated", "unknown"]
+    detail: str
+    applied_revisions: list[str] = Field(
+        default_factory=list,
+        serialization_alias="appliedRevisions",
+    )
+    expected_heads: list[str] = Field(
+        default_factory=list,
+        serialization_alias="expectedHeads",
+    )
+
+
+class SupportBundleSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(serialization_alias="sourceId")
+    source_family: str = Field(serialization_alias="sourceFamily")
+    source_flavor: Optional[str] = Field(default=None, serialization_alias="sourceFlavor")
+    activation_posture: str = Field(serialization_alias="activationPosture")
+    dataset_contract_version: Optional[int] = Field(
+        default=None,
+        serialization_alias="datasetContractVersion",
+    )
+    schema_snapshot_version: Optional[int] = Field(
+        default=None,
+        serialization_alias="schemaSnapshotVersion",
+    )
+
+
+class SupportBundleHealth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    components: dict[str, object]
+
+
+class SupportBundleRecentWorkflowState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: str = Field(serialization_alias="itemType")
+    lifecycle_state: str = Field(serialization_alias="lifecycleState")
+    source_id: str = Field(serialization_alias="sourceId")
+
+
+class SupportBundleWorkflow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    history_count: int = Field(serialization_alias="historyCount")
+    recent_states: list[SupportBundleRecentWorkflowState] = Field(
+        serialization_alias="recentStates"
+    )
+    lifecycle_metrics: dict[str, object] = Field(serialization_alias="lifecycleMetrics")
+
+
+class SupportBundleAuditCompleteness(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["present", "empty", "error"]
+    recorded_events: int = Field(serialization_alias="recordedEvents")
+    sources_with_events: int = Field(serialization_alias="sourcesWithEvents")
+
+
+class SupportBundleRedaction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    excluded: list[str]
+
+
+class SupportBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bundle_version: Literal[1] = Field(default=1, serialization_alias="bundleVersion")
+    generated_at: datetime = Field(serialization_alias="generatedAt")
+    application: SupportBundleApplication
+    source_posture: dict[str, object] = Field(serialization_alias="sourcePosture")
+    migration_posture: SupportBundleMigrationPosture = Field(
+        serialization_alias="migrationPosture"
+    )
+    active_sources: list[SupportBundleSource] = Field(
+        serialization_alias="activeSources"
+    )
+    health: SupportBundleHealth
+    workflow: SupportBundleWorkflow
+    audit_completeness: SupportBundleAuditCompleteness = Field(
+        serialization_alias="auditCompleteness"
+    )
+    redaction: SupportBundleRedaction
+
+
+def _active_sources(session: Session) -> list[SupportBundleSource]:
+    sources = session.scalars(
+        select(RegisteredSource)
+        .where(RegisteredSource.activation_posture == SourceActivationPosture.ACTIVE)
+        .order_by(RegisteredSource.source_id)
+    )
+    bundle_sources: list[SupportBundleSource] = []
+    for source in sources:
+        contract = (
+            session.get(DatasetContract, source.dataset_contract_id)
+            if source.dataset_contract_id is not None
+            else None
+        )
+        snapshot = (
+            session.get(SchemaSnapshot, source.schema_snapshot_id)
+            if source.schema_snapshot_id is not None
+            else None
+        )
+        bundle_sources.append(
+            SupportBundleSource(
+                source_id=source.source_id,
+                source_family=source.source_family,
+                source_flavor=source.source_flavor,
+                activation_posture=source.activation_posture.value,
+                dataset_contract_version=(
+                    contract.contract_version if contract is not None else None
+                ),
+                schema_snapshot_version=(
+                    snapshot.snapshot_version if snapshot is not None else None
+                ),
+            )
+        )
+    return bundle_sources
+
+
+def _migration_posture(session: Session) -> SupportBundleMigrationPosture:
+    try:
+        applied_revisions = sorted(
+            str(row[0])
+            for row in session.execute(text("SELECT version_num FROM alembic_version"))
+        )
+    except SQLAlchemyError as exc:
+        return SupportBundleMigrationPosture(
+            status="unknown",
+            detail=exc.__class__.__name__,
+        )
+
+    try:
+        expected_heads = sorted(_alembic_heads())
+    except Exception as exc:
+        return SupportBundleMigrationPosture(
+            status="unknown",
+            detail=exc.__class__.__name__,
+            applied_revisions=applied_revisions,
+        )
+
+    if applied_revisions == expected_heads:
+        return SupportBundleMigrationPosture(
+            status="current",
+            detail="alembic_head_current",
+            applied_revisions=applied_revisions,
+            expected_heads=expected_heads,
+        )
+    return SupportBundleMigrationPosture(
+        status="outdated",
+        detail="alembic_head_mismatch",
+        applied_revisions=applied_revisions,
+        expected_heads=expected_heads,
+    )
+
+
+def _recent_workflow_states(
+    session: Session,
+    *,
+    limit: int = 8,
+) -> tuple[int, list[SupportBundleRecentWorkflowState]]:
+    snapshot = get_operator_workflow_snapshot(session)
+    return len(snapshot.history), [
+        SupportBundleRecentWorkflowState(
+            item_type=item.item_type,
+            lifecycle_state=item.lifecycle_state,
+            source_id=item.source_id,
+        )
+        for item in snapshot.history[:limit]
+    ]
+
+
+def _audit_completeness(metrics: Mapping[str, object]) -> SupportBundleAuditCompleteness:
+    audit_persistence = metrics.get("audit_persistence")
+    if not isinstance(audit_persistence, dict):
+        return SupportBundleAuditCompleteness(
+            status="error",
+            recorded_events=0,
+            sources_with_events=0,
+        )
+
+    recorded_events = audit_persistence.get("recorded_events")
+    sources_with_events = audit_persistence.get("sources_with_events")
+    recorded_event_count = recorded_events if isinstance(recorded_events, int) else 0
+    source_count = sources_with_events if isinstance(sources_with_events, int) else 0
+    return SupportBundleAuditCompleteness(
+        status="present" if recorded_event_count else "empty",
+        recorded_events=recorded_event_count,
+        sources_with_events=source_count,
+    )
+
+
+def _redaction_policy() -> SupportBundleRedaction:
+    return SupportBundleRedaction(
+        excluded=[
+            "connection_strings",
+            "raw_credentials",
+            "tokens",
+            "raw_result_rows",
+            "candidate_sql",
+            "workstation_local_paths",
+            "source_connection_references",
+        ]
+    )
+
+
+def _iter_strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for item in value.values():
+            strings.extend(_iter_strings(item))
+        return strings
+    if isinstance(value, list):
+        strings = []
+        for item in value:
+            strings.extend(_iter_strings(item))
+        return strings
+    return []
+
+
+def _assert_bundle_is_shareable(bundle: SupportBundle) -> None:
+    payload = bundle.model_dump(mode="json", by_alias=True, exclude_none=True)
+    for value in _iter_strings(payload):
+        for pattern in _FORBIDDEN_VALUE_PATTERNS:
+            if pattern.search(value):
+                raise ValueError(
+                    "Support bundle contains a non-shareable diagnostic value."
+                )
+
+
+def build_support_bundle(
+    session: Session,
+    *,
+    settings: Settings,
+    database: Mapping[str, str],
+    sql_generation: Mapping[str, object],
+    generated_at: datetime | None = None,
+) -> SupportBundle:
+    operator_health = build_operator_health(
+        session,
+        database=database,
+        sql_generation=sql_generation,
+    )
+    workflow_lifecycle_metrics = operator_health["workflow_lifecycle_metrics"]
+    assert isinstance(workflow_lifecycle_metrics, dict)
+    history_count, recent_states = _recent_workflow_states(session)
+
+    generated_at = generated_at or datetime.now(timezone.utc)
+    bundle = SupportBundle(
+        generated_at=generated_at.astimezone(timezone.utc),
+        application=SupportBundleApplication(
+            version=_APP_VERSION,
+            environment=settings.environment,
+        ),
+        source_posture=settings.source_posture_telemetry().model_dump(mode="json"),
+        migration_posture=_migration_posture(session),
+        active_sources=_active_sources(session),
+        health=SupportBundleHealth(
+            status=str(operator_health["status"]),
+            components=dict(operator_health["components"]),
+        ),
+        workflow=SupportBundleWorkflow(
+            history_count=history_count,
+            recent_states=recent_states,
+            lifecycle_metrics=workflow_lifecycle_metrics,
+        ),
+        audit_completeness=_audit_completeness(workflow_lifecycle_metrics),
+        redaction=_redaction_policy(),
+    )
+    _assert_bundle_is_shareable(bundle)
+    return bundle
