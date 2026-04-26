@@ -157,6 +157,7 @@ type AuthoritativeRunContext = {
   primaryDenyCode?: string | null;
   retrievedCitations: OperatorWorkflowRetrievedCitation[];
   resultTruncated?: boolean | null;
+  resultRows?: ResultRow[];
   rowCount?: number | null;
   runIdentity: string;
   runState?: string | null;
@@ -169,12 +170,24 @@ type ApiErrorEnvelope = {
 };
 
 type ExecuteSubmissionResult = {
+  auditEvents: OperatorWorkflowAuditEvent[];
   candidateId: string;
+  executedEvidence: OperatorWorkflowExecutedEvidence[];
   executionRunId?: string;
   resultTruncated: boolean;
+  rows: ResultRow[];
   rowCount: number;
   sourceId: string;
 };
+
+type ResultCell = string | number | boolean | null;
+type ResultRow = Record<string, ResultCell>;
+
+const MAX_RENDERED_RESULT_ROWS = 10;
+const MAX_RENDERED_RESULT_COLUMNS = 8;
+
+const sensitiveResultFieldPattern =
+  /(secret|token|password|credential|connection|string|session|local[_-]?path|filepath|file[_-]?path|private[_-]?key|api[_-]?key)/i;
 
 const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
   canceled: {
@@ -338,6 +351,125 @@ function parseAuditEvents(value: unknown): Record<string, unknown>[] {
   return value.audit.events.filter(isObject);
 }
 
+function readOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function readOptionalNonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function parseExecuteAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const eventId = readOptionalString(value.event_id);
+  const eventType = readOptionalString(value.event_type);
+  const occurredAt = readOptionalString(value.occurred_at);
+  const requestId = readOptionalString(value.request_id);
+  const sourceId = readOptionalString(value.source_id);
+
+  if (!eventId || !eventType || !occurredAt || !requestId || !sourceId) {
+    return null;
+  }
+
+  return {
+    candidateId: readOptionalString(value.query_candidate_id),
+    candidateState: readOptionalString(value.candidate_state),
+    eventId,
+    eventType,
+    occurredAt,
+    primaryDenyCode: readOptionalString(value.primary_deny_code),
+    requestId,
+    resultTruncated: typeof value.result_truncated === "boolean" ? value.result_truncated : null,
+    rowCount: readOptionalNonNegativeInteger(value.execution_row_count),
+    sourceId
+  };
+}
+
+function parseExecuteAuditEvents(value: unknown): OperatorWorkflowAuditEvent[] {
+  return parseAuditEvents(value)
+    .map(parseExecuteAuditEvent)
+    .filter((event): event is OperatorWorkflowAuditEvent => event !== null);
+}
+
+function isResultCell(value: unknown): value is ResultCell {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+}
+
+function parseExecuteRows(value: unknown): ResultRow[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const rows: ResultRow[] = [];
+  for (const item of value) {
+    if (!isObject(item)) {
+      return null;
+    }
+
+    const row: ResultRow = {};
+    for (const [key, cell] of Object.entries(item)) {
+      if (
+        typeof key !== "string" ||
+        key.trim().length === 0 ||
+        sensitiveResultFieldPattern.test(key) ||
+        !isResultCell(cell)
+      ) {
+        continue;
+      }
+      row[key] = cell;
+    }
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function buildExecutedEvidenceFromExecuteResponse(
+  result: {
+    auditEvents: OperatorWorkflowAuditEvent[];
+    candidateId: string;
+    resultTruncated: boolean;
+    rowCount: number;
+    sourceId: string;
+  },
+  metadata: Record<string, unknown>
+): OperatorWorkflowExecutedEvidence[] {
+  const completedEvent = result.auditEvents.find(
+    (event) =>
+      event.eventType === "execution_completed" &&
+      event.candidateId === result.candidateId &&
+      event.sourceId === result.sourceId
+  );
+  const sourceFamily = readOptionalString(metadata.source_family);
+
+  if (!completedEvent || !sourceFamily) {
+    return [];
+  }
+
+  return [
+    {
+      authority: "backend_execution_result",
+      canAuthorizeExecution: false,
+      candidateId: result.candidateId,
+      executionAuditEventId: completedEvent.eventId,
+      executionAuditEventType: "execution_completed",
+      resultTruncated: result.resultTruncated,
+      rowCount: result.rowCount,
+      sourceFamily,
+      sourceFlavor: readOptionalString(metadata.source_flavor),
+      sourceId: result.sourceId
+    }
+  ];
+}
+
 function hasCanceledAuditEvent(value: unknown): boolean {
   return parseAuditEvents(value).some((event) => event.candidate_state === "canceled");
 }
@@ -427,6 +559,7 @@ function parseExecuteSubmissionResult(
   const executionRunId = readRequiredString(value.metadata.execution_run_id);
   const rowCount = value.metadata.row_count;
   const resultTruncated = value.metadata.result_truncated;
+  const rows = parseExecuteRows(value.rows);
 
   if (
     candidateId !== expectedCandidateId ||
@@ -434,15 +567,29 @@ function parseExecuteSubmissionResult(
     typeof rowCount !== "number" ||
     !Number.isInteger(rowCount) ||
     rowCount < 0 ||
-    typeof resultTruncated !== "boolean"
+    typeof resultTruncated !== "boolean" ||
+    rows === null ||
+    rows.length !== rowCount
   ) {
     return null;
   }
 
-  return {
+  const auditEvents = parseExecuteAuditEvents(value);
+  const partialResult = {
+    auditEvents,
     candidateId,
+    resultTruncated,
+    rowCount,
+    sourceId
+  };
+
+  return {
+    auditEvents,
+    candidateId,
+    executedEvidence: buildExecutedEvidenceFromExecuteResponse(partialResult, value.metadata),
     executionRunId,
     resultTruncated,
+    rows,
     rowCount,
     sourceId
   };
@@ -915,6 +1062,70 @@ function getResultTitle(state: CanonicalWorkflowState): string {
   return "Results unavailable";
 }
 
+function resultColumns(rows: ResultRow[]): string[] {
+  const columns: string[] = [];
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      if (!columns.includes(key)) {
+        columns.push(key);
+      }
+      if (columns.length >= MAX_RENDERED_RESULT_COLUMNS) {
+        return columns;
+      }
+    }
+  }
+  return columns;
+}
+
+function renderResultRows(rows: ResultRow[]) {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const displayedRows = rows.slice(0, MAX_RENDERED_RESULT_ROWS);
+  const columns = resultColumns(displayedRows);
+  const rowsTruncated = rows.length > displayedRows.length;
+
+  if (columns.length === 0) {
+    return (
+      <div className="state-callout state-callout-empty">
+        <p className="state-callout-title">Result rows contained no displayable fields</p>
+        <p>All returned fields were outside the bounded display contract.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="result-table-wrap">
+      <table aria-label="execute response result rows" className="result-table">
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column} scope="col">
+                {column}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {displayedRows.map((row, index) => (
+            <tr key={index}>
+              {columns.map((column) => (
+                <td key={column}>{String(row[column] ?? "")}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rowsTruncated ? (
+        <p className="section-copy">
+          Showing {displayedRows.length} of {rows.length} returned rows.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function renderResultContent(
   state: CanonicalWorkflowState,
   runContext?: AuthoritativeRunContext | null
@@ -928,13 +1139,16 @@ function renderResultContent(
       runContext.resultTruncated !== undefined
     ) {
       return (
-        <div className="state-callout state-callout-success">
-          <p className="state-callout-title">Authoritative result metadata</p>
-          <p>
-            {runContext.rowCount} rows returned; result payload{" "}
-            {runContext.resultTruncated ? "truncated" : "not truncated"}.
-          </p>
-        </div>
+        <>
+          <div className="state-callout state-callout-success">
+            <p className="state-callout-title">Authoritative result metadata</p>
+            <p>
+              {runContext.rowCount} rows returned; result payload{" "}
+              {runContext.resultTruncated ? "truncated" : "not truncated"}.
+            </p>
+          </div>
+          {renderResultRows(runContext.resultRows ?? [])}
+        </>
       );
     }
 
@@ -963,13 +1177,21 @@ function renderResultContent(
 
   if (state === "empty") {
     return (
-      <div className="state-callout state-callout-empty">
-        <p className="state-callout-title">Empty state reached</p>
-        <p>
-          The approved workflow returned zero rows. Keep the question, SQL preview, and guard
-          history intact so the operator can revise without losing context.
-        </p>
-      </div>
+      <>
+        <div className="state-callout state-callout-empty">
+          <p className="state-callout-title">Empty state reached</p>
+          <p>
+            The approved workflow returned zero rows. Keep the question, SQL preview, and guard
+            history intact so the operator can revise without losing context.
+          </p>
+        </div>
+        {runContext?.rowCount === 0 && runContext.resultTruncated === false ? (
+          <div className="state-callout state-callout-success">
+            <p className="state-callout-title">Authoritative result metadata</p>
+            <p>0 rows returned; result payload not truncated.</p>
+          </div>
+        ) : null}
+      </>
     );
   }
 
@@ -1648,12 +1870,13 @@ export function QueryWorkflowShell({
       const nextState = result.rowCount === 0 ? "empty" : "completed";
       setSubmittedState(nextState);
       setSubmittedRunContext({
-        auditEvents: [],
-        executedEvidence: [],
+        auditEvents: result.auditEvents,
+        executedEvidence: result.executedEvidence,
         lifecycleState: nextState,
         lifecycleTimestamp: new Date().toISOString(),
         retrievedCitations: [],
         resultTruncated: result.resultTruncated,
+        resultRows: result.rows,
         rowCount: result.rowCount,
         runIdentity: result.executionRunId ?? result.candidateId,
         runState: nextState,

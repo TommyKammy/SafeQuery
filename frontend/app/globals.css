@@ -296,7 +296,6 @@ button:focus-visible {
 .guard-list,
 .evidence-list,
 .history-list,
-.result-table,
 .placeholder-block,
 .first-run-panel {
   display: grid;
@@ -508,10 +507,37 @@ button:disabled {
   border-color: rgba(255, 107, 122, 0.24);
 }
 
-.result-table {
+.result-table-wrap {
   overflow: hidden;
   border: 1px solid var(--border-soft);
   border-radius: 16px;
+  background: rgba(7, 11, 20, 0.38);
+}
+
+.result-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.result-table th,
+.result-table td {
+  padding: 12px 14px;
+  border-top: 1px solid rgba(163, 191, 250, 0.1);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.result-table th {
+  border-top: 0;
+  background: rgba(63, 208, 255, 0.08);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.result-table td {
+  color: var(--text-secondary);
 }
 
 .result-row {
