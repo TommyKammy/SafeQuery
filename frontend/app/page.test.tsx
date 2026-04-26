@@ -755,6 +755,74 @@ describe("HomePage", () => {
     expect(screen.queryByText(/results placeholder/i)).not.toBeInTheDocument();
   });
 
+  it("renders selected terminal run context from authoritative history", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    itemType: "run",
+                    label: "Selected completed run",
+                    lifecycleState: "completed",
+                    occurredAt: "2026-04-21T14:42:00Z",
+                    recordId: "run-authoritative-282",
+                    runState: null,
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "Authoritative run source / approved_vendor_spend"
+                  }
+                ],
+                sources: [
+                  {
+                    activationPosture: "active",
+                    description: "Registry fallback source label should not override selected run context.",
+                    displayLabel: "Registry fallback source label",
+                    sourceId: "sap-approved-spend"
+                  }
+                ]
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-authoritative-282",
+          question: "Selected completed run",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    const lifecycleSection = screen
+      .getByRole("heading", { name: /source and lifecycle context/i })
+      .closest("section");
+    expect(lifecycleSection).not.toBeNull();
+    const lifecycleContext = within(lifecycleSection!);
+
+    expect(lifecycleContext.getByText("Authoritative run source / approved_vendor_spend")).toBeInTheDocument();
+    expect(lifecycleContext.getByText("run-authoritative-282")).toBeInTheDocument();
+    expect(lifecycleContext.getByText(/\d{4}-\d{2}-\d{2} \d{2}:/)).toHaveTextContent(
+      "2026-04-21 14:42 UTC"
+    );
+    expect(lifecycleContext.getByText("completed")).toBeInTheDocument();
+    expect(lifecycleContext.queryByText("Registry fallback source label")).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder rows only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
+  });
+
   it("renders explicit empty and review-denied unavailable states", async () => {
     const { rerender } = render(
       await HomePage({

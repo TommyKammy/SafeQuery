@@ -55,7 +55,7 @@ type WorkflowContext = {
   lifecycleTimestamp?: string;
   requestIdentity?: string;
   runIdentity?: string;
-  runState?: string;
+  runState?: string | null;
   sourceIdentity: string;
 };
 
@@ -121,9 +121,11 @@ type AuthoritativeCandidatePreview = {
 };
 
 type AuthoritativeRunContext = {
+  lifecycleState: string;
   lifecycleTimestamp: string;
   runIdentity: string;
-  runState: string;
+  runState?: string | null;
+  sourceLabel: string;
 };
 
 type ApiErrorEnvelope = {
@@ -217,6 +219,15 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function readRequiredString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function formatLifecycleTimestamp(value: string): string {
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return value;
+  }
+
+  return `${timestamp.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
 function readCsrfToken(): string | undefined {
@@ -550,18 +561,19 @@ function findAuthoritativeRunContext(
     (item) =>
       item.itemType === "run" &&
       item.sourceId === sourceId &&
-      item.recordId === historyRecordId &&
-      item.runState
+      item.recordId === historyRecordId
   );
 
-  if (!run?.runState) {
+  if (!run) {
     return null;
   }
 
   return {
-    lifecycleTimestamp: run.occurredAt,
+    lifecycleState: run.lifecycleState,
+    lifecycleTimestamp: formatLifecycleTimestamp(run.occurredAt),
     runIdentity: run.recordId,
-    runState: run.runState
+    runState: run.runState,
+    sourceLabel: run.sourceLabel
   };
 }
 
@@ -601,7 +613,10 @@ function getWorkflowContext(
   runContext?: AuthoritativeRunContext | null
 ): WorkflowContext {
   const sourceIdentity =
-    candidatePreview?.sourceLabel ?? source?.displayLabel ?? "No source selected yet";
+    candidatePreview?.sourceLabel ??
+    runContext?.sourceLabel ??
+    source?.displayLabel ??
+    "No source selected yet";
 
   if (candidatePreview && (state === "preview" || state === "review_denied")) {
     return {
@@ -630,7 +645,7 @@ function getWorkflowContext(
     return {
       lifecycleTimestamp: runContext.lifecycleTimestamp,
       runIdentity: runContext.runIdentity,
-      runState: runContext.runState,
+      runState: runContext.runState ?? runContext.lifecycleState,
       sourceIdentity
     };
   }
