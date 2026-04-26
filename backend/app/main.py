@@ -192,10 +192,10 @@ def _load_executable_candidate_record(
             "Candidate execution was denied.",
     )
 
-    approval, preview_candidate = row
+    approval, _preview_candidate = row
     if (
-        not isinstance(preview_candidate.candidate_sql, str)
-        or not preview_candidate.candidate_sql.strip()
+        not isinstance(approval.approved_sql, str)
+        or not approval.approved_sql.strip()
     ):
         raise api_error(
             403,
@@ -204,7 +204,7 @@ def _load_executable_candidate_record(
         )
 
     return ExecutableCandidateRecord(
-        canonical_sql=preview_candidate.candidate_sql,
+        canonical_sql=approval.approved_sql,
         source=SourceBoundCandidateMetadata(
             source_id=approval.source_id,
             source_family=approval.source_family,

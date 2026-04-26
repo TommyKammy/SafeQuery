@@ -184,6 +184,9 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
                 execution_policy_version=CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY[
                     source.source_family
                 ],
+                approved_sql=(
+                    "SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"
+                ),
                 owner_subject_id="user:demo-local-operator",
                 session_id="session-123",
                 approved_at=now - timedelta(minutes=1),
@@ -218,6 +221,60 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             calls,
             ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
         )
+
+    def test_execute_candidate_api_runs_approved_snapshot_after_preview_row_drift(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        candidate = (
+            self.session.query(PreviewCandidate)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        candidate.candidate_sql = "SELECT unapproved_column FROM drifted_preview"
+        self.session.commit()
+
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            calls.append(canonical_sql)
+            return [{"vendor_name": "Acme"}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(query_runner).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            calls,
+            ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
+        )
+
+    def test_execute_candidate_api_rejects_missing_approved_snapshot_before_runner(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        approval.approved_sql = None
+        self.session.commit()
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(lambda **_: calls.append("called")).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"]["code"], "execution_denied")
+        self.assertEqual(calls, [])
 
     def test_execute_candidate_api_rejects_raw_sql_before_runner_invocation(self) -> None:
         calls: list[str] = []

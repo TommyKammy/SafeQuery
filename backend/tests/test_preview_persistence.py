@@ -229,6 +229,7 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert persisted_approval.owner_subject_id == "user:alice"
         assert persisted_approval.session_id == "application-session-redacted"
         assert persisted_approval.execution_policy_version == 3
+        assert persisted_approval.approved_sql is None
         assert persisted_approval.approval_state == "approved"
         assert persisted_approval.approved_at is not None
         assert persisted_approval.approval_expires_at > persisted_approval.approved_at
@@ -363,6 +364,10 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
         )
 
         assert persisted_candidate.candidate_sql == candidate_sql
+        persisted_approval = session.execute(
+            select(PreviewCandidateApproval)
+        ).scalar_one()
+        assert persisted_approval.approved_sql == candidate_sql
         assert persisted_candidate.adapter_provider == "local_llm"
         assert persisted_candidate.adapter_model == "safequery-test-sql"
         assert persisted_candidate.adapter_version == "test.local_llm.v1"

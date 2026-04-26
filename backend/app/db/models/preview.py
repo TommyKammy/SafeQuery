@@ -194,6 +194,7 @@ class PreviewCandidateApproval(Base):
     dataset_contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
     schema_snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False)
     execution_policy_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    approved_sql: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     owner_subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
     session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     approved_at: Mapped[datetime] = mapped_column(
