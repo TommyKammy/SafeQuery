@@ -15,6 +15,7 @@ from app.db.models.preview import PreviewAuditEvent
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
+from app.features.audit.event_model import SourceAwareAuditEvent
 from app.services.operator_workflow import (
     _latest_candidate_events,
     _latest_request_events,
@@ -24,6 +25,7 @@ from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
     PreviewSubmissionRequest,
+    persist_execution_audit_events,
     submit_preview_request,
 )
 
@@ -128,6 +130,34 @@ def _audit_event(
         source_family="postgresql",
         source_flavor="warehouse",
         audit_payload={"event_type": event_type},
+    )
+
+
+def _execution_audit_event(
+    *,
+    event_id: UUID,
+    event_type: str,
+    occurred_at: datetime,
+    result_truncated: bool | None = None,
+    row_count: int | None = None,
+) -> SourceAwareAuditEvent:
+    return SourceAwareAuditEvent(
+        event_id=event_id,
+        event_type=event_type,
+        occurred_at=occurred_at,
+        request_id="preview-request-234",
+        correlation_id="preview-request-234-correlation",
+        user_subject="user:alice",
+        session_id="preview-request-234-session",
+        query_candidate_id="preview-candidate-234",
+        candidate_owner_subject="user:alice",
+        source_id="sap-approved-spend",
+        source_family="postgresql",
+        source_flavor="warehouse",
+        dataset_contract_version=1,
+        schema_snapshot_version=1,
+        execution_row_count=row_count,
+        result_truncated=result_truncated,
     )
 
 
@@ -236,6 +266,68 @@ def test_operator_workflow_history_is_built_from_preview_request_and_candidate_r
             "occurredAt": "2026-01-02T03:04:05Z",
         },
     ]
+
+
+def test_operator_workflow_history_includes_execution_run_records() -> None:
+    with _session_scope() as session:
+        _seed_authoritative_source_governance(session)
+
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+            ),
+            AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            session,
+            audit_context=_audit_context(
+                request_id="preview-request-234",
+                candidate_id="preview-candidate-234",
+            ),
+        )
+        persist_execution_audit_events(
+            session,
+            candidate_id="preview-candidate-234",
+            audit_events=[
+                _execution_audit_event(
+                    event_id=UUID("00000000-0000-4000-8000-000000000010"),
+                    event_type="execution_requested",
+                    occurred_at=datetime(2026, 1, 2, 3, 5, 1, tzinfo=timezone.utc),
+                ),
+                _execution_audit_event(
+                    event_id=UUID("00000000-0000-4000-8000-000000000011"),
+                    event_type="execution_started",
+                    occurred_at=datetime(2026, 1, 2, 3, 5, 2, tzinfo=timezone.utc),
+                ),
+                _execution_audit_event(
+                    event_id=UUID("00000000-0000-4000-8000-000000000012"),
+                    event_type="execution_completed",
+                    occurred_at=datetime(2026, 1, 2, 3, 5, 3, tzinfo=timezone.utc),
+                    row_count=0,
+                    result_truncated=False,
+                ),
+            ],
+        )
+
+        snapshot = get_operator_workflow_snapshot(session)
+
+    history = [
+        item.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for item in snapshot.history
+    ]
+    assert history[0] == {
+        "itemType": "run",
+        "recordId": "00000000-0000-4000-8000-000000000012",
+        "label": "Show approved vendors by quarterly spend",
+        "sourceId": "sap-approved-spend",
+        "sourceLabel": "SAP spend cube / approved_vendor_spend",
+        "lifecycleState": "empty",
+        "occurredAt": "2026-01-02T03:05:03Z",
+        "requestId": "preview-request-234",
+        "runState": "empty",
+    }
 
 
 def test_operator_workflow_history_includes_audit_safe_unavailable_preview_denials() -> None:
