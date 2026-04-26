@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
 from app.db.models.preview import (
+    PreviewAuditEvent,
     PreviewCandidate,
     PreviewCandidateApproval,
     PreviewRequest,
@@ -256,6 +257,71 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
         )
 
+    def test_execute_candidate_api_persists_source_aware_execution_audit_events(
+        self,
+    ) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [{"vendor_name": f"Vendor {index}"} for index in range(225)]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(query_runner).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        persisted_events = (
+            self.session.query(PreviewAuditEvent)
+            .order_by(PreviewAuditEvent.lifecycle_order)
+            .all()
+        )
+
+        self.assertEqual(
+            [event.event_type for event in persisted_events],
+            [
+                "execution_requested",
+                "execution_started",
+                "execution_completed",
+            ],
+        )
+        self.assertEqual(
+            [event.causation_event_id for event in persisted_events],
+            [
+                None,
+                persisted_events[0].event_id,
+                persisted_events[1].event_id,
+            ],
+        )
+        self.assertEqual(
+            str(persisted_events[-1].event_id),
+            payload["metadata"]["execution_run_id"],
+        )
+        self.assertEqual(
+            persisted_events[-1].audit_payload["execution_row_count"],
+            200,
+        )
+        self.assertIs(
+            persisted_events[-1].audit_payload["result_truncated"],
+            True,
+        )
+        self.assertEqual(payload["metadata"]["row_count"], 200)
+        self.assertIs(payload["metadata"]["result_truncated"], True)
+        self.assertEqual(payload["metadata"]["truncation_reason"], "row_limit")
+        for event in persisted_events:
+            self.assertEqual(event.request_id, "request-123")
+            self.assertEqual(event.candidate_id, "candidate-123")
+            self.assertEqual(event.source_id, "demo-business-postgres")
+            self.assertEqual(event.source_family, "postgresql")
+            self.assertEqual(event.source_flavor, "warehouse")
+            self.assertEqual(event.dataset_contract_version, 3)
+            self.assertEqual(event.schema_snapshot_version, 7)
+            self.assertEqual(event.audit_payload["execution_policy_version"], 3)
+            self.assertNotIn("safequery_exec:secret", str(event.audit_payload))
+            self.assertNotIn("business-postgres-source", str(event.audit_payload))
+
     def test_execute_candidate_api_runs_approved_snapshot_after_preview_row_drift(
         self,
     ) -> None:
@@ -385,6 +451,58 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(approval.approval_state, "approved")
         self.assertIsNone(approval.executed_at)
 
+    def test_execute_candidate_api_persists_runtime_failure_audit_events(
+        self,
+    ) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            raise RuntimeError(
+                "driver failed for safequery_exec:secret@business-postgres-source"
+            )
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(query_runner).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "execution_unavailable")
+        persisted_events = (
+            self.session.query(PreviewAuditEvent)
+            .order_by(PreviewAuditEvent.lifecycle_order)
+            .all()
+        )
+        self.assertEqual(
+            [event.event_type for event in persisted_events],
+            [
+                "execution_requested",
+                "execution_started",
+                "execution_failed",
+            ],
+        )
+        self.assertEqual(persisted_events[-1].candidate_state, "failed")
+        self.assertEqual(
+            [event.causation_event_id for event in persisted_events],
+            [
+                None,
+                persisted_events[0].event_id,
+                persisted_events[1].event_id,
+            ],
+        )
+        serialized_events = str([event.audit_payload for event in persisted_events])
+        self.assertNotIn("safequery_exec:secret", serialized_events)
+        self.assertNotIn("business-postgres-source", serialized_events)
+        self.assertNotIn("safequery_exec:secret", response.text)
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "executed")
+        self.assertIsNotNone(approval.executed_at)
+
     def test_execute_candidate_api_rejects_raw_sql_before_runner_invocation(self) -> None:
         calls: list[str] = []
         app_session = create_test_application_session(build_dev_authenticated_subject())
@@ -424,6 +542,19 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(
             payload["audit"]["events"][0]["query_candidate_id"],
             "candidate-123",
+        )
+        persisted_event = self.session.query(PreviewAuditEvent).one()
+        self.assertEqual(persisted_event.event_type, "execution_denied")
+        self.assertEqual(persisted_event.request_id, "request-123")
+        self.assertEqual(persisted_event.candidate_id, "candidate-123")
+        self.assertEqual(persisted_event.source_id, "demo-business-postgres")
+        self.assertEqual(
+            persisted_event.primary_deny_code,
+            "DENY_SOURCE_BINDING_MISMATCH",
+        )
+        self.assertEqual(
+            persisted_event.audit_payload["denial_cause"],
+            "source_binding_mismatch",
         )
         self.assertEqual(calls, [])
         approval = (

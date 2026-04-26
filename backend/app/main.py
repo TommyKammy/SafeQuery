@@ -24,6 +24,7 @@ from app.core.errors import (
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.db.models.preview import PreviewCandidate
 from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
 from app.features.audit import SourceAwareAuditEvent
@@ -44,6 +45,7 @@ from app.features.execution import (
     ExecutionConnectorSelection,
     ExecutionConnectorSelectionError,
     ExecutionRuntimeCancelledError,
+    ExecutionRuntimeFailureError,
     execute_candidate_sql,
     select_execution_connector,
 )
@@ -65,6 +67,7 @@ from app.services.request_preview import (
     PreviewSubmissionEntitlementError,
     PreviewSubmissionRequest,
     PreviewSubmissionResponse,
+    persist_execution_audit_events,
     submit_preview_request,
 )
 from app.services.sql_generation_adapter import resolve_sql_generation_adapter
@@ -505,10 +508,18 @@ def create_app() -> FastAPI:
 
         occurred_at = datetime.now(timezone.utc)
         user_subject = authenticated_subject.normalized_subject_id()
+        preview_candidate = session.scalar(
+            select(PreviewCandidate).where(PreviewCandidate.candidate_id == candidate_id)
+        )
+        audit_request_id = (
+            preview_candidate.request_id
+            if preview_candidate is not None
+            else request_id
+        )
         lifecycle_audit_context = CandidateLifecycleAuditContext(
             event_id=uuid4(),
             occurred_at=occurred_at,
-            request_id=request_id,
+            request_id=audit_request_id,
             correlation_id=str(uuid4()),
             user_subject=user_subject,
             session_id=application_session.audit_session_id,
@@ -571,7 +582,7 @@ def create_app() -> FastAPI:
             execution_audit_context = ExecutionAuditContext(
                 event_id=uuid4(),
                 occurred_at=occurred_at,
-                request_id=request_id,
+                request_id=audit_request_id,
                 correlation_id=lifecycle_audit_context.correlation_id,
                 user_subject=user_subject,
                 session_id=application_session.audit_session_id,
@@ -601,6 +612,12 @@ def create_app() -> FastAPI:
                 audit_context=execution_audit_context,
             )
         except CandidateLifecycleRevalidationError as exc:
+            if exc.audit_event is not None:
+                persist_execution_audit_events(
+                    session,
+                    candidate_id=candidate_id,
+                    audit_events=[exc.audit_event],
+                )
             audit_events = (
                 _serialize_execution_audit_events([exc.audit_event])
                 if exc.audit_event is not None
@@ -616,6 +633,11 @@ def create_app() -> FastAPI:
             ExecutionConnectorExecutionError,
             ExecutionConnectorSelectionError,
         ) as exc:
+            persist_execution_audit_events(
+                session,
+                candidate_id=candidate_id,
+                audit_events=exc.audit_events,
+            )
             audit_events = _serialize_execution_audit_events(exc.audit_events)
             raise api_error(
                 403,
@@ -624,6 +646,24 @@ def create_app() -> FastAPI:
                 audit_events=audit_events or None,
             ) from exc
         except ExecutionRuntimeCancelledError as exc:
+            persist_execution_audit_events(
+                session,
+                candidate_id=candidate_id,
+                audit_events=exc.audit_events,
+            )
+            audit_events = _serialize_execution_audit_events(exc.audit_events)
+            raise api_error(
+                503,
+                "execution_unavailable",
+                "Candidate execution is unavailable.",
+                audit_events=audit_events or None,
+            ) from exc
+        except ExecutionRuntimeFailureError as exc:
+            persist_execution_audit_events(
+                session,
+                candidate_id=candidate_id,
+                audit_events=exc.audit_events,
+            )
             audit_events = _serialize_execution_audit_events(exc.audit_events)
             raise api_error(
                 503,
@@ -638,6 +678,11 @@ def create_app() -> FastAPI:
                 "Candidate execution is unavailable.",
             ) from exc
 
+        persist_execution_audit_events(
+            session,
+            candidate_id=candidate_id,
+            audit_events=result.audit_events,
+        )
         return CandidateExecuteResponse(
             candidate_id=candidate_id,
             source_id=result.source_id,

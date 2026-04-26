@@ -205,6 +205,18 @@ class ExecutionRuntimeCancelledError(RuntimeError):
         self.audit_event = self.audit_events[-1] if self.audit_events else None
 
 
+class ExecutionRuntimeFailureError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        audit_events: list[SourceAwareAuditEvent] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.audit_events = list(audit_events or [])
+        self.audit_event = self.audit_events[-1] if self.audit_events else None
+
+
 class MSSQLExecutionRuntimeUnavailable(RuntimeError):
     """Raised when required backend-owned MSSQL runtime dependencies are absent."""
 
@@ -402,6 +414,29 @@ def _attach_cancellation_audit_event(
             candidate_source=candidate_source,
             audit_context=audit_context,
             candidate_state="canceled",
+        ),
+    )
+
+
+def _attach_runtime_failure_audit_event(
+    *,
+    error: RuntimeError,
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: ExecutionAuditContext | None,
+) -> ExecutionRuntimeFailureError:
+    if isinstance(error, ExecutionRuntimeFailureError) and error.audit_event is not None:
+        return error
+    return ExecutionRuntimeFailureError(
+        str(error),
+        audit_events=_build_execution_audit_events(
+            event_types=[
+                "execution_requested",
+                "execution_started",
+                "execution_failed",
+            ],
+            candidate_source=candidate_source,
+            audit_context=audit_context,
+            candidate_state="failed",
         ),
     )
 
@@ -866,6 +901,12 @@ def execute_candidate_sql(
         ) from exc
     except (ExecutionConnectorExecutionError, ExecutionConnectorSelectionError) as exc:
         raise _attach_execution_denial_audit_event(
+            error=exc,
+            candidate_source=candidate.source,
+            audit_context=audit_context,
+        ) from exc
+    except RuntimeError as exc:
+        raise _attach_runtime_failure_audit_event(
             error=exc,
             candidate_source=candidate.source,
             audit_context=audit_context,
