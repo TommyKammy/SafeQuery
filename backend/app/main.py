@@ -473,6 +473,17 @@ def create_app() -> FastAPI:
             database=database,
             sql_generation=sql_generation,
         )
+        get_logger().info(
+            "operator.workflow_lifecycle_metrics",
+            extra={
+                "event_data": {
+                    "event": "operator.workflow_lifecycle_metrics",
+                    "workflow_lifecycle_metrics": operator_health[
+                        "workflow_lifecycle_metrics"
+                    ],
+                }
+            },
+        )
         sql_generation_status = sql_generation["status"]
         healthy = database["status"] == "ok" and sql_generation_status in {
             "ok",

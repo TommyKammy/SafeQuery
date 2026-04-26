@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Mapping
 import json
 from urllib.error import HTTPError, URLError
@@ -240,6 +241,104 @@ def _audit_persistence_component(session: Session) -> dict[str, object]:
     return {"status": "ok", "detail": "ready"}
 
 
+def _bounded_counts(counter: Counter[str], *, limit: int = 8) -> dict[str, int]:
+    return {
+        key: count
+        for key, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))[
+            :limit
+        ]
+    }
+
+
+def _terminal_failure_counts(
+    session: Session,
+    *,
+    event_types: tuple[str, ...],
+) -> Counter[str]:
+    failure_key = func.coalesce(
+        func.nullif(func.trim(PreviewAuditEvent.denial_cause), ""),
+        func.nullif(func.trim(PreviewAuditEvent.primary_deny_code), ""),
+        func.nullif(func.trim(PreviewAuditEvent.candidate_state), ""),
+        func.nullif(func.trim(PreviewAuditEvent.event_type), ""),
+        "unknown",
+    ).label("failure_key")
+    failure_count = func.count().label("failure_count")
+    return Counter(
+        {
+            str(key): int(count)
+            for key, count in session.execute(
+                select(failure_key, failure_count)
+                .select_from(PreviewAuditEvent)
+                .where(PreviewAuditEvent.event_type.in_(event_types))
+                .group_by(failure_key)
+                .order_by(failure_count.desc(), failure_key.asc())
+                .limit(8)
+            )
+        }
+    )
+
+
+def _workflow_lifecycle_metrics(session: Session) -> dict[str, object]:
+    event_count = int(
+        session.scalar(select(func.count()).select_from(PreviewAuditEvent)) or 0
+    )
+    source_count = int(
+        session.scalar(
+            select(func.count(func.distinct(PreviewAuditEvent.source_id))).select_from(
+                PreviewAuditEvent
+            )
+        )
+        or 0
+    )
+    event_type_counts = {
+        str(event_type): int(count)
+        for event_type, count in session.execute(
+            select(PreviewAuditEvent.event_type, func.count())
+            .select_from(PreviewAuditEvent)
+            .group_by(PreviewAuditEvent.event_type)
+        )
+    }
+    preview_terminal_failures = _terminal_failure_counts(
+        session,
+        event_types=("generation_failed",),
+    )
+    execute_terminal_failures = _terminal_failure_counts(
+        session,
+        event_types=("execution_denied", "execution_failed"),
+    )
+
+    metrics: dict[str, object] = {
+        "status": "active" if event_count else "no_traffic",
+        "audit_event_count": event_count,
+        "preview": {
+            "submitted": event_type_counts.get("query_submitted", 0),
+            "generation_completed": event_type_counts.get("generation_completed", 0),
+            "generation_failed": event_type_counts.get("generation_failed", 0),
+            "guard_evaluated": event_type_counts.get("guard_evaluated", 0),
+            "terminal_failures": {},
+        },
+        "execute": {
+            "requested": event_type_counts.get("execution_requested", 0),
+            "completed": event_type_counts.get("execution_completed", 0),
+            "denied": event_type_counts.get("execution_denied", 0),
+            "failed": event_type_counts.get("execution_failed", 0),
+            "terminal_failures": {},
+        },
+        "audit_persistence": {
+            "recorded_events": event_count,
+            "sources_with_events": source_count,
+        },
+    }
+    preview = metrics["preview"]
+    execute = metrics["execute"]
+    assert isinstance(preview, dict)
+    assert isinstance(execute, dict)
+
+    preview["terminal_failures"] = _bounded_counts(preview_terminal_failures)
+    execute["terminal_failures"] = _bounded_counts(execute_terminal_failures)
+    return metrics
+
+
 def build_operator_health(
     session: Session,
     *,
@@ -261,6 +360,7 @@ def build_operator_health(
             _active_source_connectivity_component(session, sources)
         )
         components["audit_persistence"] = _audit_persistence_component(session)
+        workflow_lifecycle_metrics = _workflow_lifecycle_metrics(session)
     except SQLAlchemyError as exc:
         detail = {"status": "error", "detail": exc.__class__.__name__}
         components["source_registry"] = detail
@@ -272,9 +372,14 @@ def build_operator_health(
             "status": "error",
             "detail": "audit_persistence_unavailable",
         }
+        workflow_lifecycle_metrics = {
+            "status": "error",
+            "detail": "audit_persistence_unavailable",
+        }
 
     return {
         "status": _aggregate_operator_status(components),
         "can_authorize_execution": False,
         "components": components,
+        "workflow_lifecycle_metrics": workflow_lifecycle_metrics,
     }
