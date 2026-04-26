@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -23,6 +24,7 @@ from app.core.errors import (
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
 from app.features.auth.dev import attach_dev_authenticated_subject
 from app.features.auth.context import (
@@ -33,6 +35,7 @@ from app.features.auth.session import (
     ApplicationSessionContext,
     require_application_session,
 )
+from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
 from app.features.execution import (
     ExecutableCandidateRecord,
     ExecutionAuditContext,
@@ -192,6 +195,38 @@ def _require_execution_connector_configuration(
                 "Candidate execution is unavailable.",
             )
         return
+
+
+def _require_source_bound_execution_connection_reference(
+    *,
+    session: Session,
+    source_id: str,
+    connector_id: str,
+) -> None:
+    expected_connection_reference_by_connector = {
+        "postgresql_readonly": "env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        "mssql_readonly": "env:SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING",
+    }
+    expected_connection_reference = expected_connection_reference_by_connector.get(
+        connector_id
+    )
+    if expected_connection_reference is None:
+        return
+
+    source = session.scalar(
+        select(RegisteredSource).where(RegisteredSource.source_id == source_id)
+    )
+    actual_connection_reference = (
+        source.connection_reference.strip() if source is not None else None
+    )
+    if actual_connection_reference != expected_connection_reference:
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_SOURCE_BINDING_MISMATCH,
+            message=(
+                "The candidate-bound source is not bound to the backend-owned "
+                "execution connection reference."
+            ),
+        )
 
 
 def create_app() -> FastAPI:
@@ -450,6 +485,11 @@ def create_app() -> FastAPI:
                 )
                 prepared_selection = select_execution_connector(
                     candidate_source=prepared_candidate.source
+                )
+                _require_source_bound_execution_connection_reference(
+                    session=session,
+                    source_id=prepared_candidate.source.source_id,
+                    connector_id=prepared_selection.connector_id,
                 )
                 _require_execution_connector_configuration(
                     connector_id=prepared_selection.connector_id,
