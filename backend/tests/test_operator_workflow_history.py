@@ -326,6 +326,8 @@ def test_operator_workflow_history_includes_execution_run_records() -> None:
         "lifecycleState": "empty",
         "occurredAt": "2026-01-02T03:05:03Z",
         "requestId": "preview-request-234",
+        "resultTruncated": False,
+        "rowCount": 0,
         "runState": "empty",
     }
 

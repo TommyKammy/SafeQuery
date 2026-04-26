@@ -16,8 +16,11 @@ export type OperatorHistoryItem = {
   label: string;
   lifecycleState: string;
   occurredAt: string;
+  primaryDenyCode?: string | null;
   recordId: string;
   requestId?: string | null;
+  resultTruncated?: boolean | null;
+  rowCount?: number | null;
   runState?: string | null;
   sourceId: string;
   sourceLabel: string;
@@ -52,6 +55,10 @@ function isActivationPosture(value: unknown): value is SourceActivationPosture {
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readOptionalNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function parseSourceOption(value: unknown): SourceOption | null {
@@ -109,8 +116,12 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     label,
     lifecycleState,
     occurredAt,
+    primaryDenyCode: readOptionalString(value.primaryDenyCode) ?? null,
     recordId,
     requestId: readOptionalString(value.requestId) ?? null,
+    resultTruncated:
+      typeof value.resultTruncated === "boolean" ? value.resultTruncated : null,
+    rowCount: readOptionalNonNegativeInteger(value.rowCount) ?? null,
     runState: readOptionalString(value.runState) ?? null,
     sourceId,
     sourceLabel

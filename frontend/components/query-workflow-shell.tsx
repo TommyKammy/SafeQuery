@@ -123,6 +123,9 @@ type AuthoritativeCandidatePreview = {
 type AuthoritativeRunContext = {
   lifecycleState: string;
   lifecycleTimestamp: string;
+  primaryDenyCode?: string | null;
+  resultTruncated?: boolean | null;
+  rowCount?: number | null;
   runIdentity: string;
   runState?: string | null;
   sourceLabel: string;
@@ -566,6 +569,9 @@ function findAuthoritativeRunContext(
   return {
     lifecycleState: run.lifecycleState,
     lifecycleTimestamp: run.occurredAt,
+    primaryDenyCode: run.primaryDenyCode,
+    resultTruncated: run.resultTruncated,
+    rowCount: run.rowCount,
     runIdentity: run.recordId,
     runState: run.runState,
     sourceLabel: run.sourceLabel
@@ -756,8 +762,29 @@ function getResultTitle(state: CanonicalWorkflowState): string {
   return "Results unavailable";
 }
 
-function renderResultContent(state: CanonicalWorkflowState) {
+function renderResultContent(
+  state: CanonicalWorkflowState,
+  runContext?: AuthoritativeRunContext | null
+) {
   if (state === "completed") {
+    if (
+      runContext &&
+      runContext.rowCount !== null &&
+      runContext.rowCount !== undefined &&
+      runContext.resultTruncated !== null &&
+      runContext.resultTruncated !== undefined
+    ) {
+      return (
+        <div className="state-callout state-callout-success">
+          <p className="state-callout-title">Authoritative result metadata</p>
+          <p>
+            {runContext.rowCount} rows returned; result payload{" "}
+            {runContext.resultTruncated ? "truncated" : "not truncated"}.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="state-callout state-callout-empty">
         <p className="state-callout-title">Execution results unavailable</p>
@@ -801,6 +828,7 @@ function renderResultContent(state: CanonicalWorkflowState) {
           The shell preserves the denied run record and keeps execution closed instead of implying
           that an earlier preview automatically became successful output.
         </p>
+        {runContext?.primaryDenyCode ? <p>Deny code: {runContext.primaryDenyCode}</p> : null}
       </div>
     );
   }
@@ -1619,7 +1647,7 @@ export function QueryWorkflowShell({
                 API health
               </a>
             </div>
-            {renderResultContent(normalizedState)}
+            {renderResultContent(normalizedState, historyRunContext)}
           </section>
         </aside>
       </section>
