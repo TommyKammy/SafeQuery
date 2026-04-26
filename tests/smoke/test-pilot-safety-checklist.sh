@@ -6,9 +6,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 checklist="docs/pilot-safety-verification-checklist.md"
+runbook="docs/pilot-operations-runbook.md"
 
 if [[ ! -f "$checklist" ]]; then
   echo "missing pilot-safety checklist: $checklist" >&2
+  exit 1
+fi
+
+if [[ ! -f "$runbook" ]]; then
+  echo "missing pilot operations runbook: $runbook" >&2
   exit 1
 fi
 
@@ -82,6 +88,36 @@ for pattern in "${required_patterns[@]}"; do
   fi
 done
 
+runbook_required_patterns=(
+  "^# Pilot Operations Runbook and Incident State Taxonomy$"
+  "^## Authority Boundary$"
+  "^## Incident State Taxonomy$"
+  "^## Normal$"
+  "^## Degraded$"
+  "^## Maintenance$"
+  "^## Incident$"
+  "^## Recovery$"
+  "preview"
+  "generation"
+  "guard"
+  "execute"
+  "audit"
+  "source connectivity"
+  "operator UI"
+  "SafeQuery control-plane records are authoritative"
+  "UI, LLM, adapter, MLflow, Search, Analyst, and external evidence are subordinate"
+  "operator-facing symptoms"
+  "safe first checks"
+  "stop or escalate"
+)
+
+for pattern in "${runbook_required_patterns[@]}"; do
+  if ! grep -Eq "$pattern" "$runbook"; then
+    echo "$runbook missing required runbook pattern: $pattern" >&2
+    exit 1
+  fi
+done
+
 if grep -Eqi "(postgresql.*approved[[:space:]]+follow-on|approved[[:space:]]+follow-on.*postgresql)" "$checklist"; then
   echo "$checklist must not describe PostgreSQL as follow-on for the 2-source core path" >&2
   exit 1
@@ -96,6 +132,10 @@ fi
 for entrypoint in docs/README.md docs/01_READING_ORDER.md; do
   if ! grep -Fq "pilot-safety-verification-checklist.md" "$entrypoint"; then
     echo "$entrypoint missing pilot-safety checklist link" >&2
+    exit 1
+  fi
+  if ! grep -Fq "pilot-operations-runbook.md" "$entrypoint"; then
+    echo "$entrypoint missing pilot operations runbook link" >&2
     exit 1
   fi
 done

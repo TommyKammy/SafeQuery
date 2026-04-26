@@ -16,6 +16,13 @@ SQL execution, optional extension activation, or later source-family readiness.
 
 Use this checklist before optional extension tracks begin.
 
+During limited pilot operation, classify runtime posture with
+[pilot-operations-runbook.md](./pilot-operations-runbook.md). The runbook
+defines normal, degraded, maintenance, incident, and recovery states across
+preview, generation, guard, execute, audit, source connectivity, and operator UI
+surfaces. The checklist remains the sign-off gate; the runbook is the
+operator-facing state and first-action guide.
+
 ## First-Run Productization Gate
 
 First-run productization is an explicit gate before SafeQuery proceeds to real
