@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -414,6 +414,7 @@ def _persist_preview_audit_events(
     preview_request: PreviewRequest,
     preview_candidate: PreviewCandidate | None,
     audit_events: list[SourceAwareAuditEvent],
+    starting_lifecycle_order: int = 1,
 ) -> None:
     event_ids = [event.event_id for event in audit_events]
     existing_event_ids = set(
@@ -423,7 +424,10 @@ def _persist_preview_audit_events(
             )
         ).scalars()
     )
-    for lifecycle_order, event in enumerate(audit_events, start=1):
+    for lifecycle_order, event in enumerate(
+        audit_events,
+        start=starting_lifecycle_order,
+    ):
         if event.event_id in existing_event_ids:
             continue
         payload = event.model_dump(mode="json", exclude_none=True)
@@ -469,6 +473,95 @@ def _persist_preview_audit_events(
                 audit_payload=payload,
             )
         )
+
+
+def _next_audit_lifecycle_order(
+    session: Session,
+    *,
+    preview_request: PreviewRequest,
+) -> int:
+    latest_order = session.execute(
+        select(func.max(PreviewAuditEvent.lifecycle_order)).where(
+            PreviewAuditEvent.preview_request_id == preview_request.id
+        )
+    ).scalar_one()
+    if latest_order is None:
+        return 1
+    return int(latest_order) + 1
+
+
+def persist_execution_audit_events(
+    session: Session,
+    *,
+    candidate_id: str,
+    audit_events: list[SourceAwareAuditEvent],
+) -> None:
+    if not audit_events:
+        return
+
+    try:
+        preview_candidate = session.execute(
+            select(PreviewCandidate).where(
+                PreviewCandidate.candidate_id == candidate_id
+            )
+        ).scalar_one_or_none()
+        if preview_candidate is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Execution audit events cannot be persisted without a bound preview candidate.",
+            )
+
+        assert preview_candidate is not None
+        preview_request = session.get(
+            PreviewRequest,
+            preview_candidate.preview_request_id,
+        )
+        if preview_request is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Execution audit events cannot be persisted without a bound preview request.",
+            )
+
+        assert preview_request is not None
+        if preview_candidate.request_id != preview_request.request_id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Execution audit events cannot be rebound to a different request.",
+            )
+
+        for event in audit_events:
+            if event.query_candidate_id != preview_candidate.candidate_id:
+                _raise_preview_persistence_contract_error(
+                    session,
+                    "Execution audit events must stay bound to the preview candidate.",
+                )
+            if event.request_id != preview_request.request_id:
+                _raise_preview_persistence_contract_error(
+                    session,
+                    "Execution audit events must stay bound to the preview request.",
+                )
+            if event.source_id != preview_candidate.source_id:
+                _raise_preview_persistence_contract_error(
+                    session,
+                    "Execution audit events must stay bound to the preview source.",
+                )
+
+        _persist_preview_audit_events(
+            session,
+            preview_request=preview_request,
+            preview_candidate=preview_candidate,
+            audit_events=audit_events,
+            starting_lifecycle_order=_next_audit_lifecycle_order(
+                session,
+                preview_request=preview_request,
+            ),
+        )
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise PreviewSubmissionContractError(
+            "Execution audit events could not be persisted consistently."
+        ) from exc
 
 
 def _raise_preview_persistence_contract_error(
