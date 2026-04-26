@@ -298,6 +298,18 @@ Compose-backed first-run operator workflow smoke verification:
 bash tests/smoke/test-compose-operator-workflow-source-selector.sh
 ```
 
+Pilot safety UI/API smoke verification:
+
+```bash
+bash tests/smoke/test-pilot-safety-ui-api-workflow.sh
+```
+
+This smoke is the single command-backed pilot path for the local unit-contract
+layer. It runs the checklist guard, a focused frontend workflow smoke, and
+backend preview, denial, cancellation, execute, and audit-history tests. It
+does not start Docker; use the compose-backed smokes below when containerized
+source dependencies also need verification.
+
 Compose-backed real source execution smoke verification:
 
 ```bash
