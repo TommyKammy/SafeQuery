@@ -78,6 +78,7 @@ from app.services.operator_workflow import (
     OperatorWorkflowSnapshot,
     get_operator_workflow_snapshot,
 )
+from app.services.support_bundle import SupportBundle, build_support_bundle
 
 configure_logging()
 
@@ -509,6 +510,19 @@ def create_app() -> FastAPI:
         session: Session = Depends(require_preview_submission_session),
     ) -> FirstRunDoctorResult:
         return run_first_run_doctor(session, backend_probe_mode="served_route")
+
+    @app.get("/support/bundle", response_model=SupportBundle)
+    def read_support_bundle(
+        session: Session = Depends(require_preview_submission_session),
+    ) -> SupportBundle:
+        database = check_database_health(str(settings.app_postgres_url))
+        sql_generation = check_sql_generation_runtime_health(settings.sql_generation)
+        return build_support_bundle(
+            session,
+            settings=settings,
+            database=database,
+            sql_generation=sql_generation,
+        )
 
     @app.post("/requests/preview", response_model=PreviewSubmissionResponse)
     def create_request_preview(

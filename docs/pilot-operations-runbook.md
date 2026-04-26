@@ -243,3 +243,47 @@ For degraded, maintenance, incident, and recovery states, record:
 
 Keep durable notes path-hygienic. Use repo-relative command forms and explicit
 placeholders rather than raw workstation-local absolute paths.
+
+## Secret-Safe Support Bundle
+
+Use the support bundle when a pilot reviewer needs bounded diagnostic context
+for normal, degraded, maintenance, or recovery triage and the operator does not
+need to share raw logs, direct database credentials, query result rows, or local
+machine paths.
+
+Generate the bundle from the backend environment that is already configured for
+SafeQuery:
+
+```bash
+cd backend
+python -m app.cli.support_bundle > support-bundle.json
+```
+
+If the backend API is already running, operators can capture the same bounded
+artifact from the served endpoint:
+
+```bash
+curl http://localhost:8000/support/bundle > support-bundle.json
+```
+
+The bundle is intended to include application version, environment, source
+posture, migration posture, active source ids, health components, recent
+workflow state summaries, lifecycle metrics, and audit completeness counts. It
+is intentionally not an export of operator prompts, raw SQL, raw result rows,
+connection strings, tokens, credentials, source connection references, or
+workstation-local absolute paths.
+
+Before sharing the artifact, inspect it as text and stop if it contains a
+credential, token, connection URL, connection string, raw row payload, private
+SQL text, or local user-profile path:
+
+```bash
+python -m json.tool support-bundle.json >/dev/null
+```
+
+Stop and escalate instead of sharing a bundle when the issue concerns suspected
+secret exposure, untrusted auth context, source-binding ambiguity, raw SQL
+execute exposure, missing audit coverage, mixed-snapshot state, or partial
+restore/export behavior. In those cases, preserve the affected request ids,
+candidate ids, audit ids, run ids, source ids, and command outputs, then follow
+the Incident or Recovery sections above.
