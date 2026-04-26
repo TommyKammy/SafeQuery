@@ -221,15 +221,6 @@ function readRequiredString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
-function formatLifecycleTimestamp(value: string): string {
-  const timestamp = new Date(value);
-  if (Number.isNaN(timestamp.getTime())) {
-    return value;
-  }
-
-  return `${timestamp.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-}
-
 function readCsrfToken(): string | undefined {
   const token =
     document.querySelector<HTMLMetaElement>('meta[name="safequery-csrf-token"]')?.content ??
@@ -570,7 +561,7 @@ function findAuthoritativeRunContext(
 
   return {
     lifecycleState: run.lifecycleState,
-    lifecycleTimestamp: formatLifecycleTimestamp(run.occurredAt),
+    lifecycleTimestamp: run.occurredAt,
     runIdentity: run.recordId,
     runState: run.runState,
     sourceLabel: run.sourceLabel

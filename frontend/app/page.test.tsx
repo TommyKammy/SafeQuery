@@ -771,7 +771,7 @@ describe("HomePage", () => {
                     itemType: "run",
                     label: "Selected completed run",
                     lifecycleState: "completed",
-                    occurredAt: "2026-04-21T14:42:00Z",
+                    occurredAt: "2026-04-21T14:42:17+09:00",
                     recordId: "run-authoritative-282",
                     runState: null,
                     sourceId: "sap-approved-spend",
@@ -814,9 +814,8 @@ describe("HomePage", () => {
 
     expect(lifecycleContext.getByText("Authoritative run source / approved_vendor_spend")).toBeInTheDocument();
     expect(lifecycleContext.getByText("run-authoritative-282")).toBeInTheDocument();
-    expect(lifecycleContext.getByText(/\d{4}-\d{2}-\d{2} \d{2}:/)).toHaveTextContent(
-      "2026-04-21 14:42 UTC"
-    );
+    expect(lifecycleContext.getByText("2026-04-21T14:42:17+09:00")).toBeInTheDocument();
+    expect(lifecycleContext.queryByText("2026-04-21 05:42 UTC")).not.toBeInTheDocument();
     expect(lifecycleContext.getByText("completed")).toBeInTheDocument();
     expect(lifecycleContext.queryByText("Registry fallback source label")).not.toBeInTheDocument();
     expect(screen.queryByText(/placeholder rows only/i)).not.toBeInTheDocument();
