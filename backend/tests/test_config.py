@@ -1,4 +1,5 @@
 import os
+import secrets
 import tempfile
 import unittest
 
@@ -248,6 +249,99 @@ class SettingsTestCase(unittest.TestCase):
                         _env_file=None,
                         _env_prefix="SAFEQUERY_",
                     )
+
+    def test_production_identity_bridge_is_default_deny_and_separate_from_dev_auth(
+        self,
+    ) -> None:
+        settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            dev_auth_enabled=True,
+            environment="development",
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+
+        self.assertFalse(settings.production_identity_bridge.enabled)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_ENABLED",
+        ):
+            settings.require_production_identity_bridge()
+
+    def test_enabled_production_identity_bridge_requires_trust_anchors(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_TRUSTED_ISSUER",
+        ):
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                production_identity_bridge_enabled=True,
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
+
+    def test_production_identity_bridge_rejects_placeholder_shared_secret(self) -> None:
+        placeholder_bridge_value = "-".join(("change", "me"))
+
+        with self.assertRaisesRegex(
+            ValidationError,
+            "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET",
+        ):
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                production_identity_bridge_enabled=True,
+                production_identity_bridge_trusted_issuer="https://idp.example.test",
+                production_identity_bridge_trusted_source="saml-oidc-bridge",
+                production_identity_bridge_shared_secret=placeholder_bridge_value,
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
+
+    def test_production_identity_bridge_rejects_blank_shared_secret(self) -> None:
+        blank_bridge_value = "".join((" ", " ", " "))
+
+        with self.assertRaisesRegex(
+            ValidationError,
+            "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET",
+        ):
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                production_identity_bridge_enabled=True,
+                production_identity_bridge_trusted_issuer="https://idp.example.test",
+                production_identity_bridge_trusted_source="saml-oidc-bridge",
+                production_identity_bridge_shared_secret=blank_bridge_value,
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
+
+    def test_enabled_production_identity_bridge_is_configured_without_dev_auth(
+        self,
+    ) -> None:
+        generated_bridge_value = secrets.token_urlsafe(32)
+
+        settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            environment="production",
+            production_identity_bridge_enabled=True,
+            production_identity_bridge_trusted_issuer="https://idp.example.test",
+            production_identity_bridge_trusted_source="saml-oidc-bridge",
+            production_identity_bridge_shared_secret=generated_bridge_value,
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+
+        bridge_settings = settings.require_production_identity_bridge()
+
+        self.assertFalse(settings.dev_auth_enabled)
+        self.assertTrue(bridge_settings.enabled)
+        self.assertEqual(
+            str(bridge_settings.trusted_issuer),
+            "https://idp.example.test/",
+        )
+        self.assertEqual(
+            bridge_settings.trusted_source,
+            "saml-oidc-bridge",
+        )
 
 
 if __name__ == "__main__":

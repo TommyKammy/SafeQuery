@@ -89,8 +89,14 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         bridge_context = normalize_enterprise_auth_bridge_input(
             {
                 "bridge_source": "saml-oidc-bridge",
+                "actor": {
+                    "actor_id": subject_id,
+                    "actor_type": "human_user",
+                    "issuer": "https://idp.example.test",
+                },
                 "subject": {
                     "subject_id": subject_id,
+                    "subject_type": "human_user",
                     "idp_subject": "00u-enterprise-subject",
                     "issuer": "https://idp.example.test",
                 },

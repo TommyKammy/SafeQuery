@@ -18,12 +18,22 @@ from app.features.auth.governance_bindings import normalize_governance_binding
 
 
 BindingType = Literal["group", "role", "entitlement"]
+IdentityClaimType = Literal["human_user", "service_account", "workload"]
+
+
+class EnterpriseBridgeActor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor_id: NonEmptyTrimmedString
+    actor_type: IdentityClaimType
+    issuer: NonEmptyTrimmedString
 
 
 class EnterpriseBridgeSubject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     subject_id: NonEmptyTrimmedString
+    subject_type: IdentityClaimType
     idp_subject: Optional[NonEmptyTrimmedString] = None
     issuer: NonEmptyTrimmedString
 
@@ -72,6 +82,7 @@ class EnterpriseAuthBridgeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     bridge_source: NonEmptyTrimmedString
+    actor: EnterpriseBridgeActor
     subject: EnterpriseBridgeSubject
     session: EnterpriseBridgeSession
     governance_bindings: Annotated[
@@ -82,7 +93,25 @@ class EnterpriseAuthBridgeInput(BaseModel):
     client_secret: Optional[SecretStr] = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
-    def reject_duplicate_normalized_bindings(self) -> Self:
+    def reject_incoherent_claims_and_duplicate_normalized_bindings(self) -> Self:
+        if self.actor.actor_id != self.subject.subject_id:
+            raise ValueError(
+                "Production identity bridge actor must match subject before "
+                "SafeQuery can grant application authority."
+            )
+
+        if self.actor.actor_type != self.subject.subject_type:
+            raise ValueError(
+                "Production identity bridge actor type must match subject type "
+                "before SafeQuery can grant application authority."
+            )
+
+        if self.actor.issuer != self.subject.issuer:
+            raise ValueError(
+                "Production identity bridge actor issuer must match subject issuer "
+                "before SafeQuery can grant application authority."
+            )
+
         seen: set[str] = set()
         for binding in self.governance_bindings:
             normalized = binding.normalized_binding
@@ -112,16 +141,27 @@ class EnterpriseAuthBridgeAuditMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     bridge_source: NonEmptyTrimmedString
+    actor_id: NonEmptyTrimmedString
+    actor_type: IdentityClaimType
     subject_id: NonEmptyTrimmedString
+    subject_type: IdentityClaimType
     session_id: NonEmptyTrimmedString
     subject_provenance: SubjectProvenanceAuditMetadata
     binding_provenance: list[BindingProvenanceAuditMetadata]
+
+
+class ProductionIdentityClaims(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: EnterpriseBridgeActor
+    subject: EnterpriseBridgeSubject
 
 
 class EnterpriseAuthBridgeContext(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     authenticated_subject: AuthenticatedSubject
+    identity_claims: ProductionIdentityClaims
     session: EnterpriseBridgeSession
     audit_metadata: EnterpriseAuthBridgeAuditMetadata
 
@@ -144,10 +184,17 @@ def normalize_enterprise_auth_bridge_input(
             subject_id=normalized_input.subject.subject_id,
             governance_bindings=frozenset(bindings),
         ),
+        identity_claims=ProductionIdentityClaims(
+            actor=normalized_input.actor,
+            subject=normalized_input.subject,
+        ),
         session=normalized_input.session,
         audit_metadata=EnterpriseAuthBridgeAuditMetadata(
             bridge_source=normalized_input.bridge_source,
+            actor_id=normalized_input.actor.actor_id,
+            actor_type=normalized_input.actor.actor_type,
             subject_id=normalized_input.subject.subject_id,
+            subject_type=normalized_input.subject.subject_type,
             session_id=normalized_input.session.session_id,
             subject_provenance=SubjectProvenanceAuditMetadata(
                 issuer=normalized_input.subject.issuer,
