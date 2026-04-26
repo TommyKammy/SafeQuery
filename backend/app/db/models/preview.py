@@ -80,6 +80,17 @@ class PreviewCandidate(Base):
         ),
         UniqueConstraint("candidate_id"),
         UniqueConstraint("request_id", "source_id"),
+        UniqueConstraint(
+            "id",
+            "candidate_id",
+            "request_id",
+            "registered_source_id",
+            "source_id",
+            "source_family",
+            "dataset_contract_version",
+            "schema_snapshot_version",
+            name="uq_preview_candidates_approval_identity",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -133,6 +144,29 @@ class PreviewCandidate(Base):
 class PreviewCandidateApproval(Base):
     __tablename__ = "preview_candidate_approvals"
     __table_args__ = (
+        ForeignKeyConstraint(
+            (
+                "preview_candidate_id",
+                "candidate_id",
+                "request_id",
+                "registered_source_id",
+                "source_id",
+                "source_family",
+                "dataset_contract_version",
+                "schema_snapshot_version",
+            ),
+            (
+                "preview_candidates.id",
+                "preview_candidates.candidate_id",
+                "preview_candidates.request_id",
+                "preview_candidates.registered_source_id",
+                "preview_candidates.source_id",
+                "preview_candidates.source_family",
+                "preview_candidates.dataset_contract_version",
+                "preview_candidates.schema_snapshot_version",
+            ),
+            name="fk_preview_candidate_approvals_preview_candidate_identity",
+        ),
         UniqueConstraint("approval_id"),
         UniqueConstraint("preview_candidate_id"),
         UniqueConstraint("candidate_id"),
@@ -145,7 +179,7 @@ class PreviewCandidateApproval(Base):
     )
     approval_id: Mapped[str] = mapped_column(String(255), nullable=False)
     preview_candidate_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("preview_candidates.id"),
+        SqlAlchemyUuid,
         nullable=False,
     )
     candidate_id: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -159,6 +193,7 @@ class PreviewCandidateApproval(Base):
     source_flavor: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     dataset_contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
     schema_snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    execution_policy_version: Mapped[int] = mapped_column(Integer, nullable=False)
     owner_subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
     session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     approved_at: Mapped[datetime] = mapped_column(

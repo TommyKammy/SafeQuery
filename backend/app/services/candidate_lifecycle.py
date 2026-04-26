@@ -134,9 +134,7 @@ def _build_revalidation_audit_event(
         user_subject=audit_context.user_subject,
         session_id=audit_context.session_id,
         query_candidate_id=audit_context.query_candidate_id,
-        candidate_owner_subject=(
-            audit_context.candidate_owner_subject or candidate.owner_subject_id
-        ),
+        candidate_owner_subject=candidate.owner_subject_id,
         source_id=candidate.source.source_id,
         source_family=candidate.source.source_family,
         source_flavor=candidate.source.source_flavor,
@@ -390,11 +388,7 @@ def _raise_authoritative_approval_error(
                 approval.schema_snapshot_version if approval is not None else 0
             ),
             execution_policy_version=(
-                CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
-                    approval.source_family
-                )
-                if approval is not None
-                else None
+                approval.execution_policy_version if approval is not None else None
             ),
         ),
     )
@@ -424,9 +418,7 @@ def _candidate_lifecycle_from_approval(
             source_flavor=approval.source_flavor,
             dataset_contract_version=approval.dataset_contract_version,
             schema_snapshot_version=approval.schema_snapshot_version,
-            execution_policy_version=CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
-                approval.source_family
-            ),
+            execution_policy_version=approval.execution_policy_version,
         ),
     )
 

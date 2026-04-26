@@ -153,6 +153,7 @@ def _seed_preview_candidate_approval(
     request_id: str = "request-123",
     owner_subject_id: str = "user:alice",
     approval_expires_at: datetime | None = None,
+    execution_policy_version: int | None = None,
 ) -> PreviewCandidateApproval:
     dataset_contract = session.get(DatasetContract, source.dataset_contract_id)
     schema_snapshot = session.get(SchemaSnapshot, source.schema_snapshot_id)
@@ -215,6 +216,11 @@ def _seed_preview_candidate_approval(
         source_flavor=source.source_flavor,
         dataset_contract_version=dataset_contract.contract_version,
         schema_snapshot_version=schema_snapshot.snapshot_version,
+        execution_policy_version=(
+            execution_policy_version
+            if execution_policy_version is not None
+            else CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY[source.source_family]
+        ),
         owner_subject_id=owner_subject_id,
         session_id="session-123",
         approved_at=now,
@@ -283,6 +289,79 @@ def test_authoritative_candidate_approval_is_consumed_once_for_execution() -> No
             )
 
     assert exc_info.value.deny_code == "DENY_CANDIDATE_REPLAYED"
+
+
+def test_authoritative_candidate_approval_rejects_stale_persisted_execution_policy() -> None:
+    with _session_scope() as session:
+        source = _seed_source(session, source_id="sap-approved-spend")
+        _seed_preview_candidate_approval(
+            session,
+            source=source,
+            execution_policy_version=(
+                CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY[
+                    source.source_family
+                ]
+                - 1
+            ),
+        )
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="DENY_POLICY_VERSION_STALE",
+        ) as exc_info:
+            revalidate_authoritative_candidate_approval(
+                session=session,
+                candidate_id="candidate-123",
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                as_of=datetime.now(timezone.utc),
+                selected_source_id="sap-approved-spend",
+                audit_context=_audit_context(),
+            )
+
+    assert exc_info.value.deny_code == "DENY_POLICY_VERSION_STALE"
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert audit_event.execution_policy_version == 2
+
+
+def test_authoritative_candidate_approval_denial_audit_uses_persisted_owner() -> None:
+    with _session_scope() as session:
+        source = _seed_source(session, source_id="sap-approved-spend")
+        _seed_preview_candidate_approval(
+            session,
+            source=source,
+            owner_subject_id="user:alice",
+        )
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="DENY_SUBJECT_MISMATCH",
+        ) as exc_info:
+            revalidate_authoritative_candidate_approval(
+                session=session,
+                candidate_id="candidate-123",
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:bob",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                as_of=datetime.now(timezone.utc),
+                selected_source_id="sap-approved-spend",
+                audit_context=_audit_context().model_copy(
+                    update={
+                        "user_subject": "user:bob",
+                        "candidate_owner_subject": "user:bob",
+                    }
+                ),
+            )
+
+    assert exc_info.value.deny_code == "DENY_SUBJECT_MISMATCH"
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert audit_event.user_subject == "user:bob"
+    assert audit_event.candidate_owner_subject == "user:alice"
 
 
 def test_revalidate_candidate_lifecycle_rejects_expired_approval() -> None:

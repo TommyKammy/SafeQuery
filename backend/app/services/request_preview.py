@@ -22,6 +22,9 @@ from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.auth.context import AuthenticatedSubject
 from app.features.auth.governance_bindings import normalize_governance_binding
 from app.features.operator_history.payloads import GuardStatus
+from app.services.candidate_lifecycle import (
+    CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
+)
 from app.services.source_entitlements import (
     SourceEntitlementError,
     ensure_subject_is_entitled_for_source,
@@ -509,6 +512,15 @@ def _persist_candidate_approval_record(
     if existing.approval_state == "executed":
         return
 
+    execution_policy_version = CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
+        preview_candidate.source_family
+    )
+    if execution_policy_version is None:
+        _raise_preview_persistence_contract_error(
+            session,
+            "Preview candidate approval requires a backend-owned execution policy version.",
+        )
+
     existing.request_id = preview_candidate.request_id
     existing.registered_source_id = preview_candidate.registered_source_id
     existing.source_id = preview_candidate.source_id
@@ -516,6 +528,7 @@ def _persist_candidate_approval_record(
     existing.source_flavor = preview_candidate.source_flavor
     existing.dataset_contract_version = preview_candidate.dataset_contract_version
     existing.schema_snapshot_version = preview_candidate.schema_snapshot_version
+    existing.execution_policy_version = execution_policy_version
     existing.owner_subject_id = authenticated_subject_id
     existing.session_id = session_id
     if existing.approved_at is None:
@@ -528,6 +541,8 @@ def _persist_candidate_approval_record(
         existing.invalidated_at = effective_occurred_at
     elif guard_status in {None, "allow", PREVIEW_PENDING_GUARD_STATUS}:
         existing.approval_state = "approved"
+        existing.invalidated_at = None
+        existing.approval_expires_at = effective_occurred_at + timedelta(minutes=5)
 
 
 def _persist_preview_submission_records(

@@ -473,7 +473,6 @@ def run_postgresql_core_vertical_slice(
                     user_subject=candidate_audit_context.user_subject,
                     session_id=candidate_audit_context.session_id,
                     query_candidate_id=candidate_audit_context.query_candidate_id,
-                    candidate_owner_subject=authenticated_subject.normalized_subject_id(),
                 ),
             )
         else:
