@@ -75,11 +75,17 @@ def _audit_event_sort_key(event: PreviewAuditEvent) -> tuple[datetime, int, str]
     )
 
 
+def _is_execution_event(event: PreviewAuditEvent) -> bool:
+    return event.event_type.startswith("execution_")
+
+
 def _latest_request_events(
     audit_events: list[PreviewAuditEvent],
 ) -> dict[str, PreviewAuditEvent]:
     latest: dict[str, PreviewAuditEvent] = {}
     for event in audit_events:
+        if _is_execution_event(event):
+            continue
         current = latest.get(event.request_id)
         if current is None or _audit_event_sort_key(event) > _audit_event_sort_key(
             current
@@ -93,7 +99,7 @@ def _latest_candidate_events(
 ) -> dict[str, PreviewAuditEvent]:
     latest: dict[str, PreviewAuditEvent] = {}
     for event in audit_events:
-        if event.candidate_id is None:
+        if event.candidate_id is None or _is_execution_event(event):
             continue
         current = latest.get(event.candidate_id)
         if current is None or _audit_event_sort_key(event) > _audit_event_sort_key(
@@ -101,6 +107,37 @@ def _latest_candidate_events(
         ):
             latest[event.candidate_id] = event
     return latest
+
+
+def _run_state_for_event(event: PreviewAuditEvent) -> str | None:
+    if event.event_type == "execution_completed":
+        row_count = event.audit_payload.get("execution_row_count")
+        return "empty" if row_count == 0 else "completed"
+
+    if event.event_type == "execution_denied":
+        return "execution_denied"
+
+    if event.event_type == "execution_failed":
+        return "canceled" if event.candidate_state == "canceled" else "failed"
+
+    return None
+
+
+def _terminal_run_events(
+    audit_events: list[PreviewAuditEvent],
+) -> list[tuple[PreviewAuditEvent, str]]:
+    terminal_events: list[tuple[PreviewAuditEvent, str]] = []
+    for event in audit_events:
+        if event.candidate_id is None:
+            continue
+
+        run_state = _run_state_for_event(event)
+        if run_state is None:
+            continue
+
+        terminal_events.append((event, run_state))
+
+    return terminal_events
 
 
 def _history_occurred_at(
@@ -135,6 +172,21 @@ def _build_operator_history(
     candidate_events = _latest_candidate_events(audit_events)
 
     history: list[OperatorWorkflowHistoryItem] = []
+    for event, run_state in _terminal_run_events(audit_events):
+        history.append(
+            OperatorWorkflowHistoryItem(
+                item_type="run",
+                record_id=str(event.event_id),
+                label=request_labels.get(event.request_id, "Execution run"),
+                source_id=event.source_id,
+                source_label=source_labels.get(event.source_id, event.source_id),
+                lifecycle_state=run_state,
+                occurred_at=_as_utc_datetime(event.occurred_at),
+                request_id=event.request_id,
+                run_state=run_state,
+            )
+        )
+
     for candidate in candidates:
         history.append(
             OperatorWorkflowHistoryItem(
