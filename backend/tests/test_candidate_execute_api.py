@@ -4,6 +4,7 @@ import importlib
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -252,6 +253,52 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
         )
 
+    def test_execute_candidate_api_uses_snapshot_returned_by_lifecycle_revalidation(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        main_module = importlib.import_module("app.main")
+        original_revalidate = main_module.revalidate_authoritative_candidate_approval
+
+        def revalidate_after_approval_refresh(**kwargs: object) -> object:
+            approval = (
+                self.session.query(PreviewCandidateApproval)
+                .filter_by(candidate_id="candidate-123")
+                .one()
+            )
+            approval.approved_sql = (
+                "SELECT vendor_name FROM finance.approved_vendor_spend "
+                "WHERE vendor_name = 'Revalidated' LIMIT 1"
+            )
+            self.session.commit()
+            return original_revalidate(**kwargs)
+
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            calls.append(canonical_sql)
+            return [{"vendor_name": "Revalidated"}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        with patch.object(
+            main_module,
+            "revalidate_authoritative_candidate_approval",
+            side_effect=revalidate_after_approval_refresh,
+        ):
+            response = self._client(query_runner).post(
+                "/candidates/candidate-123/execute",
+                headers=app_session.headers,
+                cookies=app_session.cookies,
+                json={"selected_source_id": "demo-business-postgres"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            calls,
+            [
+                "SELECT vendor_name FROM finance.approved_vendor_spend "
+                "WHERE vendor_name = 'Revalidated' LIMIT 1"
+            ],
+        )
+
     def test_execute_candidate_api_rejects_missing_approved_snapshot_before_runner(
         self,
     ) -> None:
@@ -275,6 +322,35 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["error"]["code"], "execution_denied")
         self.assertEqual(calls, [])
+        self.session.refresh(approval)
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_rejects_missing_connector_config_without_consuming_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        os.environ.pop("SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL", None)
+        get_settings.cache_clear()
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(lambda **_: calls.append("called")).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "execution_unavailable")
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
 
     def test_execute_candidate_api_rejects_raw_sql_before_runner_invocation(self) -> None:
         calls: list[str] = []

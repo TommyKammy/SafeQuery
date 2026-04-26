@@ -11,7 +11,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -24,7 +23,6 @@ from app.core.errors import (
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.db.models.preview import PreviewCandidate, PreviewCandidateApproval
 from app.db.session import require_preview_submission_session
 from app.features.auth.dev import attach_dev_authenticated_subject
 from app.features.auth.context import (
@@ -39,6 +37,7 @@ from app.features.execution import (
     ExecutableCandidateRecord,
     ExecutionAuditContext,
     ExecutionConnectorExecutionError,
+    ExecutionConnectorSelection,
     ExecutionConnectorSelectionError,
     ExecutionRuntimeCancelledError,
     execute_candidate_sql,
@@ -47,7 +46,7 @@ from app.features.execution import (
 from app.services.candidate_lifecycle import (
     CandidateLifecycleAuditContext,
     CandidateLifecycleRevalidationError,
-    SourceBoundCandidateMetadata,
+    CandidateLifecycleRevalidationResult,
     revalidate_authoritative_candidate_approval,
 )
 from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_doctor
@@ -167,53 +166,6 @@ def _serialize_execution_audit_events(
             )
         )
     return serialized
-
-
-def _load_executable_candidate_record(
-    *,
-    session: Session,
-    candidate_id: str,
-) -> ExecutableCandidateRecord:
-    row = (
-        session.execute(
-            select(PreviewCandidateApproval, PreviewCandidate)
-            .join(
-                PreviewCandidate,
-                PreviewCandidate.id == PreviewCandidateApproval.preview_candidate_id,
-            )
-            .where(PreviewCandidateApproval.candidate_id == candidate_id)
-        )
-        .one_or_none()
-    )
-    if row is None:
-        raise api_error(
-            403,
-            "execution_denied",
-            "Candidate execution was denied.",
-    )
-
-    approval, _preview_candidate = row
-    if (
-        not isinstance(approval.approved_sql, str)
-        or not approval.approved_sql.strip()
-    ):
-        raise api_error(
-            403,
-            "execution_denied",
-            "Candidate execution was denied.",
-        )
-
-    return ExecutableCandidateRecord(
-        canonical_sql=approval.approved_sql,
-        source=SourceBoundCandidateMetadata(
-            source_id=approval.source_id,
-            source_family=approval.source_family,
-            source_flavor=approval.source_flavor,
-            dataset_contract_version=approval.dataset_contract_version,
-            schema_snapshot_version=approval.schema_snapshot_version,
-            execution_policy_version=approval.execution_policy_version,
-        ),
-    )
 
 
 def _require_execution_connector_configuration(
@@ -478,18 +430,37 @@ def create_app() -> FastAPI:
             candidate_owner_subject=user_subject,
         )
         try:
-            candidate = _load_executable_candidate_record(
-                session=session,
-                candidate_id=candidate_id,
-            )
-            selection = select_execution_connector(candidate_source=candidate.source)
-            _require_execution_connector_configuration(
-                connector_id=selection.connector_id,
-                business_postgres_source_url=settings.business_postgres_source_url,
-                business_mssql_source_connection_string=(
-                    settings.business_mssql_source_connection_string
-                ),
-            )
+            candidate: ExecutableCandidateRecord | None = None
+            selection: ExecutionConnectorSelection | None = None
+
+            def prepare_execution(
+                revalidation_result: CandidateLifecycleRevalidationResult,
+            ) -> None:
+                nonlocal candidate, selection
+                approved_sql = revalidation_result.approved_sql
+                if approved_sql is None:
+                    raise api_error(
+                        403,
+                        "execution_denied",
+                        "Candidate execution was denied.",
+                    )
+                prepared_candidate = ExecutableCandidateRecord(
+                    canonical_sql=approved_sql,
+                    source=revalidation_result.source,
+                )
+                prepared_selection = select_execution_connector(
+                    candidate_source=prepared_candidate.source
+                )
+                _require_execution_connector_configuration(
+                    connector_id=prepared_selection.connector_id,
+                    business_postgres_source_url=settings.business_postgres_source_url,
+                    business_mssql_source_connection_string=(
+                        settings.business_mssql_source_connection_string
+                    ),
+                )
+                candidate = prepared_candidate
+                selection = prepared_selection
+
             revalidate_authoritative_candidate_approval(
                 session=session,
                 candidate_id=candidate_id,
@@ -497,7 +468,14 @@ def create_app() -> FastAPI:
                 as_of=occurred_at,
                 selected_source_id=payload.selected_source_id,
                 audit_context=lifecycle_audit_context,
+                before_mark_executed=prepare_execution,
             )
+            if candidate is None or selection is None:
+                raise api_error(
+                    403,
+                    "execution_denied",
+                    "Candidate execution was denied.",
+                )
             execution_audit_context = ExecutionAuditContext(
                 event_id=uuid4(),
                 occurred_at=occurred_at,
