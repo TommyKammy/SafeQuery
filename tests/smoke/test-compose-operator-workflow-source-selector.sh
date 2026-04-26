@@ -63,6 +63,22 @@ url = sys.argv[1]
 response_path = sys.argv[2]
 with open(response_path, encoding="utf-8") as response_file:
     payload = json.load(response_file)
+expected_checks = {
+    "database",
+    "migrations",
+    "source_registry",
+    "dataset_contract",
+    "schema_snapshot",
+    "entitlement_seed",
+    "execution_connector",
+    "backend",
+    "frontend",
+}
+actual_checks = {
+    check.get("name")
+    for check in payload.get("checks", [])
+    if isinstance(check, dict)
+}
 if payload.get("status") != "pass":
     failing = [
         {
@@ -76,6 +92,12 @@ if payload.get("status") != "pass":
     raise SystemExit(
         "compose smoke first-run doctor failed: "
         f"{url} reported {json.dumps(failing, sort_keys=True)}"
+    )
+missing_checks = sorted(expected_checks - actual_checks)
+if missing_checks:
+    raise SystemExit(
+        "compose smoke first-run doctor failed: "
+        f"{url} omitted required checks {json.dumps(missing_checks)}"
     )
 PY
 }

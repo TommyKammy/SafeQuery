@@ -45,6 +45,23 @@ signals are blocked states, not soft passes.
 5. Stop or escalate when an execute, guard, audit, source-binding, auth, or
    mixed-state boundary is unclear.
 
+## Command-backed classification signals
+
+Use command-backed evidence when a state depends on local first-run health or
+workflow availability:
+
+| Assumption | Command-backed signal | Manual/operator judgment |
+| --- | --- | --- |
+| First-run control-plane readiness | `python -m app.cli.first_run_doctor` reports `status: pass` and includes `database`, `migrations`, `source_registry`, `dataset_contract`, `schema_snapshot`, `entitlement_seed`, `execution_connector`, `backend`, and `frontend` checks. | Decide whether the current pilot window is allowed to rely on local first-run evidence or needs production deployment evidence. |
+| Live backend health | `curl http://localhost:8000/health` reports `status: ok` with healthy database and operator health components for the local stack. | Decide whether degraded optional components affect the specific pilot path. |
+| Source selector workflow availability | `curl http://localhost:8000/operator/workflow` returns a non-empty active source selector from backend records. | Decide whether the selected source is in the approved pilot scope for the current operator group. |
+| Pilot workflow safety smoke | `bash tests/smoke/test-pilot-safety-ui-api-workflow.sh` passes the local unit-contract smoke path without Docker. | Decide whether compose-backed or real-source smokes are also required for the affected pilot window. |
+| Compose-backed first-run path | `bash tests/smoke/test-compose-operator-workflow-source-selector.sh` passes when Docker and `docker-compose` are available. | Decide whether unavailable host dependencies make this a deferred manual check instead of a failed product signal. |
+
+If a row has no current command-backed signal, record it as Manual/operator
+judgment in the pilot note. Do not infer normal, degraded, maintenance,
+incident, or recovery posture from UI text alone.
+
 ## Incident State Taxonomy
 
 | State | Operational meaning | Pilot posture |
