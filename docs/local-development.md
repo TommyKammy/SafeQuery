@@ -73,6 +73,19 @@ remain extension tracks. They are not required for first-run Epic K activation
 and must not become execution, authorization, audit, or source-registry
 authorities.
 
+## First-run UI empty states
+
+The operator shell uses the same first-run setup path described in this guide.
+When a required backend-owned signal is missing, the UI stays blocked instead
+of inventing source, entitlement, history, preview, or result data.
+
+| UI state | What it means | Next action |
+| --- | --- | --- |
+| Source registry not configured | `/operator/workflow` is reachable but returned no source registry options. | Run migrations, seed the demo source, then run the first-run doctor before submitting preview requests. |
+| Source entitlement not available | The backend rejected the workflow context because the operator is not entitled to the selected source. | Confirm the signed-in operator has the dev/local entitlement binding for the selected source, then retry the workflow. |
+| No workflow history yet | At least one active source is available, but no authoritative request, candidate, or run summaries exist yet. | Submit a preview request against an active source; history appears only after the backend returns it. |
+| Backend workflow unavailable | The workflow payload is unavailable or malformed. | Confirm backend health, migrations, demo source seed, and first-run doctor before using the product shell. |
+
 ## Developer setup flow
 
 Use the numbered setup sections below when you need to build, migrate, test, or

@@ -224,6 +224,133 @@ describe("HomePage", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders first-run setup guidance when no sources are configured", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [],
+                sources: []
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByRole("heading", { name: /source registry not configured/i })).toBeInTheDocument();
+    expect(screen.getByText(/run migrations, seed the demo source, then run the first-run doctor/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open first-run setup guide/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("docs/local-development.md#first-run-ui-empty-states")
+    );
+    expect(screen.getByRole("combobox", { name: /source/i })).toHaveValue("");
+    expect(screen.queryByRole("option", { name: /sap spend cube/i })).not.toBeInTheDocument();
+  });
+
+  it("renders a no-history first-run state without placeholder workflow rows", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [],
+                sources: [
+                  {
+                    activationPosture: "active",
+                    description: "Demo source returned by the backend contract.",
+                    displayLabel: "Demo business source",
+                    sourceId: "demo-business-source"
+                  }
+                ]
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByRole("heading", { name: /no workflow history yet/i })).toBeInTheDocument();
+    expect(screen.getByText(/submit a preview request against an active source/i)).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Demo business source" })).toBeInTheDocument();
+    expect(screen.queryByText(/approved vendor spend/i)).not.toBeInTheDocument();
+  });
+
+  it("renders backend-unavailable setup guidance without falling back to placeholder sources", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.reject(new Error("backend down"));
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByRole("heading", { name: /backend workflow unavailable/i })).toBeInTheDocument();
+    expect(screen.getByText(/confirm backend health, migrations, demo source seed, and first-run doctor/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open first-run setup guide/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /source/i })).toHaveValue("");
+    expect(screen.queryByRole("option", { name: /sap spend cube/i })).not.toBeInTheDocument();
+  });
+
+  it("renders entitlement setup guidance without treating placeholder access as valid", async () => {
+    const secretDetail = "sample-token-should-not-render";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: false,
+            json: () =>
+              Promise.resolve({
+                error: {
+                  code: "entitlement_denied",
+                  message: "The signed-in operator is not entitled to use that source.",
+                  raw: secretDetail
+                }
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByRole("heading", { name: /source entitlement not available/i })).toBeInTheDocument();
+    expect(screen.getByText(/confirm the signed-in operator has the dev\/local entitlement binding/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open first-run setup guide/i })).toBeInTheDocument();
+    expect(screen.queryByText(secretDetail)).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /sap spend cube/i })).not.toBeInTheDocument();
+  });
+
   it("renders normalized auth and entitlement workflow failures without leaking sensitive details", async () => {
     const secretDetail = "idp-token-should-not-render";
     const failureCases = [

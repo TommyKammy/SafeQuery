@@ -297,7 +297,8 @@ button:focus-visible {
 .evidence-list,
 .history-list,
 .result-table,
-.placeholder-block {
+.placeholder-block,
+.first-run-panel {
   display: grid;
   gap: 12px;
 }
@@ -470,11 +471,25 @@ button:disabled {
 }
 
 .placeholder-title,
-.state-callout-title {
+.state-callout-title,
+.first-run-panel h3 {
   margin: 0;
   color: var(--text-primary);
   font-size: 1rem;
   font-weight: 600;
+}
+
+.first-run-panel {
+  padding: 18px;
+  border: 1px solid rgba(240, 193, 91, 0.28);
+  border-radius: 16px;
+  background: rgba(240, 193, 91, 0.08);
+}
+
+.first-run-panel p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
 }
 
 .state-callout {

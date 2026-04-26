@@ -73,6 +73,11 @@ type WorkflowHrefContext = {
   historyRecordId?: string;
 };
 
+type FirstRunGuidance = {
+  body: string;
+  title: string;
+};
+
 type PreviewSubmissionStatus =
   | {
       status: "idle";
@@ -228,6 +233,9 @@ const workflowStateOrder: CanonicalWorkflowState[] = [
   "canceled"
 ];
 
+const FIRST_RUN_SETUP_GUIDE_HREF =
+  "https://github.com/TommyKammy/SafeQuery/blob/main/docs/local-development.md#first-run-ui-empty-states";
+
 export function resolveWorkflowState(value?: string): CanonicalWorkflowState {
   if (!value) {
     return "query";
@@ -242,6 +250,46 @@ export function resolveWorkflowState(value?: string): CanonicalWorkflowState {
   }
 
   return "query";
+}
+
+function getFirstRunGuidance(snapshot: OperatorWorkflowSnapshot): FirstRunGuidance | null {
+  if (snapshot.status === "unavailable" || snapshot.status === "malformed") {
+    return {
+      body:
+        "Confirm backend health, migrations, demo source seed, and first-run doctor before using the product shell.",
+      title: "Backend workflow unavailable"
+    };
+  }
+
+  if (snapshot.status === "entitlement_denied") {
+    return {
+      body:
+        "Confirm the signed-in operator has the dev/local entitlement binding for the selected source, then retry the workflow.",
+      title: "Source entitlement not available"
+    };
+  }
+
+  if (snapshot.status === "live" && snapshot.sources.length === 0) {
+    return {
+      body:
+        "Run migrations, seed the demo source, then run the first-run doctor before submitting preview requests.",
+      title: "Source registry not configured"
+    };
+  }
+
+  return null;
+}
+
+function renderFirstRunGuidance(guidance: FirstRunGuidance) {
+  return (
+    <div className="first-run-panel">
+      <h3>{guidance.title}</h3>
+      <p>{guidance.body}</p>
+      <a className="inline-link" href={FIRST_RUN_SETUP_GUIDE_HREF} rel="noreferrer" target="_blank">
+        Open first-run setup guide
+      </a>
+    </div>
+  );
 }
 
 function findSourceOption(
@@ -1333,6 +1381,7 @@ export function QueryWorkflowShell({
     historyRunContext?.executedEvidence ?? candidatePreview?.executedEvidence ?? [];
   const selectedRetrievedCitations =
     historyRunContext?.retrievedCitations ?? candidatePreview?.retrievedCitations ?? [];
+  const firstRunGuidance = getFirstRunGuidance(operatorWorkflow);
 
   async function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1693,9 +1742,18 @@ export function QueryWorkflowShell({
                 <p>{operatorWorkflow.error.message}</p>
               </div>
             ) : null}
+            {firstRunGuidance ? renderFirstRunGuidance(firstRunGuidance) : null}
             <div className="history-list">
               {operatorWorkflow.history.length > 0 ? (
                 operatorWorkflow.history.map(renderHistoryItem)
+              ) : operatorWorkflow.status === "live" && operatorWorkflow.sources.length > 0 ? (
+                <div className="placeholder-block">
+                  <h3 className="placeholder-title">No workflow history yet</h3>
+                  <p>
+                    Submit a preview request against an active source. SafeQuery will show request,
+                    candidate, and run summaries here only after the backend returns them.
+                  </p>
+                </div>
               ) : (
                 <div className="placeholder-block">
                   <p className="placeholder-title">No live history rows</p>

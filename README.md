@@ -74,6 +74,8 @@ from docs, service names, driver names, or placeholder configuration.
 For the full local startup workflow, including env setup, compose startup,
 migrations, and troubleshooting, use
 [docs/local-development.md](./docs/local-development.md).
+The same guide also defines the first-run UI empty states for missing source
+registry data, entitlement, workflow history, and backend readiness.
 
 Quick start:
 
