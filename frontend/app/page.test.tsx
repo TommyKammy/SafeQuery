@@ -379,6 +379,20 @@ describe("HomePage", () => {
     expect(screen.getByText("request-selected")).toBeInTheDocument();
     expect(screen.getByText("candidate-selected")).toBeInTheDocument();
     expect(screen.queryByText("select 'wrong candidate' as preview;")).not.toBeInTheDocument();
+    for (const completedLink of screen.getAllByRole("link", { name: /open completed state/i })) {
+      expect(completedLink).toHaveAttribute(
+        "href",
+        expect.stringContaining("history_item_type=candidate")
+      );
+      expect(completedLink).toHaveAttribute(
+        "href",
+        expect.stringContaining("history_record_id=candidate-selected")
+      );
+    }
+    expect(screen.getByRole("link", { name: /open empty state/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("history_record_id=candidate-selected")
+    );
   });
 
   it("keeps reopened history source separate from a mismatched draft source", async () => {

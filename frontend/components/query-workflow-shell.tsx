@@ -844,7 +844,8 @@ function renderStatePanel(
   state: CanonicalWorkflowState,
   question: string,
   sourceId?: string,
-  canOpenCompleted = false
+  canOpenCompleted = false,
+  context?: WorkflowHrefContext
 ) {
   if (state === "signin") {
     return (
@@ -876,10 +877,13 @@ function renderStatePanel(
         </p>
         {canOpenCompleted ? (
           <div className="action-row">
-            <a className="action-link" href={buildStateHref("completed", question, sourceId)}>
+            <a
+              className="action-link"
+              href={buildStateHref("completed", question, sourceId, context)}
+            >
               Open completed state
             </a>
-            <a className="ghost-link" href={buildStateHref("empty", question, sourceId)}>
+            <a className="ghost-link" href={buildStateHref("empty", question, sourceId, context)}>
               Open empty state
             </a>
           </div>
@@ -1089,6 +1093,13 @@ export function QueryWorkflowShell({
   const candidateSourceId = candidatePreview?.sourceId ?? boundSourceId;
   const canOpenCompletedFromPreview =
     normalizedState === "preview" && candidatePreview !== null && !historySourceMismatch;
+  const historyHrefContext =
+    normalizedState === "preview" && historyRecordId && historyCandidatePreview
+      ? {
+          historyItemType: "candidate" as const,
+          historyRecordId
+        }
+      : undefined;
 
   async function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1335,7 +1346,8 @@ export function QueryWorkflowShell({
               normalizedState,
               question,
               candidateSourceId,
-              canOpenCompletedFromPreview
+              canOpenCompletedFromPreview,
+              historyHrefContext
             )}
           </section>
 
@@ -1487,7 +1499,12 @@ export function QueryWorkflowShell({
                 !historySourceMismatch ? (
                   <a
                     className="ghost-link"
-                    href={buildStateHref("completed", submittedQuestion, candidateSourceId)}
+                    href={buildStateHref(
+                      "completed",
+                      submittedQuestion,
+                      candidateSourceId,
+                      historyHrefContext
+                    )}
                   >
                     Open completed state
                   </a>
