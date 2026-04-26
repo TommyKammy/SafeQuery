@@ -731,7 +731,98 @@ describe("HomePage", () => {
     expect(screen.getAllByText(/sap spend cube \/ approved_vendor_spend/i)).not.toHaveLength(0);
   });
 
-  it("renders explicit empty and review-denied placeholder states", async () => {
+  it("does not render placeholder result rows or fabricated run context in product workflow views", async () => {
+    render(
+      await HomePage({
+        searchParams: {
+          question: "Show approved vendors by quarterly spend",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    expect(screen.getByRole("heading", { name: /completed state/i })).toBeInTheDocument();
+    expect(screen.queryByText(/northwind health/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/harbor transit/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/blue summit labs/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder rows only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/run-sq-204/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/2026-04-21 14:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/authentication placeholder/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/results placeholder/i)).not.toBeInTheDocument();
+  });
+
+  it("renders selected terminal run context from authoritative history", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    itemType: "run",
+                    label: "Selected completed run",
+                    lifecycleState: "completed",
+                    occurredAt: "2026-04-21T14:42:17+09:00",
+                    recordId: "run-authoritative-282",
+                    runState: null,
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "Authoritative run source / approved_vendor_spend"
+                  }
+                ],
+                sources: [
+                  {
+                    activationPosture: "active",
+                    description: "Registry fallback source label should not override selected run context.",
+                    displayLabel: "Registry fallback source label",
+                    sourceId: "sap-approved-spend"
+                  }
+                ]
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-authoritative-282",
+          question: "Selected completed run",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    const lifecycleSection = screen
+      .getByRole("heading", { name: /source and lifecycle context/i })
+      .closest("section");
+    expect(lifecycleSection).not.toBeNull();
+    const lifecycleContext = within(lifecycleSection!);
+
+    expect(lifecycleContext.getByText("Authoritative run source / approved_vendor_spend")).toBeInTheDocument();
+    expect(lifecycleContext.getByText("run-authoritative-282")).toBeInTheDocument();
+    expect(lifecycleContext.getByText("2026-04-21T14:42:17+09:00")).toBeInTheDocument();
+    expect(lifecycleContext.queryByText("2026-04-21 05:42 UTC")).not.toBeInTheDocument();
+    expect(lifecycleContext.getByText("completed")).toBeInTheDocument();
+    expect(lifecycleContext.queryByText("Registry fallback source label")).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder rows only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
+  });
+
+  it("renders explicit empty and review-denied unavailable states", async () => {
     const { rerender } = render(
       await HomePage({
         searchParams: {
@@ -771,30 +862,30 @@ describe("HomePage", () => {
       {
         state: "completed",
         heading: /completed state/i,
-        status: /execution completed with rows/i,
-        lifecycle: /run state/i,
-        identity: /run-sq-204/i
+        status: /execution completed/i,
+        lifecycle: /lifecycle posture/i,
+        identity: /No submitted record yet/i
       },
       {
         state: "failed",
         heading: /failed state/i,
         status: /execution failed after run start/i,
-        lifecycle: /run state/i,
-        identity: /run-sq-204/i
+        lifecycle: /lifecycle posture/i,
+        identity: /No submitted record yet/i
       },
       {
         state: "canceled",
         heading: /canceled state/i,
         status: /execution canceled before completion/i,
-        lifecycle: /run state/i,
-        identity: /run-sq-204/i
+        lifecycle: /lifecycle posture/i,
+        identity: /No submitted record yet/i
       },
       {
         state: "execution_denied",
         heading: /execution denied state/i,
         status: /execution denied at execute time/i,
-        lifecycle: /run state/i,
-        identity: /run-sq-204/i
+        lifecycle: /lifecycle posture/i,
+        identity: /No submitted record yet/i
       }
     ] as const;
 
@@ -811,7 +902,7 @@ describe("HomePage", () => {
       );
 
       expect(screen.getByRole("heading", { name: terminalState.heading })).toBeInTheDocument();
-      expect(screen.getByText(terminalState.status)).toBeInTheDocument();
+      expect(screen.getAllByText(terminalState.status).length).toBeGreaterThan(0);
       expect(screen.getByText(/source identity/i)).toBeInTheDocument();
       expect(screen.getByText(/request (identity|posture)/i)).toBeInTheDocument();
       expect(screen.getByText(terminalState.lifecycle)).toBeInTheDocument();
