@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import importlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -43,6 +44,7 @@ DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY = {
     "mssql": 200,
     "postgresql": 200,
 }
+MSSQL_ODBC_DRIVER_NAME = "ODBC Driver 18 for SQL Server"
 
 
 @dataclass(frozen=True)
@@ -178,6 +180,45 @@ class ExecutionRuntimeCancelledError(RuntimeError):
         super().__init__(message)
         self.audit_events = list(audit_events or [])
         self.audit_event = self.audit_events[-1] if self.audit_events else None
+
+
+class MSSQLExecutionRuntimeUnavailable(RuntimeError):
+    """Raised when required backend-owned MSSQL runtime dependencies are absent."""
+
+
+def check_mssql_execution_runtime_readiness() -> dict[str, object]:
+    try:
+        pyodbc = importlib.import_module("pyodbc")
+    except (ModuleNotFoundError, ImportError) as exc:
+        raise MSSQLExecutionRuntimeUnavailable(
+            "pyodbc must be installed and importable before the MSSQL execution "
+            "connector can run."
+        ) from exc
+
+    drivers = getattr(pyodbc, "drivers", None)
+    if not callable(drivers):
+        raise MSSQLExecutionRuntimeUnavailable(
+            "pyodbc driver discovery is unavailable; the MSSQL execution connector "
+            "cannot verify ODBC Driver 18 for SQL Server."
+        )
+
+    try:
+        available_drivers = tuple(str(driver).strip() for driver in drivers())
+    except Exception as exc:
+        raise MSSQLExecutionRuntimeUnavailable(
+            "pyodbc could not enumerate ODBC drivers for the MSSQL execution connector."
+        ) from exc
+
+    if MSSQL_ODBC_DRIVER_NAME not in available_drivers:
+        raise MSSQLExecutionRuntimeUnavailable(
+            "ODBC Driver 18 for SQL Server must be installed before the MSSQL "
+            "execution connector can run."
+        )
+
+    return {
+        "pyodbc": "available",
+        "odbc_driver": MSSQL_ODBC_DRIVER_NAME,
+    }
 
 
 def _source_flavor_matches(
@@ -374,12 +415,8 @@ def _default_mssql_query_runner(
     canonical_sql: str,
     runtime_controls: ExecutionRuntimeControls,
 ) -> list[dict[str, Any]]:
-    try:
-        import pyodbc  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "pyodbc must be installed before the MSSQL execution connector can run."
-        ) from exc
+    check_mssql_execution_runtime_readiness()
+    import pyodbc  # type: ignore[import-not-found]
 
     with pyodbc.connect(connection_string) as connection:
         cursor = connection.cursor()

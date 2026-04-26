@@ -367,6 +367,10 @@ def test_default_mssql_query_runner_requires_timeout_support(
 
     class FakePyodbcModule:
         @staticmethod
+        def drivers() -> list[str]:
+            return ["ODBC Driver 18 for SQL Server"]
+
+        @staticmethod
         def connect(connection_string: str) -> FakeConnection:
             assert connection_string == "Driver={ODBC Driver 18 for SQL Server};Server=tcp:test"
             return FakeConnection()
@@ -419,6 +423,10 @@ def test_default_mssql_query_runner_preserves_cancelled_error_when_cancel_fails(
     connection = FakeConnection()
 
     class FakePyodbcModule:
+        @staticmethod
+        def drivers() -> list[str]:
+            return ["ODBC Driver 18 for SQL Server"]
+
         @staticmethod
         def connect(connection_string: str) -> FakeConnection:
             assert connection_string == "Driver={ODBC Driver 18 for SQL Server};Server=tcp:test"

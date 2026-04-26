@@ -117,6 +117,10 @@ Keep the local roles distinct from the start:
   `business-mssql-source` service for source-specific connector work
 
 This role split does not make the application database a business target.
+The backend image packages `pyodbc` and Microsoft ODBC Driver 18 for SQL
+Server, but the MSSQL execution connector still stays source-scoped: it is only
+usable when `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING` is explicitly
+configured for the business MSSQL source.
 
 2. Start the local stack:
 
@@ -232,6 +236,8 @@ The fail-closed startup guards are intentional:
 
 - `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL`
 - `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used.`
+- `pyodbc must be installed before the MSSQL execution connector can run.`
+- `ODBC Driver 18 for SQL Server must be installed before the MSSQL execution connector can run.`
 
 The compose topology mirrors those roles explicitly:
 

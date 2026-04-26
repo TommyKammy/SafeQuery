@@ -5,6 +5,16 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg unixodbc \
+    && curl -fsSL -o packages-microsoft-prod.deb \
+        "https://packages.microsoft.com/config/debian/$(. /etc/os-release && echo "$VERSION_ID")/packages-microsoft-prod.deb" \
+    && dpkg -i packages-microsoft-prod.deb \
+    && rm packages-microsoft-prod.deb \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY backend/pyproject.toml ./pyproject.toml
 COPY backend/README.md ./README.md
 COPY backend/alembic.ini ./alembic.ini

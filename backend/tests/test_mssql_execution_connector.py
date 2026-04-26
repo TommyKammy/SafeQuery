@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import pytest
@@ -142,3 +143,68 @@ def test_execute_mssql_connector_rejects_selection_binding_mismatch_fail_closed(
         )
 
     assert exc_info.value.deny_code == DENY_SOURCE_BINDING_MISMATCH
+
+
+def test_mssql_runtime_readiness_fails_closed_when_pyodbc_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.execution.runtime import (
+        MSSQLExecutionRuntimeUnavailable,
+        check_mssql_execution_runtime_readiness,
+    )
+
+    monkeypatch.setitem(sys.modules, "pyodbc", None)
+
+    with pytest.raises(
+        MSSQLExecutionRuntimeUnavailable,
+        match=(
+            "pyodbc must be installed and importable before the MSSQL execution "
+            "connector can run"
+        ),
+    ):
+        check_mssql_execution_runtime_readiness()
+
+
+def test_mssql_runtime_readiness_fails_closed_when_pyodbc_import_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.features.execution.runtime as runtime_module
+
+    def broken_pyodbc_import(module_name: str) -> object:
+        assert module_name == "pyodbc"
+        raise ImportError("libodbc.so.2: cannot open shared object file")
+
+    monkeypatch.setattr(runtime_module.importlib, "import_module", broken_pyodbc_import)
+
+    with pytest.raises(
+        runtime_module.MSSQLExecutionRuntimeUnavailable,
+        match=(
+            "pyodbc must be installed and importable before the MSSQL execution "
+            "connector can run"
+        ),
+    ) as exc_info:
+        runtime_module.check_mssql_execution_runtime_readiness()
+
+    assert isinstance(exc_info.value.__cause__, ImportError)
+
+
+def test_mssql_runtime_readiness_requires_odbc_driver_18(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.execution.runtime import (
+        MSSQLExecutionRuntimeUnavailable,
+        check_mssql_execution_runtime_readiness,
+    )
+
+    class FakePyodbcModule:
+        @staticmethod
+        def drivers() -> list[str]:
+            return ["PostgreSQL Unicode"]
+
+    monkeypatch.setitem(sys.modules, "pyodbc", FakePyodbcModule())
+
+    with pytest.raises(
+        MSSQLExecutionRuntimeUnavailable,
+        match="ODBC Driver 18 for SQL Server must be installed",
+    ):
+        check_mssql_execution_runtime_readiness()
