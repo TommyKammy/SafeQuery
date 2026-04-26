@@ -379,6 +379,88 @@ describe("HomePage", () => {
     expect(screen.getByText("request-selected")).toBeInTheDocument();
     expect(screen.getByText("candidate-selected")).toBeInTheDocument();
     expect(screen.queryByText("select 'wrong candidate' as preview;")).not.toBeInTheDocument();
+    for (const completedLink of screen.getAllByRole("link", { name: /open completed state/i })) {
+      expect(completedLink).toHaveAttribute(
+        "href",
+        expect.stringContaining("history_item_type=candidate")
+      );
+      expect(completedLink).toHaveAttribute(
+        "href",
+        expect.stringContaining("history_record_id=candidate-selected")
+      );
+    }
+    expect(screen.getByRole("link", { name: /open empty state/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("history_record_id=candidate-selected")
+    );
+  });
+
+  it("keeps reopened history source separate from a mismatched draft source", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Selected SAP candidate",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-sap-selected",
+                    requestId: "request-sap-selected",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: [
+                  {
+                    activationPosture: "active",
+                    description: "Draft marketing source returned by the backend contract.",
+                    displayLabel: "Marketing campaigns / campaign_spend",
+                    sourceId: "marketing-campaign-spend"
+                  },
+                  {
+                    activationPosture: "active",
+                    description: "Candidate source returned by the backend contract.",
+                    displayLabel: "SAP spend cube / approved_vendor_spend",
+                    sourceId: "sap-approved-spend"
+                  }
+                ]
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-sap-selected",
+          question: "Draft marketing question",
+          source_id: "marketing-campaign-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    expect(screen.getByText("select vendor_name from approved_vendor_spend;")).toBeInTheDocument();
+    expect(screen.getAllByText("SAP spend cube / approved_vendor_spend").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Marketing campaigns / campaign_spend").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/selected draft source does not match the reopened candidate source/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /open completed state/i })).not.toBeInTheDocument();
   });
 
   it("submits the selected source and question to the preview API", async () => {
