@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from time import perf_counter
+from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -30,11 +33,27 @@ from app.features.auth.session import (
     ApplicationSessionContext,
     require_application_session,
 )
+from app.features.execution import (
+    ExecutableCandidateRecord,
+    ExecutionAuditContext,
+    ExecutionConnectorExecutionError,
+    ExecutionConnectorSelection,
+    ExecutionConnectorSelectionError,
+    ExecutionRuntimeCancelledError,
+    execute_candidate_sql,
+    select_execution_connector,
+)
+from app.services.candidate_lifecycle import (
+    CandidateLifecycleAuditContext,
+    CandidateLifecycleRevalidationError,
+    CandidateLifecycleRevalidationResult,
+    revalidate_authoritative_candidate_approval,
+)
+from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_doctor
 from app.services.health import (
     check_database_health,
     check_sql_generation_runtime_health,
 )
-from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_doctor
 from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
@@ -76,6 +95,48 @@ _ENTITLEMENT_DENIAL_AUDIT_FIELDS = frozenset(
     }
 )
 
+_EXECUTION_DENIAL_AUDIT_FIELDS = frozenset(
+    {
+        "event_id",
+        "event_type",
+        "occurred_at",
+        "request_id",
+        "correlation_id",
+        "causation_event_id",
+        "user_subject",
+        "session_id",
+        "query_candidate_id",
+        "candidate_owner_subject",
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "execution_policy_version",
+        "connector_profile_version",
+        "primary_deny_code",
+        "denial_cause",
+        "candidate_state",
+    }
+)
+
+
+class CandidateExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_source_id: Optional[str] = None
+
+
+class CandidateExecuteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str
+    source_id: str
+    connector_id: str
+    ownership: str
+    rows: list[dict[str, Any]]
+    audit: dict[str, list[dict[str, Any]]]
+
 
 def _serialize_entitlement_denial_audit_events(
     exc: PreviewSubmissionEntitlementError,
@@ -88,6 +149,49 @@ def _serialize_entitlement_denial_audit_events(
         )
         for event in exc.audit_events
     ]
+
+
+def _serialize_execution_audit_events(
+    events: list[object],
+) -> list[dict[str, object]]:
+    serialized: list[dict[str, object]] = []
+    for event in events:
+        if not hasattr(event, "model_dump"):
+            continue
+        serialized.append(
+            event.model_dump(
+                mode="json",
+                include=_EXECUTION_DENIAL_AUDIT_FIELDS,
+                exclude_none=True,
+            )
+        )
+    return serialized
+
+
+def _require_execution_connector_configuration(
+    *,
+    connector_id: str,
+    business_postgres_source_url: object | None,
+    business_mssql_source_connection_string: str | None,
+) -> None:
+    if connector_id == "postgresql_readonly":
+        if business_postgres_source_url is None:
+            raise api_error(
+                503,
+                "execution_unavailable",
+                "Candidate execution is unavailable.",
+            )
+        return
+
+    if connector_id == "mssql_readonly":
+        connection_string = business_mssql_source_connection_string
+        if connection_string is None or not connection_string.strip():
+            raise api_error(
+                503,
+                "execution_unavailable",
+                "Candidate execution is unavailable.",
+            )
+        return
 
 
 def create_app() -> FastAPI:
@@ -289,6 +393,167 @@ def create_app() -> FastAPI:
                     exc.public_message,
                 ) from exc
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post(
+        "/candidates/{candidate_id}/execute",
+        response_model=CandidateExecuteResponse,
+    )
+    def execute_candidate_preview(
+        http_request: Request,
+        candidate_id: str,
+        payload: CandidateExecuteRequest,
+        authenticated_subject: AuthenticatedSubject = Depends(
+            require_authenticated_subject
+        ),
+        application_session: ApplicationSessionContext = Depends(
+            require_application_session
+        ),
+        session: Session = Depends(require_preview_submission_session),
+    ) -> CandidateExecuteResponse:
+        request_id = getattr(http_request.state, "request_id", None)
+        if not isinstance(request_id, str) or not request_id.strip():
+            raise HTTPException(
+                status_code=500,
+                detail="Request audit context is unavailable.",
+            )
+
+        occurred_at = datetime.now(timezone.utc)
+        user_subject = authenticated_subject.normalized_subject_id()
+        lifecycle_audit_context = CandidateLifecycleAuditContext(
+            event_id=uuid4(),
+            occurred_at=occurred_at,
+            request_id=request_id,
+            correlation_id=str(uuid4()),
+            user_subject=user_subject,
+            session_id=application_session.audit_session_id,
+            query_candidate_id=candidate_id,
+            candidate_owner_subject=user_subject,
+        )
+        try:
+            candidate: ExecutableCandidateRecord | None = None
+            selection: ExecutionConnectorSelection | None = None
+
+            def prepare_execution(
+                revalidation_result: CandidateLifecycleRevalidationResult,
+            ) -> None:
+                nonlocal candidate, selection
+                approved_sql = revalidation_result.approved_sql
+                if approved_sql is None:
+                    raise api_error(
+                        403,
+                        "execution_denied",
+                        "Candidate execution was denied.",
+                    )
+                prepared_candidate = ExecutableCandidateRecord(
+                    canonical_sql=approved_sql,
+                    source=revalidation_result.source,
+                )
+                prepared_selection = select_execution_connector(
+                    candidate_source=prepared_candidate.source
+                )
+                _require_execution_connector_configuration(
+                    connector_id=prepared_selection.connector_id,
+                    business_postgres_source_url=settings.business_postgres_source_url,
+                    business_mssql_source_connection_string=(
+                        settings.business_mssql_source_connection_string
+                    ),
+                )
+                candidate = prepared_candidate
+                selection = prepared_selection
+
+            revalidate_authoritative_candidate_approval(
+                session=session,
+                candidate_id=candidate_id,
+                authenticated_subject=authenticated_subject,
+                as_of=occurred_at,
+                selected_source_id=payload.selected_source_id,
+                audit_context=lifecycle_audit_context,
+                before_mark_executed=prepare_execution,
+            )
+            if candidate is None or selection is None:
+                raise api_error(
+                    403,
+                    "execution_denied",
+                    "Candidate execution was denied.",
+                )
+            execution_audit_context = ExecutionAuditContext(
+                event_id=uuid4(),
+                occurred_at=occurred_at,
+                request_id=request_id,
+                correlation_id=lifecycle_audit_context.correlation_id,
+                user_subject=user_subject,
+                session_id=application_session.audit_session_id,
+                query_candidate_id=candidate_id,
+                candidate_owner_subject=user_subject,
+                execution_policy_version=candidate.source.execution_policy_version,
+                connector_profile_version=candidate.source.connector_profile_version,
+            )
+            query_runner = getattr(
+                http_request.app.state,
+                "execution_query_runner",
+                None,
+            )
+            result = execute_candidate_sql(
+                candidate=candidate,
+                selection=selection,
+                business_mssql_connection_string=(
+                    settings.business_mssql_source_connection_string
+                ),
+                business_postgres_url=(
+                    str(settings.business_postgres_source_url)
+                    if settings.business_postgres_source_url is not None
+                    else None
+                ),
+                application_postgres_url=str(settings.app_postgres_url),
+                query_runner=query_runner,
+                audit_context=execution_audit_context,
+            )
+        except CandidateLifecycleRevalidationError as exc:
+            audit_events = (
+                _serialize_execution_audit_events([exc.audit_event])
+                if exc.audit_event is not None
+                else None
+            )
+            raise api_error(
+                403,
+                "execution_denied",
+                "Candidate execution was denied.",
+                audit_events=audit_events,
+            ) from exc
+        except (
+            ExecutionConnectorExecutionError,
+            ExecutionConnectorSelectionError,
+        ) as exc:
+            audit_events = _serialize_execution_audit_events(exc.audit_events)
+            raise api_error(
+                403,
+                "execution_denied",
+                "Candidate execution was denied.",
+                audit_events=audit_events or None,
+            ) from exc
+        except ExecutionRuntimeCancelledError as exc:
+            audit_events = _serialize_execution_audit_events(exc.audit_events)
+            raise api_error(
+                503,
+                "execution_unavailable",
+                "Candidate execution is unavailable.",
+                audit_events=audit_events or None,
+            ) from exc
+        except RuntimeError as exc:
+            raise api_error(
+                503,
+                "execution_unavailable",
+                "Candidate execution is unavailable.",
+            ) from exc
+
+        return CandidateExecuteResponse(
+            candidate_id=candidate_id,
+            source_id=result.source_id,
+            connector_id=result.connector_id,
+            ownership=result.ownership,
+            rows=result.rows,
+            audit={"events": _serialize_execution_audit_events(result.audit_events)},
+        )
 
     @app.get("/operator/workflow", response_model=OperatorWorkflowSnapshot)
     def read_operator_workflow(

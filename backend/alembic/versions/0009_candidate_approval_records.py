@@ -42,6 +42,7 @@ def upgrade() -> None:
         sa.Column("dataset_contract_version", sa.Integer(), nullable=False),
         sa.Column("schema_snapshot_version", sa.Integer(), nullable=False),
         sa.Column("execution_policy_version", sa.Integer(), nullable=False),
+        sa.Column("approved_sql", sa.Text(), nullable=True),
         sa.Column("owner_subject_id", sa.String(length=255), nullable=False),
         sa.Column("session_id", sa.String(length=255), nullable=True),
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=False),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Literal, Optional
 from uuid import UUID
@@ -78,6 +79,8 @@ class CandidateLifecycleRevalidationResult(BaseModel):
 
     source_id: str
     state: Literal["execution_eligible"]
+    source: SourceBoundCandidateMetadata
+    approved_sql: Optional[str] = None
 
 
 class CandidateLifecycleRevalidationError(PermissionError):
@@ -342,6 +345,7 @@ def revalidate_candidate_lifecycle(
     return CandidateLifecycleRevalidationResult(
         source_id=source.source_id,
         state="execution_eligible",
+        source=candidate.source,
     )
 
 
@@ -423,6 +427,21 @@ def _candidate_lifecycle_from_approval(
     )
 
 
+def _approved_sql_from_approval(
+    approval: PreviewCandidateApproval,
+    *,
+    audit_context: CandidateLifecycleAuditContext | None,
+) -> str:
+    if not isinstance(approval.approved_sql, str) or not approval.approved_sql.strip():
+        _raise_authoritative_approval_error(
+            deny_code=DENY_CANDIDATE_NOT_APPROVED,
+            message="Candidate approval snapshot is unavailable for execution.",
+            approval=approval,
+            audit_context=audit_context,
+        )
+    return approval.approved_sql
+
+
 def revalidate_authoritative_candidate_approval(
     *,
     session: Session,
@@ -432,6 +451,9 @@ def revalidate_authoritative_candidate_approval(
     selected_source_id: str | None = None,
     audit_context: CandidateLifecycleAuditContext | None = None,
     mark_executed: bool = True,
+    before_mark_executed: (
+        Callable[[CandidateLifecycleRevalidationResult], None] | None
+    ) = None,
 ) -> CandidateLifecycleRevalidationResult:
     approval = (
         session.execute(
@@ -485,6 +507,10 @@ def revalidate_authoritative_candidate_approval(
             approval=approval,
             audit_context=audit_context,
         )
+    approved_sql = _approved_sql_from_approval(
+        approval,
+        audit_context=audit_context,
+    )
 
     result = revalidate_candidate_lifecycle(
         candidate=_candidate_lifecycle_from_approval(approval),
@@ -494,6 +520,9 @@ def revalidate_authoritative_candidate_approval(
         selected_source_id=selected_source_id,
         audit_context=audit_context,
     )
+    result = result.model_copy(update={"approved_sql": approved_sql})
+    if before_mark_executed is not None:
+        before_mark_executed(result)
     if mark_executed:
         approval.executed_at = _persisted_datetime(as_of)
         approval.approval_state = "executed"

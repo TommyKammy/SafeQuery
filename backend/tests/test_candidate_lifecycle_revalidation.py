@@ -221,6 +221,7 @@ def _seed_preview_candidate_approval(
             if execution_policy_version is not None
             else CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY[source.source_family]
         ),
+        approved_sql="SELECT vendor_id FROM finance.approved_vendor_spend LIMIT 50",
         owner_subject_id=owner_subject_id,
         session_id="session-123",
         approved_at=now,
