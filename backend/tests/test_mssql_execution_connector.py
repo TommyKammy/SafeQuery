@@ -101,6 +101,19 @@ def test_execute_mssql_connector_uses_backend_owned_connection_path() -> None:
                 "approved_spend": 4200,
             }
         ],
+        "metadata": {
+            "source_id": "business-mssql-source",
+            "source_family": "mssql",
+            "source_flavor": "sqlserver",
+            "candidate_id": None,
+            "execution_run_id": None,
+            "row_count": 1,
+            "row_limit": 200,
+            "payload_bytes": 51,
+            "payload_limit_bytes": 65536,
+            "result_truncated": False,
+            "truncation_reason": None,
+        },
     }
     assert captured == {
         "connection_string": (

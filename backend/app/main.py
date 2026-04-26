@@ -122,6 +122,8 @@ _EXECUTION_DENIAL_AUDIT_FIELDS = frozenset(
         "primary_deny_code",
         "denial_cause",
         "candidate_state",
+        "execution_row_count",
+        "result_truncated",
     }
 )
 
@@ -140,6 +142,7 @@ class CandidateExecuteResponse(BaseModel):
     connector_id: str
     ownership: str
     rows: list[dict[str, Any]]
+    metadata: dict[str, Any]
     audit: dict[str, list[dict[str, Any]]]
 
 
@@ -641,6 +644,7 @@ def create_app() -> FastAPI:
             connector_id=result.connector_id,
             ownership=result.ownership,
             rows=result.rows,
+            metadata=result.metadata.model_dump(mode="json", exclude_none=True),
             audit={"events": _serialize_execution_audit_events(result.audit_events)},
         )
 

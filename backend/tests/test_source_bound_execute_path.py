@@ -204,6 +204,18 @@ def test_execute_candidate_sql_returns_source_aware_completion_audit_event() -> 
     )
 
     assert result.audit_event is not None
+    assert result.metadata.model_dump(exclude_none=True) == {
+        "source_id": "approved-spend",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "candidate_id": "candidate-123",
+        "execution_run_id": result.audit_event.event_id,
+        "row_count": 1,
+        "row_limit": 200,
+        "payload_bytes": 24,
+        "payload_limit_bytes": 65536,
+        "result_truncated": False,
+    }
     assert [event.event_type for event in result.audit_events] == [
         "execution_requested",
         "execution_started",

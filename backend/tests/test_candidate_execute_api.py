@@ -219,6 +219,39 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(payload["connector_id"], "postgresql_readonly")
         self.assertEqual(payload["rows"], [{"vendor_name": "Acme"}])
         self.assertEqual(
+            {
+                "source_id": payload["metadata"]["source_id"],
+                "source_family": payload["metadata"]["source_family"],
+                "source_flavor": payload["metadata"]["source_flavor"],
+                "candidate_id": payload["metadata"]["candidate_id"],
+                "row_count": payload["metadata"]["row_count"],
+                "row_limit": payload["metadata"]["row_limit"],
+                "result_truncated": payload["metadata"]["result_truncated"],
+            },
+            {
+                "source_id": "demo-business-postgres",
+                "source_family": "postgresql",
+                "source_flavor": "warehouse",
+                "candidate_id": "candidate-123",
+                "row_count": 1,
+                "row_limit": 200,
+                "result_truncated": False,
+            },
+        )
+        self.assertIn("execution_run_id", payload["metadata"])
+        self.assertLessEqual(
+            payload["metadata"]["payload_bytes"],
+            payload["metadata"]["payload_limit_bytes"],
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["execution_row_count"],
+            payload["metadata"]["row_count"],
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["result_truncated"],
+            payload["metadata"]["result_truncated"],
+        )
+        self.assertEqual(
             calls,
             ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
         )
