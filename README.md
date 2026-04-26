@@ -47,6 +47,12 @@ registry readiness for reviewed source records. The local baseline can exercise
 source-aware request and preview contracts, but it should not be read as a
 complete production pilot.
 
+For limited pilot operations after first-run setup, use
+[docs/pilot-operations-runbook.md](./docs/pilot-operations-runbook.md) to
+classify normal, degraded, maintenance, incident, and recovery posture. Keep
+SafeQuery control-plane records authoritative over UI summaries, LLM output,
+adapter output, MLflow, Search, Analyst, and external evidence.
+
 Known product-readiness gaps remain for later Epic K/O/P work:
 
 - real authentication and session wiring

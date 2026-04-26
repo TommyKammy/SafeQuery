@@ -67,29 +67,31 @@ This reading order is intended to help new contributors understand SafeQuery fro
     Use this to understand how NL2SQL quality should be measured safely in the current source-aware baseline.
 26. [pilot-safety-verification-checklist.md](./pilot-safety-verification-checklist.md)
     Use this as the 2-source core path pilot-readiness checklist after the source-aware implementation slices are complete.
+27. [pilot-operations-runbook.md](./pilot-operations-runbook.md)
+    Use this to classify normal, degraded, maintenance, incident, and recovery posture during limited pilot operation without treating UI, LLM, adapter, MLflow, Search, Analyst, or external evidence as authoritative.
 
 ### 5. Approved Follow-on Direction
 
-27. [adr/ADR-0011-target-source-registry-and-single-source-execution-model.md](./adr/ADR-0011-target-source-registry-and-single-source-execution-model.md)
+28. [adr/ADR-0011-target-source-registry-and-single-source-execution-model.md](./adr/ADR-0011-target-source-registry-and-single-source-execution-model.md)
     Read first in this section to understand how SafeQuery expands beyond one hard-coded business source while keeping request, candidate, and execution paths single-source.
-28. [adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md](./adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md)
+29. [adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md](./adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md)
     Review how source families, flavors, connector profiles, and guard profiles are separated so future onboarding does not redesign the control plane.
-29. [design/target-source-registry.md](./design/target-source-registry.md)
+30. [design/target-source-registry.md](./design/target-source-registry.md)
     Use this to understand the concrete registry model, source lifecycle expectations, and application PostgreSQL separation guardrails.
-30. [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md)
+31. [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md)
     Review the family and flavor rollout matrix before planning connector, guard, or evaluation work for additional sources.
-31. [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md)
+32. [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md)
     Read this to understand why the product shell is workflow-first and why the Epic A shell remains a developer state demo.
-32. [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md)
+33. [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md)
     Review how SafeQuery may borrow OSS ergonomics without turning the product into a generic chat shell or moving trust boundaries.
-33. [implementation-roadmap.md](./implementation-roadmap.md)
+34. [implementation-roadmap.md](./implementation-roadmap.md)
     Finish this section with the current implementation sequence so roadmap work stays aligned with the reviewed docs direction.
 
 ### 6. Local Setup and Threat Review
 
-34. [local-development.md](./local-development.md)
+35. [local-development.md](./local-development.md)
     Use this once the document set is clear so local startup follows the reviewed topology and role split.
-35. [security/threat-model.md](./security/threat-model.md)
+36. [security/threat-model.md](./security/threat-model.md)
     Finish with the threat model and residual risks for the current source-aware and UX-foundation baseline before pilot readiness review.
 
 ## Source Hierarchy

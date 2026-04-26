@@ -27,6 +27,12 @@ analyst surface.
 Use this document as the source of truth for first local runs. `README.md`
 keeps a shorter entrypoint and links back here.
 
+For limited pilot operations after first-run setup, use
+[pilot-operations-runbook.md](./pilot-operations-runbook.md) to classify normal,
+degraded, maintenance, incident, and recovery posture. The runbook keeps
+SafeQuery control-plane records authoritative over UI summaries, LLM output,
+adapter output, MLflow, Search, Analyst, and external evidence.
+
 ## Current Baseline
 
 SafeQuery currently supports two practical local workflows:
