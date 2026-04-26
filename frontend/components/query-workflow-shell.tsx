@@ -120,6 +120,12 @@ type AuthoritativeCandidatePreview = {
   sourceLabel?: string;
 };
 
+type AuthoritativeRunContext = {
+  lifecycleTimestamp: string;
+  runIdentity: string;
+  runState: string;
+};
+
 type ApiErrorEnvelope = {
   code: string;
   message: string;
@@ -131,7 +137,8 @@ const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
     label: "Canceled"
   },
   completed: {
-    description: "Execution completed and returned bounded rows for the reviewed run record.",
+    description:
+      "Execution completed for a reviewed run record; rows appear only when authoritative results are attached.",
     label: "Completed"
   },
   empty: {
@@ -530,6 +537,34 @@ function findAuthoritativeCandidatePreview(
   };
 }
 
+function findAuthoritativeRunContext(
+  history: OperatorHistoryItem[],
+  sourceId?: string,
+  historyRecordId?: string
+): AuthoritativeRunContext | null {
+  if (!sourceId || !historyRecordId) {
+    return null;
+  }
+
+  const run = history.find(
+    (item) =>
+      item.itemType === "run" &&
+      item.sourceId === sourceId &&
+      item.recordId === historyRecordId &&
+      item.runState
+  );
+
+  if (!run?.runState) {
+    return null;
+  }
+
+  return {
+    lifecycleTimestamp: run.occurredAt,
+    runIdentity: run.recordId,
+    runState: run.runState
+  };
+}
+
 function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null) {
   if (!preview) {
     return (
@@ -562,7 +597,8 @@ function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null
 function getWorkflowContext(
   state: CanonicalWorkflowState,
   source?: SourceOption,
-  candidatePreview?: AuthoritativeCandidatePreview | null
+  candidatePreview?: AuthoritativeCandidatePreview | null,
+  runContext?: AuthoritativeRunContext | null
 ): WorkflowContext {
   const sourceIdentity =
     candidatePreview?.sourceLabel ?? source?.displayLabel ?? "No source selected yet";
@@ -583,6 +619,22 @@ function getWorkflowContext(
     };
   }
 
+  if (
+    runContext &&
+    (state === "completed" ||
+      state === "empty" ||
+      state === "execution_denied" ||
+      state === "failed" ||
+      state === "canceled")
+  ) {
+    return {
+      lifecycleTimestamp: runContext.lifecycleTimestamp,
+      runIdentity: runContext.runIdentity,
+      runState: runContext.runState,
+      sourceIdentity
+    };
+  }
+
   if (state === "query" || state === "signin") {
     return {
       sourceIdentity
@@ -590,27 +642,6 @@ function getWorkflowContext(
   }
 
   return {
-    lifecycleTimestamp:
-      state === "completed"
-        ? "2026-04-21 14:32 JST"
-        : state === "empty"
-          ? "2026-04-21 14:34 JST"
-          : state === "execution_denied"
-            ? "2026-04-21 14:31 JST"
-            : state === "failed"
-              ? "2026-04-21 14:35 JST"
-              : "2026-04-21 14:33 JST",
-    runIdentity: "run-sq-204",
-    runState:
-      state === "completed"
-        ? "executed"
-        : state === "empty"
-          ? "executed_empty"
-          : state === "execution_denied"
-            ? "execution_denied"
-            : state === "failed"
-              ? "execution_failed"
-              : "execution_canceled",
     sourceIdentity
   };
 }
@@ -637,7 +668,7 @@ function getGuardHeadline(state: CanonicalWorkflowState): string {
   }
 
   if (state === "completed") {
-    return "Execution completed with rows";
+    return "Execution completed";
   }
 
   if (state === "empty") {
@@ -712,33 +743,18 @@ function getResultTitle(state: CanonicalWorkflowState): string {
     return "Execution canceled";
   }
 
-  return "Results placeholder";
+  return "Results unavailable";
 }
 
 function renderResultContent(state: CanonicalWorkflowState) {
   if (state === "completed") {
     return (
-      <div className="result-table" role="table" aria-label="Placeholder query results">
-        <div className="result-row result-row-head" role="row">
-          <span role="columnheader">Vendor</span>
-          <span role="columnheader">Quarterly spend</span>
-          <span role="columnheader">Guard note</span>
-        </div>
-        <div className="result-row" role="row">
-          <span role="cell">Northwind Health</span>
-          <span role="cell">$842,000</span>
-          <span role="cell">Within reviewed ceiling</span>
-        </div>
-        <div className="result-row" role="row">
-          <span role="cell">Harbor Transit</span>
-          <span role="cell">$611,000</span>
-          <span role="cell">Approved dataset projection</span>
-        </div>
-        <div className="result-row" role="row">
-          <span role="cell">Blue Summit Labs</span>
-          <span role="cell">$488,000</span>
-          <span role="cell">Placeholder rows only</span>
-        </div>
+      <div className="state-callout state-callout-empty">
+        <p className="state-callout-title">Execution results unavailable</p>
+        <p>
+          No backend result rows are attached to this shell view. SafeQuery withholds the table
+          until an authoritative execution payload is returned for the selected run.
+        </p>
       </div>
     );
   }
@@ -785,7 +801,7 @@ function renderResultContent(state: CanonicalWorkflowState) {
         <p className="state-callout-title">Failed state reached</p>
         <p>
           A run was created, but it ended in failure. The operator sees the run anchor and failure
-          posture instead of placeholder rows.
+          posture instead of invented rows.
         </p>
       </div>
     );
@@ -807,8 +823,8 @@ function renderResultContent(state: CanonicalWorkflowState) {
     <div className="placeholder-block">
       <p className="placeholder-title">Result preview pending</p>
       <p>
-        Submit the question to move into SQL review. Result placeholders stay separate from SQL
-        and guard context even before execution wiring exists.
+        Submit the question to move into SQL review. Results remain unavailable until execution
+        returns authoritative rows.
       </p>
     </div>
   );
@@ -822,7 +838,7 @@ function renderStatePanel(
   if (state === "signin") {
     return (
       <div className="state-hero">
-        <p className="eyebrow">Authentication placeholder</p>
+        <p className="eyebrow">Authentication required</p>
         <h2>Sign in state</h2>
         <p className="section-copy">
           This issue stops at the custom shell. The sign-in card is visible and reachable, but it
@@ -866,7 +882,7 @@ function renderStatePanel(
         <h2>Completed state</h2>
         <p className="section-copy">
           Execution-backed rows stay separate from preview and guard surfaces so completed output
-          is anchored to a specific run instead of a generic result placeholder.
+          is anchored to a specific run instead of generic result content.
         </p>
         <div className="action-row">
           <a className="action-link" href={buildStateHref("empty", question, sourceId)}>
@@ -1038,11 +1054,17 @@ export function QueryWorkflowShell({
     submittedSourceId,
     historyRecordId
   );
+  const historyRunContext = findAuthoritativeRunContext(
+    operatorWorkflow.history,
+    submittedSourceId,
+    historyRecordId
+  );
   const candidatePreview = submittedCandidatePreview ?? historyCandidatePreview;
   const workflowContext = getWorkflowContext(
     normalizedState,
     sourceBinding.source,
-    candidatePreview
+    candidatePreview,
+    historyRunContext
   );
   const sourceSelectVisible = normalizedState === "query";
   const boundSourceId = sourceBinding.source?.sourceId;
@@ -1228,7 +1250,9 @@ export function QueryWorkflowShell({
           <div className="meta-card">
             <span className="meta-label">Boundary mode</span>
             <strong>Fail closed</strong>
-            <span className="meta-copy">No auth or execution trust is inferred from placeholders.</span>
+            <span className="meta-copy">
+              No auth or execution trust is inferred from unavailable data.
+            </span>
           </div>
         </div>
 
@@ -1512,7 +1536,7 @@ export function QueryWorkflowShell({
             <div className="guard-list">
               <div className="guard-item">
                 <span className="meta-label">Auth</span>
-                <strong>Placeholder only</strong>
+                <strong>Not connected</strong>
               </div>
               <div className="guard-item">
                 <span className="meta-label">Candidate guard</span>

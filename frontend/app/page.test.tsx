@@ -731,7 +731,31 @@ describe("HomePage", () => {
     expect(screen.getAllByText(/sap spend cube \/ approved_vendor_spend/i)).not.toHaveLength(0);
   });
 
-  it("renders explicit empty and review-denied placeholder states", async () => {
+  it("does not render placeholder result rows or fabricated run context in product workflow views", async () => {
+    render(
+      await HomePage({
+        searchParams: {
+          question: "Show approved vendors by quarterly spend",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    expect(screen.getByRole("heading", { name: /completed state/i })).toBeInTheDocument();
+    expect(screen.queryByText(/northwind health/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/harbor transit/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/blue summit labs/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder rows only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/run-sq-204/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/2026-04-21 14:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/authentication placeholder/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/results placeholder/i)).not.toBeInTheDocument();
+  });
+
+  it("renders explicit empty and review-denied unavailable states", async () => {
     const { rerender } = render(
       await HomePage({
         searchParams: {
@@ -771,30 +795,30 @@ describe("HomePage", () => {
       {
         state: "completed",
         heading: /completed state/i,
-        status: /execution completed with rows/i,
-        lifecycle: /run state/i,
-        identity: /run-sq-204/i
+        status: /execution completed/i,
+        lifecycle: /lifecycle posture/i,
+        identity: /No submitted record yet/i
       },
       {
         state: "failed",
         heading: /failed state/i,
         status: /execution failed after run start/i,
-        lifecycle: /run state/i,
-        identity: /run-sq-204/i
+        lifecycle: /lifecycle posture/i,
+        identity: /No submitted record yet/i
       },
       {
         state: "canceled",
         heading: /canceled state/i,
         status: /execution canceled before completion/i,
-        lifecycle: /run state/i,
-        identity: /run-sq-204/i
+        lifecycle: /lifecycle posture/i,
+        identity: /No submitted record yet/i
       },
       {
         state: "execution_denied",
         heading: /execution denied state/i,
         status: /execution denied at execute time/i,
-        lifecycle: /run state/i,
-        identity: /run-sq-204/i
+        lifecycle: /lifecycle posture/i,
+        identity: /No submitted record yet/i
       }
     ] as const;
 
@@ -811,7 +835,7 @@ describe("HomePage", () => {
       );
 
       expect(screen.getByRole("heading", { name: terminalState.heading })).toBeInTheDocument();
-      expect(screen.getByText(terminalState.status)).toBeInTheDocument();
+      expect(screen.getAllByText(terminalState.status).length).toBeGreaterThan(0);
       expect(screen.getByText(/source identity/i)).toBeInTheDocument();
       expect(screen.getByText(/request (identity|posture)/i)).toBeInTheDocument();
       expect(screen.getByText(terminalState.lifecycle)).toBeInTheDocument();
