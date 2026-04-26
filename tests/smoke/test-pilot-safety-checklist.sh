@@ -117,11 +117,15 @@ runbook_required_patterns=(
   "stop or escalate"
   "Command-backed classification signals"
   "Manual/operator judgment"
+  "database"
+  "migrations"
   "source_registry"
   "dataset_contract"
   "schema_snapshot"
   "entitlement_seed"
   "execution_connector"
+  "backend"
+  "frontend"
 )
 
 for pattern in "${runbook_required_patterns[@]}"; do
