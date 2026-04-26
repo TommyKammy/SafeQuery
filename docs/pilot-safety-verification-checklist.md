@@ -92,6 +92,7 @@ Run these focused checks from the repository root unless a command changes into
 `backend`.
 
 ```bash
+bash tests/smoke/test-pilot-safety-ui-api-workflow.sh
 bash tests/smoke/test-pilot-safety-checklist.sh
 bash tests/smoke/test-local-topology-roles.sh
 bash tests/smoke/test-local-startup-docs.sh
@@ -143,6 +144,12 @@ Inspection points:
 - `tests/smoke/test-compose-operator-workflow-source-selector.sh` still proves
   the compose-backed first-run path migrates, seeds demo governance data, passes
   the first-run doctor, and exposes a non-empty active source selector.
+- `tests/smoke/test-pilot-safety-ui-api-workflow.sh` still proves the pilot
+  workflow through source selection, preview, guard, execute, result, and audit
+  inspection by combining the focused UI smoke with backend preview,
+  entitlement-denial, execution-denial, cancellation, and audit-history tests.
+  It fails if placeholder SQL or placeholder result rows return to the product
+  workflow surface.
 - `backend/tests/test_source_bound_execute_path.py`,
   `backend/tests/test_execution_runtime_controls.py`,
   `backend/tests/test_mssql_execution_connector.py`, and
