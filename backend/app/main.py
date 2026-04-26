@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -23,7 +24,9 @@ from app.core.errors import (
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
+from app.features.audit import SourceAwareAuditEvent
 from app.features.auth.dev import attach_dev_authenticated_subject
 from app.features.auth.context import (
     AuthenticatedSubject,
@@ -33,6 +36,7 @@ from app.features.auth.session import (
     ApplicationSessionContext,
     require_application_session,
 )
+from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
 from app.features.execution import (
     ExecutableCandidateRecord,
     ExecutionAuditContext,
@@ -47,6 +51,7 @@ from app.services.candidate_lifecycle import (
     CandidateLifecycleAuditContext,
     CandidateLifecycleRevalidationError,
     CandidateLifecycleRevalidationResult,
+    SourceBoundCandidateMetadata,
     revalidate_authoritative_candidate_approval,
 )
 from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_doctor
@@ -192,6 +197,84 @@ def _require_execution_connector_configuration(
                 "Candidate execution is unavailable.",
             )
         return
+
+
+def _build_execution_source_binding_denial_audit_event(
+    *,
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: CandidateLifecycleAuditContext,
+) -> SourceAwareAuditEvent:
+    return SourceAwareAuditEvent(
+        event_id=audit_context.event_id,
+        event_type="execution_denied",
+        occurred_at=audit_context.occurred_at,
+        request_id=audit_context.request_id,
+        correlation_id=audit_context.correlation_id,
+        user_subject=audit_context.user_subject,
+        session_id=audit_context.session_id,
+        query_candidate_id=audit_context.query_candidate_id,
+        candidate_owner_subject=audit_context.candidate_owner_subject,
+        source_id=candidate_source.source_id,
+        source_family=candidate_source.source_family,
+        source_flavor=candidate_source.source_flavor,
+        dataset_contract_version=candidate_source.dataset_contract_version,
+        schema_snapshot_version=candidate_source.schema_snapshot_version,
+        execution_policy_version=candidate_source.execution_policy_version,
+        connector_profile_version=candidate_source.connector_profile_version,
+        primary_deny_code=DENY_SOURCE_BINDING_MISMATCH,
+        denial_cause="source_binding_mismatch",
+        candidate_state="denied",
+    )
+
+
+def _require_source_bound_execution_connection_reference(
+    *,
+    session: Session,
+    candidate_source: SourceBoundCandidateMetadata,
+    connector_id: str,
+    audit_context: CandidateLifecycleAuditContext,
+) -> None:
+    def raise_source_binding_mismatch(message: str) -> None:
+        raise ExecutionConnectorExecutionError(
+            deny_code=DENY_SOURCE_BINDING_MISMATCH,
+            message=message,
+            audit_event=_build_execution_source_binding_denial_audit_event(
+                candidate_source=candidate_source,
+                audit_context=audit_context,
+            ),
+        )
+
+    expected_connection_reference_by_connector = {
+        "postgresql_readonly": "env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        "mssql_readonly": "env:SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING",
+    }
+    expected_connection_reference = expected_connection_reference_by_connector.get(
+        connector_id
+    )
+    if expected_connection_reference is None:
+        raise_source_binding_mismatch(
+            "The candidate-bound source is not bound to a supported "
+            f"backend-owned execution connection reference for connector '{connector_id}'."
+        )
+
+    source = session.scalar(
+        select(RegisteredSource).where(
+            RegisteredSource.source_id == candidate_source.source_id
+        )
+    )
+    raw_connection_reference = (
+        source.connection_reference if source is not None else None
+    )
+    actual_connection_reference = (
+        raw_connection_reference.strip()
+        if isinstance(raw_connection_reference, str)
+        else None
+    )
+    if actual_connection_reference != expected_connection_reference:
+        raise_source_binding_mismatch(
+            "The candidate-bound source is not bound to the backend-owned "
+            "execution connection reference."
+        )
 
 
 def create_app() -> FastAPI:
@@ -450,6 +533,12 @@ def create_app() -> FastAPI:
                 )
                 prepared_selection = select_execution_connector(
                     candidate_source=prepared_candidate.source
+                )
+                _require_source_bound_execution_connection_reference(
+                    session=session,
+                    candidate_source=prepared_candidate.source,
+                    connector_id=prepared_selection.connector_id,
+                    audit_context=lifecycle_audit_context,
                 )
                 _require_execution_connector_configuration(
                     connector_id=prepared_selection.connector_id,

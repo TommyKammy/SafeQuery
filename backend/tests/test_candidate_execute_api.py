@@ -94,7 +94,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             dataset_contract_id=None,
             schema_snapshot_id=None,
             execution_policy_id=None,
-            connection_reference="vault:demo-business-postgres",
+            connection_reference="env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
         )
         self.session.add(source)
         self.session.flush()
@@ -380,6 +380,98 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             cookies=app_session.cookies,
             json={"selected_source_id": "another-business-source"},
         )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_SOURCE_BINDING_MISMATCH",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][0]["query_candidate_id"],
+            "candidate-123",
+        )
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_rejects_application_postgres_connection_reference_without_leaking_secret(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        source = (
+            self.session.query(RegisteredSource)
+            .filter_by(source_id="demo-business-postgres")
+            .one()
+        )
+        source.connection_reference = "env:SAFEQUERY_APP_POSTGRES_URL"
+        self.session.commit()
+
+        def query_runner(**_: object) -> list[dict[str, object]]:
+            calls.append("called")
+            return []
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(query_runner).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_SOURCE_BINDING_MISMATCH",
+        )
+        self.assertNotIn("safequery_exec:secret", response.text)
+        self.assertNotIn(os.environ["SAFEQUERY_APP_POSTGRES_URL"], response.text)
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_rejects_unknown_connector_without_consuming_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        main_module = importlib.import_module("app.main")
+        unexpected_selection = main_module.ExecutionConnectorSelection(
+            source_id="demo-business-postgres",
+            source_family="postgresql",
+            source_flavor="warehouse",
+            connector_id="postgresql_readonly_shadow",
+            ownership="backend",
+        )
+
+        def query_runner(**_: object) -> list[dict[str, object]]:
+            calls.append("called")
+            return []
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        with patch.object(
+            main_module,
+            "select_execution_connector",
+            return_value=unexpected_selection,
+        ):
+            response = self._client(query_runner).post(
+                "/candidates/candidate-123/execute",
+                headers=app_session.headers,
+                cookies=app_session.cookies,
+                json={"selected_source_id": "demo-business-postgres"},
+            )
 
         self.assertEqual(response.status_code, 403)
         payload = response.json()
