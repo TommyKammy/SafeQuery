@@ -7,7 +7,7 @@ from typing import Iterator
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -17,6 +17,7 @@ from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRe
 from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
 from app.services.demo_source_seed import seed_demo_source_governance
+from app.services.health import _workflow_lifecycle_metrics
 
 
 @contextmanager
@@ -421,3 +422,59 @@ def test_health_exposes_bounded_workflow_lifecycle_metrics(
     } in structured_logs
     assert "safequery_exec" not in str(structured_logs)
     assert "postgresql://" not in str(structured_logs)
+
+
+def test_workflow_lifecycle_metrics_does_not_hydrate_audit_events() -> None:
+    with _session_scope() as session:
+        preview_request = _add_preview_request(
+            session,
+            request_id="request-preview-failure-bounds",
+            request_state="preview_generation_failed",
+        )
+        session.add_all(
+            [
+                _audit_event(
+                    preview_request=preview_request,
+                    lifecycle_order=index + 1,
+                    event_type="generation_failed",
+                    denial_cause=f"failure-{index}",
+                )
+                for index in range(10)
+            ]
+        )
+        session.commit()
+        session.expunge_all()
+        loaded_audit_event_types: list[str] = []
+
+        def _record_loaded(_session: Session, instance: object) -> None:
+            if isinstance(instance, PreviewAuditEvent):
+                loaded_audit_event_types.append(instance.event_type)
+
+        event.listen(session, "loaded_as_persistent", _record_loaded)
+        try:
+            metrics = _workflow_lifecycle_metrics(session)
+        finally:
+            event.remove(session, "loaded_as_persistent", _record_loaded)
+
+    assert loaded_audit_event_types == []
+    assert metrics["audit_event_count"] == 10
+    assert metrics["audit_persistence"] == {
+        "recorded_events": 10,
+        "sources_with_events": 1,
+    }
+    assert metrics["preview"] == {
+        "submitted": 0,
+        "generation_completed": 0,
+        "generation_failed": 10,
+        "guard_evaluated": 0,
+        "terminal_failures": {
+            "failure-0": 1,
+            "failure-1": 1,
+            "failure-2": 1,
+            "failure-3": 1,
+            "failure-4": 1,
+            "failure-5": 1,
+            "failure-6": 1,
+            "failure-7": 1,
+        },
+    }

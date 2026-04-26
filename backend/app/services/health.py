@@ -250,52 +250,83 @@ def _bounded_counts(counter: Counter[str], *, limit: int = 8) -> dict[str, int]:
     }
 
 
-def _terminal_failure_key(event: PreviewAuditEvent) -> str:
-    for value in (
-        event.denial_cause,
-        event.primary_deny_code,
-        event.candidate_state,
-        event.event_type,
-    ):
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return "unknown"
+def _terminal_failure_counts(
+    session: Session,
+    *,
+    event_types: tuple[str, ...],
+) -> Counter[str]:
+    failure_key = func.coalesce(
+        func.nullif(func.trim(PreviewAuditEvent.denial_cause), ""),
+        func.nullif(func.trim(PreviewAuditEvent.primary_deny_code), ""),
+        func.nullif(func.trim(PreviewAuditEvent.candidate_state), ""),
+        func.nullif(func.trim(PreviewAuditEvent.event_type), ""),
+        "unknown",
+    ).label("failure_key")
+    failure_count = func.count().label("failure_count")
+    return Counter(
+        {
+            str(key): int(count)
+            for key, count in session.execute(
+                select(failure_key, failure_count)
+                .select_from(PreviewAuditEvent)
+                .where(PreviewAuditEvent.event_type.in_(event_types))
+                .group_by(failure_key)
+                .order_by(failure_count.desc(), failure_key.asc())
+                .limit(8)
+            )
+        }
+    )
 
 
 def _workflow_lifecycle_metrics(session: Session) -> dict[str, object]:
-    events = list(
-        session.scalars(
-            select(PreviewAuditEvent).order_by(
-                PreviewAuditEvent.event_type,
-                PreviewAuditEvent.source_id,
+    event_count = int(
+        session.scalar(select(func.count()).select_from(PreviewAuditEvent)) or 0
+    )
+    source_count = int(
+        session.scalar(
+            select(func.count(func.distinct(PreviewAuditEvent.source_id))).select_from(
+                PreviewAuditEvent
             )
         )
+        or 0
     )
-    event_count = len(events)
-    preview_terminal_failures: Counter[str] = Counter()
-    execute_terminal_failures: Counter[str] = Counter()
-    source_ids: set[str] = set()
+    event_type_counts = {
+        str(event_type): int(count)
+        for event_type, count in session.execute(
+            select(PreviewAuditEvent.event_type, func.count())
+            .select_from(PreviewAuditEvent)
+            .group_by(PreviewAuditEvent.event_type)
+        )
+    }
+    preview_terminal_failures = _terminal_failure_counts(
+        session,
+        event_types=("generation_failed",),
+    )
+    execute_terminal_failures = _terminal_failure_counts(
+        session,
+        event_types=("execution_denied", "execution_failed"),
+    )
 
     metrics: dict[str, object] = {
         "status": "active" if event_count else "no_traffic",
         "audit_event_count": event_count,
         "preview": {
-            "submitted": 0,
-            "generation_completed": 0,
-            "generation_failed": 0,
-            "guard_evaluated": 0,
+            "submitted": event_type_counts.get("query_submitted", 0),
+            "generation_completed": event_type_counts.get("generation_completed", 0),
+            "generation_failed": event_type_counts.get("generation_failed", 0),
+            "guard_evaluated": event_type_counts.get("guard_evaluated", 0),
             "terminal_failures": {},
         },
         "execute": {
-            "requested": 0,
-            "completed": 0,
-            "denied": 0,
-            "failed": 0,
+            "requested": event_type_counts.get("execution_requested", 0),
+            "completed": event_type_counts.get("execution_completed", 0),
+            "denied": event_type_counts.get("execution_denied", 0),
+            "failed": event_type_counts.get("execution_failed", 0),
             "terminal_failures": {},
         },
         "audit_persistence": {
             "recorded_events": event_count,
-            "sources_with_events": 0,
+            "sources_with_events": source_count,
         },
     }
     preview = metrics["preview"]
@@ -303,33 +334,8 @@ def _workflow_lifecycle_metrics(session: Session) -> dict[str, object]:
     assert isinstance(preview, dict)
     assert isinstance(execute, dict)
 
-    for event in events:
-        source_ids.add(event.source_id)
-        if event.event_type == "query_submitted":
-            preview["submitted"] = int(preview["submitted"]) + 1
-        elif event.event_type == "generation_completed":
-            preview["generation_completed"] = int(preview["generation_completed"]) + 1
-        elif event.event_type == "generation_failed":
-            preview["generation_failed"] = int(preview["generation_failed"]) + 1
-            preview_terminal_failures[_terminal_failure_key(event)] += 1
-        elif event.event_type == "guard_evaluated":
-            preview["guard_evaluated"] = int(preview["guard_evaluated"]) + 1
-        elif event.event_type == "execution_requested":
-            execute["requested"] = int(execute["requested"]) + 1
-        elif event.event_type == "execution_completed":
-            execute["completed"] = int(execute["completed"]) + 1
-        elif event.event_type == "execution_denied":
-            execute["denied"] = int(execute["denied"]) + 1
-            execute_terminal_failures[_terminal_failure_key(event)] += 1
-        elif event.event_type == "execution_failed":
-            execute["failed"] = int(execute["failed"]) + 1
-            execute_terminal_failures[_terminal_failure_key(event)] += 1
-
     preview["terminal_failures"] = _bounded_counts(preview_terminal_failures)
     execute["terminal_failures"] = _bounded_counts(execute_terminal_failures)
-    audit_persistence = metrics["audit_persistence"]
-    assert isinstance(audit_persistence, dict)
-    audit_persistence["sources_with_events"] = len(source_ids)
     return metrics
 
 
