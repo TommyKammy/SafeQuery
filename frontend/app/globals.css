@@ -294,6 +294,7 @@ button:focus-visible {
 .signin-actions,
 .action-row,
 .guard-list,
+.evidence-list,
 .history-list,
 .result-table,
 .placeholder-block {
@@ -452,6 +453,20 @@ button:disabled {
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   background: rgba(7, 11, 20, 0.38);
+}
+
+.evidence-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: rgba(7, 11, 20, 0.38);
+  overflow-wrap: anywhere;
+}
+
+.evidence-item strong {
+  color: var(--text-primary);
 }
 
 .placeholder-title,

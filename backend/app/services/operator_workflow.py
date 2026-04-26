@@ -45,6 +45,93 @@ class OperatorWorkflowHistoryItem(BaseModel):
     )
     row_count: Optional[int] = Field(default=None, serialization_alias="rowCount")
     run_state: Optional[str] = Field(default=None, serialization_alias="runState")
+    audit_events: list["OperatorWorkflowAuditEventSummary"] = Field(
+        default_factory=list,
+        serialization_alias="auditEvents",
+    )
+    executed_evidence: list["OperatorWorkflowExecutedEvidence"] = Field(
+        default_factory=list,
+        serialization_alias="executedEvidence",
+    )
+    retrieved_citations: list["OperatorWorkflowRetrievedCitation"] = Field(
+        default_factory=list,
+        serialization_alias="retrievedCitations",
+    )
+
+
+class OperatorWorkflowAuditEventSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(serialization_alias="eventId")
+    event_type: str = Field(serialization_alias="eventType")
+    occurred_at: datetime = Field(serialization_alias="occurredAt")
+    request_id: str = Field(serialization_alias="requestId")
+    candidate_id: Optional[str] = Field(default=None, serialization_alias="candidateId")
+    source_id: str = Field(serialization_alias="sourceId")
+    candidate_state: Optional[str] = Field(default=None, serialization_alias="candidateState")
+    primary_deny_code: Optional[str] = Field(default=None, serialization_alias="primaryDenyCode")
+    row_count: Optional[int] = Field(default=None, serialization_alias="rowCount")
+    result_truncated: Optional[bool] = Field(default=None, serialization_alias="resultTruncated")
+
+
+class OperatorWorkflowExecutedEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authority: Literal["backend_execution_result"] = "backend_execution_result"
+    can_authorize_execution: Literal[False] = Field(
+        default=False,
+        serialization_alias="canAuthorizeExecution",
+    )
+    candidate_id: str = Field(serialization_alias="candidateId")
+    execution_audit_event_id: str = Field(serialization_alias="executionAuditEventId")
+    execution_audit_event_type: Literal["execution_completed"] = Field(
+        serialization_alias="executionAuditEventType",
+    )
+    row_count: int = Field(serialization_alias="rowCount")
+    result_truncated: bool = Field(serialization_alias="resultTruncated")
+    source_id: str = Field(serialization_alias="sourceId")
+    source_family: str = Field(serialization_alias="sourceFamily")
+    source_flavor: Optional[str] = Field(default=None, serialization_alias="sourceFlavor")
+    dataset_contract_version: Optional[int] = Field(
+        default=None,
+        serialization_alias="datasetContractVersion",
+    )
+    schema_snapshot_version: Optional[int] = Field(
+        default=None,
+        serialization_alias="schemaSnapshotVersion",
+    )
+    execution_policy_version: Optional[int] = Field(
+        default=None,
+        serialization_alias="executionPolicyVersion",
+    )
+    connector_profile_version: Optional[int] = Field(
+        default=None,
+        serialization_alias="connectorProfileVersion",
+    )
+
+
+class OperatorWorkflowRetrievedCitation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(serialization_alias="assetId")
+    asset_kind: str = Field(serialization_alias="assetKind")
+    authority: Literal["advisory_context"] = "advisory_context"
+    can_authorize_execution: Literal[False] = Field(
+        default=False,
+        serialization_alias="canAuthorizeExecution",
+    )
+    citation_label: str = Field(serialization_alias="citationLabel")
+    source_id: str = Field(serialization_alias="sourceId")
+    source_family: str = Field(serialization_alias="sourceFamily")
+    source_flavor: Optional[str] = Field(default=None, serialization_alias="sourceFlavor")
+    dataset_contract_version: Optional[int] = Field(
+        default=None,
+        serialization_alias="datasetContractVersion",
+    )
+    schema_snapshot_version: Optional[int] = Field(
+        default=None,
+        serialization_alias="schemaSnapshotVersion",
+    )
 
 
 class OperatorWorkflowSnapshot(BaseModel):
@@ -151,6 +238,144 @@ def _run_result_truncated_for_event(
     return result_truncated if isinstance(result_truncated, bool) else None
 
 
+def _read_text(value: object) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _read_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _read_non_negative_int(value: object) -> int | None:
+    return value if isinstance(value, int) and value >= 0 else None
+
+
+def _read_positive_int(value: object) -> int | None:
+    return value if isinstance(value, int) and value > 0 else None
+
+
+def _read_payload_items(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _audit_event_summary(event: PreviewAuditEvent) -> OperatorWorkflowAuditEventSummary:
+    return OperatorWorkflowAuditEventSummary(
+        event_id=str(event.event_id),
+        event_type=event.event_type,
+        occurred_at=_as_utc_datetime(event.occurred_at),
+        request_id=event.request_id,
+        candidate_id=event.candidate_id,
+        source_id=event.source_id,
+        candidate_state=event.candidate_state,
+        primary_deny_code=event.primary_deny_code,
+        row_count=_read_non_negative_int(event.audit_payload.get("execution_row_count")),
+        result_truncated=_read_bool(event.audit_payload.get("result_truncated")),
+    )
+
+
+def _executed_evidence_for_event(
+    event: PreviewAuditEvent,
+) -> list[OperatorWorkflowExecutedEvidence]:
+    evidence: list[OperatorWorkflowExecutedEvidence] = []
+    for item in _read_payload_items(event.audit_payload.get("executed_evidence")):
+        if (
+            item.get("type") != "executed_evidence"
+            or item.get("authority") != "backend_execution_result"
+            or item.get("can_authorize_execution") is not False
+        ):
+            continue
+
+        candidate_id = _read_text(item.get("candidate_id"))
+        execution_audit_event_id = _read_text(item.get("execution_audit_event_id"))
+        row_count = _read_non_negative_int(item.get("row_count"))
+        result_truncated = _read_bool(item.get("result_truncated"))
+        source_id = _read_text(item.get("source_id"))
+        source_family = _read_text(item.get("source_family"))
+        if (
+            candidate_id is None
+            or execution_audit_event_id is None
+            or item.get("execution_audit_event_type") != "execution_completed"
+            or row_count is None
+            or result_truncated is None
+            or source_id != event.source_id
+            or source_family is None
+        ):
+            continue
+
+        evidence.append(
+            OperatorWorkflowExecutedEvidence(
+                candidate_id=candidate_id,
+                execution_audit_event_id=execution_audit_event_id,
+                execution_audit_event_type="execution_completed",
+                row_count=row_count,
+                result_truncated=result_truncated,
+                source_id=source_id,
+                source_family=source_family,
+                source_flavor=_read_text(item.get("source_flavor")),
+                dataset_contract_version=_read_positive_int(
+                    item.get("dataset_contract_version")
+                ),
+                schema_snapshot_version=_read_positive_int(
+                    item.get("schema_snapshot_version")
+                ),
+                execution_policy_version=_read_positive_int(
+                    item.get("execution_policy_version")
+                ),
+                connector_profile_version=_read_positive_int(
+                    item.get("connector_profile_version")
+                ),
+            )
+        )
+    return evidence
+
+
+def _retrieved_citations_for_event(
+    event: PreviewAuditEvent,
+) -> list[OperatorWorkflowRetrievedCitation]:
+    citations: list[OperatorWorkflowRetrievedCitation] = []
+    for item in _read_payload_items(event.audit_payload.get("retrieved_citations")):
+        if (
+            item.get("authority") != "advisory_context"
+            or item.get("can_authorize_execution") is not False
+        ):
+            continue
+
+        asset_id = _read_text(item.get("asset_id"))
+        asset_kind = _read_text(item.get("asset_kind"))
+        citation_label = _read_text(item.get("citation_label"))
+        source_id = _read_text(item.get("source_id"))
+        source_family = _read_text(item.get("source_family"))
+        if (
+            asset_id is None
+            or asset_kind is None
+            or citation_label is None
+            or source_id != event.source_id
+            or source_family is None
+        ):
+            continue
+
+        citations.append(
+            OperatorWorkflowRetrievedCitation(
+                asset_id=asset_id,
+                asset_kind=asset_kind,
+                citation_label=citation_label,
+                source_id=source_id,
+                source_family=source_family,
+                source_flavor=_read_text(item.get("source_flavor")),
+                dataset_contract_version=_read_positive_int(
+                    item.get("dataset_contract_version")
+                ),
+                schema_snapshot_version=_read_positive_int(
+                    item.get("schema_snapshot_version")
+                ),
+            )
+        )
+    return citations
+
+
 def _terminal_run_events(
     audit_events: list[PreviewAuditEvent],
 ) -> list[tuple[PreviewAuditEvent, str]]:
@@ -215,10 +440,14 @@ def _build_operator_history(
                 result_truncated=_run_result_truncated_for_event(event, run_state),
                 row_count=_run_row_count_for_event(event, run_state),
                 run_state=run_state,
+                audit_events=[_audit_event_summary(event)],
+                executed_evidence=_executed_evidence_for_event(event),
+                retrieved_citations=_retrieved_citations_for_event(event),
             )
         )
 
     for candidate in candidates:
+        candidate_event = candidate_events.get(candidate.candidate_id)
         history.append(
             OperatorWorkflowHistoryItem(
                 item_type="candidate",
@@ -228,16 +457,26 @@ def _build_operator_history(
                 source_label=source_labels.get(candidate.source_id, candidate.source_id),
                 lifecycle_state=candidate.candidate_state,
                 occurred_at=_history_occurred_at(
-                    candidate_events.get(candidate.candidate_id),
+                    candidate_event,
                     candidate.updated_at or candidate.created_at,
                 ),
                 candidate_sql=candidate.candidate_sql,
                 request_id=candidate.request_id,
                 guard_status=candidate.guard_status,
+                audit_events=(
+                    [_audit_event_summary(candidate_event)] if candidate_event else []
+                ),
+                executed_evidence=(
+                    _executed_evidence_for_event(candidate_event) if candidate_event else []
+                ),
+                retrieved_citations=(
+                    _retrieved_citations_for_event(candidate_event) if candidate_event else []
+                ),
             )
         )
 
     for request in requests:
+        request_event = request_events.get(request.request_id)
         history.append(
             OperatorWorkflowHistoryItem(
                 item_type="request",
@@ -247,8 +486,17 @@ def _build_operator_history(
                 source_label=source_labels.get(request.source_id, request.source_id),
                 lifecycle_state=request.request_state,
                 occurred_at=_history_occurred_at(
-                    request_events.get(request.request_id),
+                    request_event,
                     request.updated_at or request.created_at,
+                ),
+                audit_events=(
+                    [_audit_event_summary(request_event)] if request_event else []
+                ),
+                executed_evidence=(
+                    _executed_evidence_for_event(request_event) if request_event else []
+                ),
+                retrieved_citations=(
+                    _retrieved_citations_for_event(request_event) if request_event else []
                 ),
             )
         )

@@ -9,8 +9,47 @@ export type SourceOption = {
   sourceId: string;
 };
 
+export type OperatorWorkflowAuditEvent = {
+  candidateId: string | null;
+  candidateState: string | null;
+  eventId: string;
+  eventType: string;
+  occurredAt: string;
+  primaryDenyCode: string | null;
+  requestId: string;
+  resultTruncated: boolean | null;
+  rowCount: number | null;
+  sourceId: string;
+};
+
+export type OperatorWorkflowExecutedEvidence = {
+  authority: "backend_execution_result";
+  canAuthorizeExecution: false;
+  candidateId: string;
+  executionAuditEventId: string;
+  executionAuditEventType: "execution_completed";
+  rowCount: number;
+  resultTruncated: boolean;
+  sourceId: string;
+  sourceFamily: string;
+  sourceFlavor: string | null;
+};
+
+export type OperatorWorkflowRetrievedCitation = {
+  assetId: string;
+  assetKind: string;
+  authority: "advisory_context";
+  canAuthorizeExecution: false;
+  citationLabel: string;
+  sourceId: string;
+  sourceFamily: string;
+  sourceFlavor: string | null;
+};
+
 export type OperatorHistoryItem = {
+  auditEvents: OperatorWorkflowAuditEvent[];
   candidateSql?: string | null;
+  executedEvidence: OperatorWorkflowExecutedEvidence[];
   guardStatus?: string | null;
   itemType: "request" | "candidate" | "run";
   label: string;
@@ -24,6 +63,7 @@ export type OperatorHistoryItem = {
   runState?: string | null;
   sourceId: string;
   sourceLabel: string;
+  retrievedCitations: OperatorWorkflowRetrievedCitation[];
 };
 
 export type OperatorWorkflowSnapshot = {
@@ -61,6 +101,122 @@ function readOptionalNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
+function parseArray<T>(value: unknown, parser: (item: unknown) => T | null): T[] | null {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const parsed = value.map(parser);
+  return parsed.every((item): item is T => item !== null) ? parsed : null;
+}
+
+function parseAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const eventId = readOptionalString(value.eventId);
+  const eventType = readOptionalString(value.eventType);
+  const occurredAt = readOptionalString(value.occurredAt);
+  const requestId = readOptionalString(value.requestId);
+  const sourceId = readOptionalString(value.sourceId);
+
+  if (!eventId || !eventType || !occurredAt || !requestId || !sourceId) {
+    return null;
+  }
+
+  return {
+    candidateId: readOptionalString(value.candidateId) ?? null,
+    candidateState: readOptionalString(value.candidateState) ?? null,
+    eventId,
+    eventType,
+    occurredAt,
+    primaryDenyCode: readOptionalString(value.primaryDenyCode) ?? null,
+    requestId,
+    resultTruncated: typeof value.resultTruncated === "boolean" ? value.resultTruncated : null,
+    rowCount: readOptionalNonNegativeInteger(value.rowCount) ?? null,
+    sourceId
+  };
+}
+
+function parseExecutedEvidence(value: unknown): OperatorWorkflowExecutedEvidence | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const candidateId = readOptionalString(value.candidateId);
+  const executionAuditEventId = readOptionalString(value.executionAuditEventId);
+  const rowCount = readOptionalNonNegativeInteger(value.rowCount);
+  const sourceId = readOptionalString(value.sourceId);
+  const sourceFamily = readOptionalString(value.sourceFamily);
+
+  if (
+    value.authority !== "backend_execution_result" ||
+    value.canAuthorizeExecution !== false ||
+    !candidateId ||
+    !executionAuditEventId ||
+    value.executionAuditEventType !== "execution_completed" ||
+    rowCount === undefined ||
+    typeof value.resultTruncated !== "boolean" ||
+    !sourceId ||
+    !sourceFamily
+  ) {
+    return null;
+  }
+
+  return {
+    authority: "backend_execution_result",
+    canAuthorizeExecution: false,
+    candidateId,
+    executionAuditEventId,
+    executionAuditEventType: "execution_completed",
+    rowCount,
+    resultTruncated: value.resultTruncated,
+    sourceId,
+    sourceFamily,
+    sourceFlavor: readOptionalString(value.sourceFlavor) ?? null
+  };
+}
+
+function parseRetrievedCitation(value: unknown): OperatorWorkflowRetrievedCitation | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const assetId = readOptionalString(value.assetId);
+  const assetKind = readOptionalString(value.assetKind);
+  const citationLabel = readOptionalString(value.citationLabel);
+  const sourceId = readOptionalString(value.sourceId);
+  const sourceFamily = readOptionalString(value.sourceFamily);
+
+  if (
+    value.authority !== "advisory_context" ||
+    value.canAuthorizeExecution !== false ||
+    !assetId ||
+    !assetKind ||
+    !citationLabel ||
+    !sourceId ||
+    !sourceFamily
+  ) {
+    return null;
+  }
+
+  return {
+    assetId,
+    assetKind,
+    authority: "advisory_context",
+    canAuthorizeExecution: false,
+    citationLabel,
+    sourceId,
+    sourceFamily,
+    sourceFlavor: readOptionalString(value.sourceFlavor) ?? null
+  };
+}
+
 function parseSourceOption(value: unknown): SourceOption | null {
   if (!isObject(value)) {
     return null;
@@ -96,6 +252,9 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
   const sourceLabel = readOptionalString(value.sourceLabel);
   const lifecycleState = readOptionalString(value.lifecycleState);
   const occurredAt = readOptionalString(value.occurredAt);
+  const auditEvents = parseArray(value.auditEvents, parseAuditEvent);
+  const executedEvidence = parseArray(value.executedEvidence, parseExecutedEvidence);
+  const retrievedCitations = parseArray(value.retrievedCitations, parseRetrievedCitation);
 
   if (
     (itemType !== "request" && itemType !== "candidate" && itemType !== "run") ||
@@ -104,13 +263,18 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     !sourceId ||
     !sourceLabel ||
     !lifecycleState ||
-    !occurredAt
+    !occurredAt ||
+    auditEvents === null ||
+    executedEvidence === null ||
+    retrievedCitations === null
   ) {
     return null;
   }
 
   return {
+    auditEvents,
     candidateSql: readOptionalString(value.candidateSql) ?? null,
+    executedEvidence,
     guardStatus: readOptionalString(value.guardStatus) ?? null,
     itemType,
     label,
@@ -124,7 +288,8 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     rowCount: readOptionalNonNegativeInteger(value.rowCount) ?? null,
     runState: readOptionalString(value.runState) ?? null,
     sourceId,
-    sourceLabel
+    sourceLabel,
+    retrievedCitations
   };
 }
 
