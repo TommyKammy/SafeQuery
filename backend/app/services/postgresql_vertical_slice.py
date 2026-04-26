@@ -35,6 +35,7 @@ from app.services.candidate_lifecycle import (
     CandidateLifecycleRecord,
     CandidateLifecycleRevalidationError,
     SourceBoundCandidateMetadata,
+    revalidate_authoritative_candidate_approval,
     revalidate_candidate_lifecycle,
 )
 from app.services.generation_context import prepare_generation_context
@@ -445,23 +446,47 @@ def run_postgresql_core_vertical_slice(
         candidate_state="preview_ready",
         adapter_metadata=adapter_metadata,
     )
-    lifecycle_record = candidate_lifecycle or _build_default_candidate_lifecycle(
-        candidate_source=candidate_source,
-        authenticated_subject=authenticated_subject,
-        audit_context=candidate_audit_context,
-    )
     try:
-        revalidate_candidate_lifecycle(
-            candidate=lifecycle_record,
-            authenticated_subject=authenticated_subject,
-            session=session,
-            as_of=audit_context.occurred_at,
-            selected_source_id=candidate_source.source_id,
-            audit_context=_build_candidate_lifecycle_audit_context(
-                audit_context=candidate_audit_context,
-                lifecycle_record=lifecycle_record,
-            ),
+        persist_generated_candidate_audit_context(
+            session,
+            request_id=preview.request.request_id,
+            candidate_id=preview.candidate.candidate_id,
+            candidate_sql=canonical_sql,
+            adapter_metadata=adapter_metadata,
+            audit_events=audit_events,
+            request_state="previewed",
+            candidate_state="preview_ready",
+            guard_status="allow",
         )
+        if candidate_lifecycle is None:
+            revalidate_authoritative_candidate_approval(
+                session=session,
+                candidate_id=preview.candidate.candidate_id,
+                authenticated_subject=authenticated_subject,
+                as_of=audit_context.occurred_at,
+                selected_source_id=candidate_source.source_id,
+                audit_context=CandidateLifecycleAuditContext(
+                    event_id=uuid4(),
+                    occurred_at=audit_context.occurred_at,
+                    request_id=candidate_audit_context.request_id,
+                    correlation_id=candidate_audit_context.correlation_id,
+                    user_subject=candidate_audit_context.user_subject,
+                    session_id=candidate_audit_context.session_id,
+                    query_candidate_id=candidate_audit_context.query_candidate_id,
+                ),
+            )
+        else:
+            revalidate_candidate_lifecycle(
+                candidate=candidate_lifecycle,
+                authenticated_subject=authenticated_subject,
+                session=session,
+                as_of=audit_context.occurred_at,
+                selected_source_id=candidate_source.source_id,
+                audit_context=_build_candidate_lifecycle_audit_context(
+                    audit_context=candidate_audit_context,
+                    lifecycle_record=candidate_lifecycle,
+                ),
+            )
     except CandidateLifecycleRevalidationError as exc:
         if exc.audit_event is not None:
             audit_events.append(exc.audit_event)
@@ -479,18 +504,6 @@ def run_postgresql_core_vertical_slice(
             guard=guard,
             audit_events=audit_events,
         ) from exc
-
-    persist_generated_candidate_audit_context(
-        session,
-        request_id=preview.request.request_id,
-        candidate_id=preview.candidate.candidate_id,
-        candidate_sql=canonical_sql,
-        adapter_metadata=adapter_metadata,
-        audit_events=audit_events,
-        request_state="previewed",
-        candidate_state="preview_ready",
-        guard_status="allow",
-    )
 
     selection = select_execution_connector(candidate_source=candidate_source)
     execution = execute_candidate_sql(

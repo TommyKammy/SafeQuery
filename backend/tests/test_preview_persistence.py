@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -17,7 +17,12 @@ from app.db.models.dataset_contract import (
     DatasetContractDataset,
     DatasetContractDatasetKind,
 )
-from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
+from app.db.models.preview import (
+    PreviewAuditEvent,
+    PreviewCandidate,
+    PreviewCandidateApproval,
+    PreviewRequest,
+)
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.db.session import require_preview_submission_session
@@ -27,6 +32,7 @@ from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
     PreviewSubmissionRequest,
+    _persist_candidate_approval_record,
     submit_preview_request,
 )
 from app.services.sql_generation_adapter import (
@@ -179,6 +185,9 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
 
         persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_approval = session.execute(
+            select(PreviewCandidateApproval)
+        ).scalar_one()
         persisted_events = (
             session.execute(
                 select(PreviewAuditEvent).order_by(PreviewAuditEvent.lifecycle_order)
@@ -213,6 +222,17 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert persisted_candidate.registered_source_id == persisted_request.registered_source_id
         assert persisted_candidate.dataset_contract_id == persisted_request.dataset_contract_id
         assert persisted_candidate.schema_snapshot_id == persisted_request.schema_snapshot_id
+        assert persisted_approval.preview_candidate_id == persisted_candidate.id
+        assert persisted_approval.candidate_id == response_candidate_id
+        assert persisted_approval.request_id == request_id
+        assert persisted_approval.source_id == "sap-approved-spend"
+        assert persisted_approval.owner_subject_id == "user:alice"
+        assert persisted_approval.session_id == "application-session-redacted"
+        assert persisted_approval.execution_policy_version == 3
+        assert persisted_approval.approval_state == "approved"
+        assert persisted_approval.approved_at is not None
+        assert persisted_approval.approval_expires_at > persisted_approval.approved_at
+        assert persisted_approval.executed_at is None
 
         assert [event.event_type for event in persisted_events] == [
             "query_submitted",
@@ -586,6 +606,73 @@ def test_preview_submission_updates_existing_request_and_candidate_records() -> 
     assert persisted_candidates[0].source_id == "sap-approved-spend"
 
 
+def test_preview_candidate_reapproval_clears_invalidation_and_refreshes_expiry() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+
+    with Session(engine) as session:
+        _seed_authoritative_source_governance(session)
+        audit_context = PreviewAuditContext(
+            occurred_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+            request_id="preview-request-approval-reset",
+            correlation_id="preview-correlation-approval-reset",
+            user_subject="user:alice",
+            session_id="session-approval-reset",
+            query_candidate_id="preview-candidate-approval-reset",
+            candidate_owner_subject="user:alice",
+            auth_source="test-helper",
+        )
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+            ),
+            subject,
+            session,
+            audit_context=audit_context,
+        )
+        preview_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        approval = session.execute(select(PreviewCandidateApproval)).scalar_one()
+        original_expiry = approval.approval_expires_at
+
+        invalidated_at = datetime(2026, 1, 1, 12, 2, tzinfo=timezone.utc)
+        _persist_candidate_approval_record(
+            session,
+            preview_candidate=preview_candidate,
+            authenticated_subject_id="user:alice",
+            session_id="session-approval-reset",
+            occurred_at=invalidated_at,
+            candidate_state="guard_rejected",
+            guard_status="blocked",
+        )
+        assert approval.approval_state == "invalidated"
+        assert approval.invalidated_at == invalidated_at
+
+        reapproved_at = datetime(2026, 1, 1, 12, 4, tzinfo=timezone.utc)
+        _persist_candidate_approval_record(
+            session,
+            preview_candidate=preview_candidate,
+            authenticated_subject_id="user:alice",
+            session_id="session-approval-reset",
+            occurred_at=reapproved_at,
+            candidate_state="preview_ready",
+            guard_status="allow",
+        )
+
+    assert approval.approval_state == "approved"
+    assert approval.invalidated_at is None
+    assert approval.approval_expires_at == reapproved_at + timedelta(minutes=5)
+    assert approval.approval_expires_at != original_expiry
+
+
 def test_http_preview_entitlement_denial_persists_audit_event_without_secrets() -> None:
     previous_env = {
         name: os.environ.get(name)
@@ -825,4 +912,35 @@ def test_preview_candidate_model_uses_composite_request_source_foreign_key() -> 
     assert foreign_keys[("preview_request_id", "registered_source_id")] == (
         "preview_requests.id",
         "preview_requests.registered_source_id",
+    )
+
+
+def test_preview_candidate_approval_model_ties_identity_to_preview_candidate() -> None:
+    foreign_keys = {
+        tuple(element.parent.name for element in constraint.elements): tuple(
+            element.target_fullname for element in constraint.elements
+        )
+        for constraint in PreviewCandidateApproval.__table__.foreign_key_constraints
+    }
+
+    assert foreign_keys[
+        (
+            "preview_candidate_id",
+            "candidate_id",
+            "request_id",
+            "registered_source_id",
+            "source_id",
+            "source_family",
+            "dataset_contract_version",
+            "schema_snapshot_version",
+        )
+    ] == (
+        "preview_candidates.id",
+        "preview_candidates.candidate_id",
+        "preview_candidates.request_id",
+        "preview_candidates.registered_source_id",
+        "preview_candidates.source_id",
+        "preview_candidates.source_family",
+        "preview_candidates.dataset_contract_version",
+        "preview_candidates.schema_snapshot_version",
     )
