@@ -23,8 +23,15 @@ IdentityClaimType = Literal["human_user", "service_account", "workload"]
 MappingState = Literal["valid", "stale", "missing", "ambiguous", "unsupported"]
 
 
+_POSIX_USER_HOME_PATH_PATTERNS = (
+    "/" + "Users" + r"/[^/\s]+/",
+    "/" + "home" + r"/[^/\s]+/",
+)
+_WINDOWS_USER_HOME_PATH_PATTERN = r"[A-Za-z]:\\" + "Users" + r"\\[^\\\s]+\\"
 _WORKSTATION_LOCAL_PATH_RE = re.compile(
-    r"(^|\s)(/Users/[^/\s]+/|/home/[^/\s]+/|[A-Za-z]:\\Users\\[^\\\s]+\\)"
+    r"(^|\s)("
+    + "|".join((*_POSIX_USER_HOME_PATH_PATTERNS, _WINDOWS_USER_HOME_PATH_PATTERN))
+    + r")"
 )
 _SECRET_MARKERS = frozenset(
     {"-----begin", "client_secret", "password", "private_key", "secret=", "token="}
