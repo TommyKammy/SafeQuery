@@ -517,13 +517,17 @@ function findAuthoritativeCandidatePreview(
   sourceId?: string,
   historyRecordId?: string
 ): AuthoritativeCandidatePreview | null {
-  const candidates = history.filter(
-    (item) =>
-      item.itemType === "candidate" &&
-      (!sourceId || item.sourceId === sourceId) &&
-      (!historyRecordId || item.recordId === historyRecordId)
-  );
-  const candidate = candidates[0];
+  const candidate = history.find((item) => {
+    if (item.itemType !== "candidate") {
+      return false;
+    }
+
+    if (historyRecordId) {
+      return item.recordId === historyRecordId;
+    }
+
+    return !sourceId || item.sourceId === sourceId;
+  });
   if (!candidate) {
     return null;
   }
@@ -839,7 +843,8 @@ function renderResultContent(state: CanonicalWorkflowState) {
 function renderStatePanel(
   state: CanonicalWorkflowState,
   question: string,
-  sourceId?: string
+  sourceId?: string,
+  canOpenCompleted = false
 ) {
   if (state === "signin") {
     return (
@@ -869,14 +874,16 @@ function renderStatePanel(
           Query submission lands here first so generated SQL and guard posture can be reviewed
           before any future execution path is introduced.
         </p>
-        <div className="action-row">
-          <a className="action-link" href={buildStateHref("completed", question, sourceId)}>
-            Open completed state
-          </a>
-          <a className="ghost-link" href={buildStateHref("empty", question, sourceId)}>
-            Open empty state
-          </a>
-        </div>
+        {canOpenCompleted ? (
+          <div className="action-row">
+            <a className="action-link" href={buildStateHref("completed", question, sourceId)}>
+              Open completed state
+            </a>
+            <a className="ghost-link" href={buildStateHref("empty", question, sourceId)}>
+              Open empty state
+            </a>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1066,6 +1073,11 @@ export function QueryWorkflowShell({
     historyRecordId
   );
   const candidatePreview = submittedCandidatePreview ?? historyCandidatePreview;
+  const draftSource = findSourceOption(operatorWorkflow.sources, submittedSourceId);
+  const historySourceMismatch =
+    candidatePreview !== null &&
+    submittedSourceId !== undefined &&
+    candidatePreview.sourceId !== submittedSourceId;
   const workflowContext = getWorkflowContext(
     normalizedState,
     sourceBinding.source,
@@ -1074,6 +1086,9 @@ export function QueryWorkflowShell({
   );
   const sourceSelectVisible = normalizedState === "query";
   const boundSourceId = sourceBinding.source?.sourceId;
+  const candidateSourceId = candidatePreview?.sourceId ?? boundSourceId;
+  const canOpenCompletedFromPreview =
+    normalizedState === "preview" && candidatePreview !== null && !historySourceMismatch;
 
   async function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1316,7 +1331,12 @@ export function QueryWorkflowShell({
         </aside>
         <div className="primary-column">
           <section className="surface surface-primary">
-            {renderStatePanel(normalizedState, question, boundSourceId)}
+            {renderStatePanel(
+              normalizedState,
+              question,
+              candidateSourceId,
+              canOpenCompletedFromPreview
+            )}
           </section>
 
           <section className="surface surface-primary">
@@ -1376,6 +1396,21 @@ export function QueryWorkflowShell({
                     <span className="meta-label">Source posture</span>
                     <strong>Read-only after preview binding</strong>
                   </div>
+                  {historySourceMismatch ? (
+                    <>
+                      <div className="guard-item">
+                        <span className="meta-label">Draft source</span>
+                        <strong>{draftSource?.displayLabel ?? submittedSourceId}</strong>
+                      </div>
+                      <div className="state-callout state-callout-danger">
+                        <p className="state-callout-title">Source mismatch blocked</p>
+                        <p>
+                          Selected draft source does not match the reopened candidate source, so
+                          execution affordances stay unavailable.
+                        </p>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               )}
               <label className="field-label" htmlFor="question">
@@ -1447,10 +1482,12 @@ export function QueryWorkflowShell({
                     ? "Submitting preview"
                     : "Submit for preview"}
                 </button>
-                {boundSourceId && previewSubmission.status !== "submitting" ? (
+                {boundSourceId &&
+                previewSubmission.status !== "submitting" &&
+                !historySourceMismatch ? (
                   <a
                     className="ghost-link"
-                    href={buildStateHref("completed", submittedQuestion, boundSourceId)}
+                    href={buildStateHref("completed", submittedQuestion, candidateSourceId)}
                   >
                     Open completed state
                   </a>
