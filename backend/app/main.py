@@ -182,22 +182,21 @@ def _operator_cancellation_probe(
     candidate_id: str,
     source_id: str,
 ) -> Callable[[], bool]:
-    cancelled_candidate_ids = _operator_control_values(
-        getattr(
-            request.app.state,
-            "execution_cancelled_candidate_ids",
-            frozenset(),
-        )
-    )
-    cancelled_source_ids = _operator_control_values(
-        getattr(
-            request.app.state,
-            "execution_cancelled_source_ids",
-            frozenset(),
-        )
-    )
-
     def probe() -> bool:
+        cancelled_candidate_ids = _operator_control_values(
+            getattr(
+                request.app.state,
+                "execution_cancelled_candidate_ids",
+                frozenset(),
+            )
+        )
+        cancelled_source_ids = _operator_control_values(
+            getattr(
+                request.app.state,
+                "execution_cancelled_source_ids",
+                frozenset(),
+            )
+        )
         return candidate_id in cancelled_candidate_ids or source_id in cancelled_source_ids
 
     return probe

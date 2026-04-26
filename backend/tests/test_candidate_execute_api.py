@@ -733,6 +733,46 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(approval.approval_state, "approved")
         self.assertIsNone(approval.executed_at)
 
+    def test_execute_candidate_api_cancellation_probe_reads_operator_state_updates(
+        self,
+    ) -> None:
+        from app.features.execution.runtime import ExecutionRuntimeCancelledError
+
+        calls: list[str] = []
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        def query_runner(*, runtime_controls, **_: object) -> list[dict[str, object]]:
+            calls.append("started")
+            client.app.state.execution_cancelled_candidate_ids = frozenset(
+                {"candidate-123"}
+            )
+            if runtime_controls.cancellation_probe is not None:
+                cancellation_requested = runtime_controls.cancellation_probe()
+                calls.append(f"cancelled={cancellation_requested}")
+                if cancellation_requested:
+                    raise ExecutionRuntimeCancelledError(
+                        "Execution canceled before the PostgreSQL result set was read."
+                    )
+            return []
+
+        client = self._client(query_runner)
+
+        response = client.post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_unavailable")
+        self.assertEqual(
+            payload["audit"]["events"][-1]["candidate_state"],
+            "canceled",
+        )
+        self.assertEqual(calls, ["started", "cancelled=True"])
+
     def test_execute_candidate_api_replay_fails_before_runner_invocation(self) -> None:
         calls: list[str] = []
 
