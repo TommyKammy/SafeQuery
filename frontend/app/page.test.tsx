@@ -632,6 +632,181 @@ describe("HomePage", () => {
     }
   });
 
+  it("executes only preview-ready candidates and maps denied or canceled execute responses to recovery states", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
+    const executeResponses = [
+      {
+        body: {
+          error: {
+            code: "execution_denied",
+            message: "Candidate execution was denied.",
+            raw: "driver-secret-should-not-render"
+          }
+        },
+        expectedHeading: /execution denied state/i,
+        expectedStatus: /execute denied/i,
+        status: 403
+      },
+      {
+        body: {
+          audit: {
+            events: [
+              {
+                candidate_state: "canceled",
+                event_type: "execution_failed",
+                query_candidate_id: "candidate-selected"
+              }
+            ]
+          },
+          error: {
+            code: "execution_unavailable",
+            message: "Candidate execution is unavailable."
+          }
+        },
+        expectedHeading: /canceled state/i,
+        expectedStatus: /execution canceled/i,
+        status: 503
+      }
+    ] as const;
+
+    for (const executeResponse of executeResponses) {
+      cleanup();
+      document.head.appendChild(csrfToken);
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Selected candidate",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-selected",
+                    requestId: "request-selected",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        if (url.endsWith("/candidates/candidate-selected/execute")) {
+          return Promise.resolve({
+            ok: false,
+            status: executeResponse.status,
+            json: () => Promise.resolve(executeResponse.body)
+          });
+        }
+
+        return new Promise(() => {});
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        await HomePage({
+          searchParams: {
+            history_item_type: "candidate",
+            history_record_id: "candidate-selected",
+            question: "Selected candidate",
+            source_id: "sap-approved-spend",
+            state: "preview"
+          }
+        })
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /execute reviewed candidate/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "http://127.0.0.1:8000/candidates/candidate-selected/execute",
+          expect.objectContaining({
+            body: JSON.stringify({
+              selected_source_id: "sap-approved-spend"
+            }),
+            credentials: "same-origin",
+            headers: expect.objectContaining({
+              "content-type": "application/json",
+              "x-safequery-csrf": "csrf-from-session-bootstrap"
+            }),
+            method: "POST"
+          })
+        );
+      });
+
+      await waitFor(() => {
+        expect(screen.getAllByText(executeResponse.expectedStatus).length).toBeGreaterThan(0);
+      });
+      expect(
+        screen.getByRole("heading", { name: executeResponse.expectedHeading })
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/execution completed/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("driver-secret-should-not-render")).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps execute disabled for non-authorized candidate states", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: null,
+                    guardStatus: "pending",
+                    itemType: "candidate",
+                    label: "Pending candidate",
+                    lifecycleState: "pending_generation",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-pending",
+                    requestId: "request-pending",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-pending",
+          question: "Pending candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    expect(screen.getByRole("button", { name: /execute reviewed candidate/i })).toBeDisabled();
+    expect(screen.getByText(/no executable candidate/i)).toBeInTheDocument();
+  });
+
   it("maps malformed and unavailable preview submission failures distinctly", async () => {
     const failureCases = [
       {
