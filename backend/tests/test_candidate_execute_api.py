@@ -433,6 +433,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             "DENY_SOURCE_BINDING_MISMATCH",
         )
         self.assertNotIn("safequery_exec:secret", response.text)
+        self.assertNotIn(os.environ["SAFEQUERY_APP_POSTGRES_URL"], response.text)
         self.assertEqual(calls, [])
         approval = (
             self.session.query(PreviewCandidateApproval)
