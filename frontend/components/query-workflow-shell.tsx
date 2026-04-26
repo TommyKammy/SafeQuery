@@ -100,6 +100,24 @@ type PreviewSubmissionStatus =
       status: "succeeded";
     };
 
+type ExecuteSubmissionStatus =
+  | {
+      status: "idle";
+    }
+  | {
+      status: "executing";
+    }
+  | {
+      code: string;
+      message: string;
+      status: "denied" | "failed";
+    }
+  | {
+      candidateId: string;
+      rowCount: number;
+      status: "canceled" | "succeeded";
+    };
+
 type PreviewSubmissionResult = {
   candidateId: string;
   candidateSql: string | null;
@@ -134,6 +152,14 @@ type AuthoritativeRunContext = {
 type ApiErrorEnvelope = {
   code: string;
   message: string;
+};
+
+type ExecuteSubmissionResult = {
+  candidateId: string;
+  executionRunId?: string;
+  resultTruncated: boolean;
+  rowCount: number;
+  sourceId: string;
 };
 
 const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
@@ -247,6 +273,18 @@ function parseApiErrorEnvelope(value: unknown): ApiErrorEnvelope | null {
   return { code, message };
 }
 
+function parseAuditEvents(value: unknown): Record<string, unknown>[] {
+  if (!isObject(value) || !isObject(value.audit) || !Array.isArray(value.audit.events)) {
+    return [];
+  }
+
+  return value.audit.events.filter(isObject);
+}
+
+function hasCanceledAuditEvent(value: unknown): boolean {
+  return parseAuditEvents(value).some((event) => event.candidate_state === "canceled");
+}
+
 function previewSubmissionStatusForApiError(
   error: ApiErrorEnvelope | null
 ): PreviewSubmissionStatus {
@@ -318,6 +356,41 @@ function parsePreviewSubmissionResult(
   };
 }
 
+function parseExecuteSubmissionResult(
+  value: unknown,
+  expectedCandidateId: string,
+  expectedSourceId: string
+): ExecuteSubmissionResult | null {
+  if (!isObject(value) || !isObject(value.metadata)) {
+    return null;
+  }
+
+  const candidateId = readRequiredString(value.candidate_id);
+  const sourceId = readRequiredString(value.source_id);
+  const executionRunId = readRequiredString(value.metadata.execution_run_id);
+  const rowCount = value.metadata.row_count;
+  const resultTruncated = value.metadata.result_truncated;
+
+  if (
+    candidateId !== expectedCandidateId ||
+    sourceId !== expectedSourceId ||
+    typeof rowCount !== "number" ||
+    !Number.isInteger(rowCount) ||
+    rowCount < 0 ||
+    typeof resultTruncated !== "boolean"
+  ) {
+    return null;
+  }
+
+  return {
+    candidateId,
+    executionRunId,
+    resultTruncated,
+    rowCount,
+    sourceId
+  };
+}
+
 function isPendingPreviewState(result: PreviewSubmissionResult): boolean {
   const requestState = result.requestState.toLowerCase();
   const candidateState = result.candidateState.toLowerCase();
@@ -347,6 +420,23 @@ function isDeniedPreviewState(result: PreviewSubmissionResult): boolean {
 
 function isReadyPreviewState(result: PreviewSubmissionResult): boolean {
   return result.candidateState.toLowerCase() === "preview_ready";
+}
+
+function canExecuteCandidate(
+  state: CanonicalWorkflowState,
+  candidatePreview: AuthoritativeCandidatePreview | null,
+  hasSourceMismatch: boolean
+): candidatePreview is AuthoritativeCandidatePreview {
+  if (state !== "preview" || candidatePreview === null || hasSourceMismatch) {
+    return false;
+  }
+
+  const candidateState = candidatePreview.candidateState.toLowerCase();
+  const guardStatus = candidatePreview.guardStatus.toLowerCase();
+  return (
+    candidateState === "preview_ready" &&
+    (guardStatus === "allow" || guardStatus === "passed")
+  );
 }
 
 function resolveSourceBinding(
@@ -1038,8 +1128,8 @@ function renderStatePanel(
           <a className="action-link" href={buildStateHref("query", question, sourceId)}>
             Start a new draft
           </a>
-          <a className="ghost-link" href={buildStateHref("completed", question, sourceId)}>
-            Compare completed state
+          <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
+            Back to SQL preview
           </a>
         </div>
       </div>
@@ -1071,8 +1161,14 @@ export function QueryWorkflowShell({
   const [previewSubmission, setPreviewSubmission] = useState<PreviewSubmissionStatus>({
     status: "idle"
   });
+  const [executeSubmission, setExecuteSubmission] = useState<ExecuteSubmissionStatus>({
+    status: "idle"
+  });
   const [submittedCandidatePreview, setSubmittedCandidatePreview] =
     useState<AuthoritativeCandidatePreview | null>(null);
+  const [submittedRunContext, setSubmittedRunContext] = useState<AuthoritativeRunContext | null>(
+    null
+  );
   const [submittedQuestion, setSubmittedQuestion] = useState(question);
   const [submittedSourceId, setSubmittedSourceId] = useState(sourceId);
   const [submittedState, setSubmittedState] = useState(requestedState);
@@ -1082,7 +1178,9 @@ export function QueryWorkflowShell({
     setSubmittedSourceId(sourceId);
     setSubmittedState(requestedState);
     setPreviewSubmission({ status: "idle" });
+    setExecuteSubmission({ status: "idle" });
     setSubmittedCandidatePreview(null);
+    setSubmittedRunContext(null);
   }, [question, requestedState, sourceId]);
 
   const sourceBinding = resolveSourceBinding(
@@ -1092,18 +1190,22 @@ export function QueryWorkflowShell({
   );
   const normalizedState = sourceBinding.state;
   const activeState = workflowStates[normalizedState];
-  const queryLocked = normalizedState === "signin" || previewSubmission.status === "submitting";
+  const queryLocked =
+    normalizedState === "signin" ||
+    previewSubmission.status === "submitting" ||
+    executeSubmission.status === "executing";
   const guardTone = getGuardTone(normalizedState);
   const historyCandidatePreview = findAuthoritativeCandidatePreview(
     operatorWorkflow.history,
     submittedSourceId,
     historyRecordId
   );
-  const historyRunContext = findAuthoritativeRunContext(
+  const selectedHistoryRunContext = findAuthoritativeRunContext(
     operatorWorkflow.history,
     submittedSourceId,
     historyRecordId
   );
+  const historyRunContext = submittedRunContext ?? selectedHistoryRunContext;
   const candidatePreview = submittedCandidatePreview ?? historyCandidatePreview;
   const draftSource = findSourceOption(operatorWorkflow.sources, submittedSourceId);
   const historySourceMismatch =
@@ -1121,6 +1223,11 @@ export function QueryWorkflowShell({
   const candidateSourceId = candidatePreview?.sourceId ?? boundSourceId;
   const canOpenCompletedFromPreview =
     normalizedState === "preview" && candidatePreview !== null && !historySourceMismatch;
+  const executeEnabled = canExecuteCandidate(
+    normalizedState,
+    candidatePreview,
+    historySourceMismatch
+  );
   const historyHrefContext =
     normalizedState === "preview" && historyRecordId && historyCandidatePreview
       ? {
@@ -1282,6 +1389,126 @@ export function QueryWorkflowShell({
         code: "preview_submission_unavailable",
         message: "Preview submission transport is unavailable.",
         status: "unavailable"
+      });
+    }
+  }
+
+  async function executeCandidate() {
+    if (!executeEnabled || !submittedSourceId) {
+      return;
+    }
+
+    setExecuteSubmission({ status: "executing" });
+
+    const headers: Record<string, string> = {
+      "content-type": "application/json"
+    };
+    const csrfToken = readCsrfToken();
+    if (csrfToken) {
+      headers["x-safequery-csrf"] = csrfToken;
+    }
+
+    try {
+      const response = await fetch(`${apiUrl}/candidates/${candidatePreview.candidateId}/execute`, {
+        body: JSON.stringify({
+          selected_source_id: candidatePreview.sourceId
+        }),
+        credentials: "same-origin",
+        headers,
+        method: "POST"
+      });
+      let payload: unknown;
+      try {
+        payload = (await response.json()) as unknown;
+      } catch {
+        setSubmittedState("failed");
+        setExecuteSubmission({
+          code: "execution_unavailable",
+          message: "Candidate execution did not return an authoritative payload.",
+          status: "failed"
+        });
+        return;
+      }
+
+      if (!response.ok) {
+        const error = parseApiErrorEnvelope(payload);
+        if (hasCanceledAuditEvent(payload)) {
+          setSubmittedState("canceled");
+          setSubmittedRunContext({
+            lifecycleState: "canceled",
+            lifecycleTimestamp: new Date().toISOString(),
+            runIdentity: candidatePreview.candidateId,
+            runState: "canceled",
+            sourceLabel:
+              candidatePreview.sourceLabel ??
+              sourceBinding.source?.displayLabel ??
+              candidatePreview.sourceId
+          });
+          setExecuteSubmission({
+            candidateId: candidatePreview.candidateId,
+            rowCount: 0,
+            status: "canceled"
+          });
+          return;
+        }
+
+        if (error?.code === "execution_denied") {
+          setSubmittedState("execution_denied");
+          setExecuteSubmission({
+            code: error.code,
+            message: error.message,
+            status: "denied"
+          });
+          return;
+        }
+
+        setSubmittedState("failed");
+        setExecuteSubmission({
+          code: error?.code ?? "execution_unavailable",
+          message: error?.message ?? "Candidate execution is unavailable.",
+          status: "failed"
+        });
+        return;
+      }
+
+      const result = parseExecuteSubmissionResult(
+        payload,
+        candidatePreview.candidateId,
+        candidatePreview.sourceId
+      );
+      if (!result) {
+        setSubmittedState("failed");
+        setExecuteSubmission({
+          code: "malformed_execute_response",
+          message: "Execute response did not match the selected candidate and source binding.",
+          status: "failed"
+        });
+        return;
+      }
+
+      const nextState = result.rowCount === 0 ? "empty" : "completed";
+      setSubmittedState(nextState);
+      setSubmittedRunContext({
+        lifecycleState: nextState,
+        lifecycleTimestamp: new Date().toISOString(),
+        resultTruncated: result.resultTruncated,
+        rowCount: result.rowCount,
+        runIdentity: result.executionRunId ?? result.candidateId,
+        runState: nextState,
+        sourceLabel:
+          candidatePreview.sourceLabel ?? sourceBinding.source?.displayLabel ?? result.sourceId
+      });
+      setExecuteSubmission({
+        candidateId: result.candidateId,
+        rowCount: result.rowCount,
+        status: "succeeded"
+      });
+    } catch {
+      setSubmittedState("failed");
+      setExecuteSubmission({
+        code: "execution_unavailable",
+        message: "Candidate execution transport is unavailable.",
+        status: "failed"
       });
     }
   }
@@ -1516,13 +1743,61 @@ export function QueryWorkflowShell({
                   <p>{previewSubmission.message}</p>
                 </div>
               ) : null}
+              {executeSubmission.status === "executing" ? (
+                <div className="state-callout state-callout-warning" role="status">
+                  <p className="state-callout-title">Execution in progress</p>
+                  <p>The reviewed candidate is locked while execute-time checks run.</p>
+                </div>
+              ) : null}
+              {executeSubmission.status === "succeeded" ? (
+                <div className="state-callout state-callout-success" role="status">
+                  <p className="state-callout-title">Execution completed</p>
+                  <p>
+                    Candidate {executeSubmission.candidateId} returned {executeSubmission.rowCount}{" "}
+                    rows.
+                  </p>
+                </div>
+              ) : null}
+              {executeSubmission.status === "denied" ? (
+                <div className="state-callout state-callout-danger" role="status">
+                  <p className="state-callout-title">Execute denied</p>
+                  <p>{executeSubmission.message}</p>
+                </div>
+              ) : null}
+              {executeSubmission.status === "canceled" ? (
+                <div className="state-callout" role="status">
+                  <p className="state-callout-title">Execution canceled</p>
+                  <p>
+                    Candidate {executeSubmission.candidateId} did not complete and no successful
+                    result payload is shown.
+                  </p>
+                </div>
+              ) : null}
+              {executeSubmission.status === "failed" ? (
+                <div className="state-callout state-callout-danger" role="alert">
+                  <p className="state-callout-title">{executeSubmission.code}</p>
+                  <p>{executeSubmission.message}</p>
+                </div>
+              ) : null}
               <div className="form-actions">
                 <button disabled={queryLocked} type="submit">
                   {previewSubmission.status === "submitting"
                     ? "Submitting preview"
                     : "Submit for preview"}
                 </button>
-                {boundSourceId &&
+                {candidatePreview ? (
+                  <button
+                    disabled={!executeEnabled || executeSubmission.status === "executing"}
+                    onClick={executeCandidate}
+                    type="button"
+                  >
+                    {executeSubmission.status === "executing"
+                      ? "Executing candidate"
+                      : "Execute reviewed candidate"}
+                  </button>
+                ) : null}
+                {canOpenCompletedFromPreview &&
+                boundSourceId &&
                 previewSubmission.status !== "submitting" &&
                 !historySourceMismatch ? (
                   <a
@@ -1632,7 +1907,9 @@ export function QueryWorkflowShell({
               </div>
               <div className="guard-item">
                 <span className="meta-label">Execution path</span>
-                <strong>Blocked in this issue</strong>
+                <strong>
+                  {executeEnabled ? "Candidate execute available" : "No executable candidate"}
+                </strong>
               </div>
             </div>
           </section>
