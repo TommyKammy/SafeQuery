@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 from io import StringIO
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -26,6 +27,32 @@ class SourceFoundationSmokeTestCase(unittest.TestCase):
         if "app.main" in sys.modules:
             return importlib.reload(sys.modules["app.main"])
         return importlib.import_module("app.main")
+
+    def test_compose_real_source_execution_smoke_is_candidate_bound_and_skippable(
+        self,
+    ) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        script_path = (
+            repo_root / "tests" / "smoke" / "test-compose-real-source-execution.sh"
+        )
+        script = script_path.read_text()
+        compose = (repo_root / "infra" / "docker-compose.yml").read_text()
+        readme = (repo_root / "README.md").read_text()
+
+        self.assertIn("smoke_not_run", script)
+        self.assertIn("docker info", script)
+        self.assertIn("exit 125", script)
+        self.assertIn("/candidates/candidate-compose-postgres-real-source/execute", script)
+        self.assertIn("/candidates/candidate-compose-mssql-real-source/execute", script)
+        self.assertIn('"canonical_sql":"SELECT 1"', script)
+        self.assertIn('"selected_source_id":"demo-business-mssql"', script)
+        self.assertIn("execution_completed", script)
+        self.assertIn("PreviewAuditEvent", script)
+        self.assertIn("SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL", compose)
+        self.assertIn(
+            "bash tests/smoke/test-compose-real-source-execution.sh",
+            readme,
+        )
 
     def test_safe_source_posture_reports_explicit_roles(self) -> None:
         settings = Settings(

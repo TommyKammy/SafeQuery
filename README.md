@@ -296,6 +296,20 @@ Compose-backed first-run operator workflow smoke verification:
 bash tests/smoke/test-compose-operator-workflow-source-selector.sh
 ```
 
+Compose-backed real source execution smoke verification:
+
+```bash
+bash tests/smoke/test-compose-real-source-execution.sh
+```
+
+This disposable smoke starts the compose baseline with explicit business
+PostgreSQL and MSSQL source credentials from the repo-local example values,
+seeds bounded read-only source fixtures, verifies wrong-source and raw-SQL
+execute requests are rejected before execution, executes approved candidate IDs
+against both real source containers, and checks persisted execution audit
+evidence. If Docker / Colima is unavailable, it exits with an explicit
+smoke-not-run status instead of reporting a product pass.
+
 Startup-guard verification:
 
 ```bash
