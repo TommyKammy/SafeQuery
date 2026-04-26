@@ -316,6 +316,30 @@ describe("HomePage", () => {
     expect(screen.queryByRole("option", { name: /sap spend cube/i })).not.toBeInTheDocument();
   });
 
+  it("renders advisory recovery guidance for unavailable workflow data without opening execution", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.reject(new Error("backend down"));
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    const recovery = screen.getByLabelText(/operator recovery guidance/i);
+    expect(recovery).toHaveTextContent(/workflow data unavailable/i);
+    expect(recovery).toHaveTextContent(/retry after backend health, migrations, seed data, and first-run doctor pass/i);
+    expect(recovery).toHaveTextContent(/authoritative safequery workflow payload/i);
+    expect(recovery).toHaveTextContent(/does not approve or execute/i);
+    expect(screen.queryByRole("button", { name: /execute reviewed candidate/i })).not.toBeInTheDocument();
+  });
+
   it("renders entitlement setup guidance without treating placeholder access as valid", async () => {
     const secretDetail = "sample-token-should-not-render";
 
@@ -1434,6 +1458,49 @@ describe("HomePage", () => {
     expect(lifecycleContext.queryByText("Registry fallback source label")).not.toBeInTheDocument();
     expect(screen.queryByText(/placeholder rows only/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
+  });
+
+  it("renders distinct recovery guidance for denied, failed, empty, and canceled states", async () => {
+    const terminalCases = [
+      {
+        expectedCopy: /revise the request or source binding before retrying preview/i,
+        state: "review_denied"
+      },
+      {
+        expectedCopy: /inspect execute-time guard, approval freshness, and runbook state before retrying/i,
+        state: "execution_denied"
+      },
+      {
+        expectedCopy: /inspect the run record and audit trail before retrying execution/i,
+        state: "failed"
+      },
+      {
+        expectedCopy: /revise filters or business question before retrying/i,
+        state: "empty"
+      },
+      {
+        expectedCopy: /retry only after confirming the cancellation reason and current runbook posture/i,
+        state: "canceled"
+      }
+    ] as const;
+
+    for (const terminalCase of terminalCases) {
+      cleanup();
+      render(
+        await HomePage({
+          searchParams: {
+            question: "Selected terminal run",
+            source_id: "sap-approved-spend",
+            state: terminalCase.state
+          }
+        })
+      );
+
+      const recovery = screen.getByLabelText(/operator recovery guidance/i);
+      expect(recovery).toHaveTextContent(terminalCase.expectedCopy);
+      expect(recovery).toHaveTextContent(/authoritative safequery/i);
+      expect(recovery).toHaveTextContent(/does not approve or execute/i);
+    }
   });
 
   it("renders completed result metadata only from the selected authoritative run", async () => {
