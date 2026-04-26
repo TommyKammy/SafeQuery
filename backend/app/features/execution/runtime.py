@@ -696,6 +696,7 @@ def _result_payload_size(rows: list[dict[str, Any]]) -> int:
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
+            default=str,
         ).encode("utf-8")
     )
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -267,6 +270,41 @@ def test_execute_candidate_sql_caps_payload_bytes_to_source_bound_maximum() -> N
     assert result.metadata.result_truncated is True
     assert result.metadata.truncation_reason == "payload_limit"
     assert result.metadata.payload_bytes <= result.metadata.payload_limit_bytes
+
+
+def test_execute_candidate_sql_payload_size_accepts_database_native_values() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    native_row = {
+        "created_at": datetime(2026, 4, 26, 12, 30, tzinfo=timezone.utc),
+        "amount": Decimal("12.34"),
+        "event_id": uuid4(),
+        "raw_digest": b"digest",
+    }
+
+    result = execute_candidate_sql(
+        candidate=_candidate(
+            canonical_sql="SELECT created_at, amount, event_id, raw_digest FROM audit.events",
+            source_id="approved-spend",
+            source_family="postgresql",
+            source_flavor="warehouse",
+        ),
+        selection=_selection(
+            source_id="approved-spend",
+            source_family="postgresql",
+            source_flavor="warehouse",
+            connector_id="postgresql_readonly",
+        ),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
+        query_runner=lambda **_: [native_row],
+    )
+
+    assert result.rows == [native_row]
+    assert result.metadata.row_count == 1
+    assert result.metadata.payload_bytes > 0
+    assert result.metadata.result_truncated is False
+    assert result.metadata.truncation_reason is None
 
 
 def test_execute_candidate_sql_denies_source_kill_switch_before_runner() -> None:
