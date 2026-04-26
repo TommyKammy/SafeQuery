@@ -904,6 +904,75 @@ describe("HomePage", () => {
     expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
   });
 
+  it("renders completed result metadata only from the selected authoritative run", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    itemType: "run",
+                    label: "Selected completed run",
+                    lifecycleState: "completed",
+                    occurredAt: "2026-04-21T14:42:17+09:00",
+                    recordId: "run-authoritative-282",
+                    resultTruncated: true,
+                    rowCount: 12,
+                    runState: "completed",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "Authoritative run source / approved_vendor_spend"
+                  },
+                  {
+                    itemType: "run",
+                    label: "Sibling completed run",
+                    lifecycleState: "completed",
+                    occurredAt: "2026-04-21T14:43:17+09:00",
+                    recordId: "run-sibling-283",
+                    resultTruncated: false,
+                    rowCount: 99,
+                    runState: "completed",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "Authoritative run source / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-authoritative-282",
+          question: "Selected completed run",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    const resultsSection = screen.getByRole("heading", { name: /completed result set/i }).closest("section");
+    expect(resultsSection).not.toBeNull();
+    const results = within(resultsSection!);
+
+    expect(results.getByText(/authoritative result metadata/i)).toBeInTheDocument();
+    expect(results.getByText(/12 rows/i)).toBeInTheDocument();
+    expect(results.getByText(/truncated/i)).toBeInTheDocument();
+    expect(results.queryByText(/99 rows/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
+  });
+
   it("renders explicit empty and review-denied unavailable states", async () => {
     const { rerender } = render(
       await HomePage({

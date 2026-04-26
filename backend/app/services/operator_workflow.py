@@ -35,6 +35,15 @@ class OperatorWorkflowHistoryItem(BaseModel):
     candidate_sql: Optional[str] = Field(default=None, serialization_alias="candidateSql")
     request_id: Optional[str] = Field(default=None, serialization_alias="requestId")
     guard_status: Optional[str] = Field(default=None, serialization_alias="guardStatus")
+    primary_deny_code: Optional[str] = Field(
+        default=None,
+        serialization_alias="primaryDenyCode",
+    )
+    result_truncated: Optional[bool] = Field(
+        default=None,
+        serialization_alias="resultTruncated",
+    )
+    row_count: Optional[int] = Field(default=None, serialization_alias="rowCount")
     run_state: Optional[str] = Field(default=None, serialization_alias="runState")
 
 
@@ -123,6 +132,25 @@ def _run_state_for_event(event: PreviewAuditEvent) -> str | None:
     return None
 
 
+def _run_row_count_for_event(event: PreviewAuditEvent, run_state: str) -> int | None:
+    if run_state not in {"completed", "empty"}:
+        return None
+
+    row_count = event.audit_payload.get("execution_row_count")
+    return row_count if isinstance(row_count, int) and row_count >= 0 else None
+
+
+def _run_result_truncated_for_event(
+    event: PreviewAuditEvent,
+    run_state: str,
+) -> bool | None:
+    if run_state not in {"completed", "empty"}:
+        return None
+
+    result_truncated = event.audit_payload.get("result_truncated")
+    return result_truncated if isinstance(result_truncated, bool) else None
+
+
 def _terminal_run_events(
     audit_events: list[PreviewAuditEvent],
 ) -> list[tuple[PreviewAuditEvent, str]]:
@@ -183,6 +211,9 @@ def _build_operator_history(
                 lifecycle_state=run_state,
                 occurred_at=_as_utc_datetime(event.occurred_at),
                 request_id=event.request_id,
+                primary_deny_code=event.primary_deny_code,
+                result_truncated=_run_result_truncated_for_event(event, run_state),
+                row_count=_run_row_count_for_event(event, run_state),
                 run_state=run_state,
             )
         )
