@@ -18,6 +18,7 @@ from app.features.execution.runtime import (
     MSSQLExecutionRuntimeUnavailable,
     check_mssql_execution_runtime_readiness,
     execute_candidate_sql,
+    preflight_execution_runtime_controls,
 )
 
 __all__ = [
@@ -35,5 +36,6 @@ __all__ = [
     "MSSQLExecutionRuntimeUnavailable",
     "check_mssql_execution_runtime_readiness",
     "execute_candidate_sql",
+    "preflight_execution_runtime_controls",
     "select_execution_connector",
 ]

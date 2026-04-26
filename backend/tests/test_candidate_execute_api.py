@@ -657,6 +657,149 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(approval.approval_state, "approved")
         self.assertIsNone(approval.executed_at)
 
+    def test_execute_candidate_api_applies_operator_runtime_kill_switch_without_consuming_approval(
+        self,
+    ) -> None:
+        from app.features.execution.runtime import ExecutionRuntimeSafetyState
+
+        calls: list[str] = []
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        def query_runner(**_: object) -> list[dict[str, object]]:
+            calls.append("called")
+            return []
+
+        client = self._client(query_runner)
+        client.app.state.execution_runtime_safety_state = ExecutionRuntimeSafetyState(
+            disabled_source_ids=frozenset({"demo-business-postgres"})
+        )
+
+        response = client.post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][-1]["primary_deny_code"],
+            "DENY_RUNTIME_KILL_SWITCH",
+        )
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_applies_candidate_bound_operator_cancellation_without_consuming_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        def query_runner(**_: object) -> list[dict[str, object]]:
+            calls.append("called")
+            return []
+
+        client = self._client(query_runner)
+        client.app.state.execution_cancelled_candidate_ids = frozenset({"candidate-123"})
+
+        response = client.post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_unavailable")
+        self.assertEqual(
+            payload["audit"]["events"][-1]["candidate_state"],
+            "canceled",
+        )
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_rejects_malformed_operator_cancellation_state(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        client = self._client(lambda **_: calls.append("called"))
+        client.app.state.execution_cancelled_candidate_ids = ["candidate-123", None]
+
+        response = client.post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "execution_unavailable")
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_cancellation_probe_reads_operator_state_updates(
+        self,
+    ) -> None:
+        from app.features.execution.runtime import ExecutionRuntimeCancelledError
+
+        calls: list[str] = []
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        def query_runner(*, runtime_controls, **_: object) -> list[dict[str, object]]:
+            calls.append("started")
+            client.app.state.execution_cancelled_candidate_ids = frozenset(
+                {"candidate-123"}
+            )
+            if runtime_controls.cancellation_probe is not None:
+                cancellation_requested = runtime_controls.cancellation_probe()
+                calls.append(f"cancelled={cancellation_requested}")
+                if cancellation_requested:
+                    raise ExecutionRuntimeCancelledError(
+                        "Execution canceled before the PostgreSQL result set was read."
+                    )
+            return []
+
+        client = self._client(query_runner)
+
+        response = client.post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_unavailable")
+        self.assertEqual(
+            payload["audit"]["events"][-1]["candidate_state"],
+            "canceled",
+        )
+        self.assertEqual(calls, ["started", "cancelled=True"])
+
     def test_execute_candidate_api_replay_fails_before_runner_invocation(self) -> None:
         calls: list[str] = []
 

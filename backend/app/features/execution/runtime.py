@@ -646,6 +646,41 @@ def _require_runtime_safety_controls_allow_execution(
         )
 
 
+def preflight_execution_runtime_controls(
+    *,
+    candidate_source: SourceBoundCandidateMetadata,
+    selection: ExecutionConnectorSelection,
+    cancellation_probe: CancellationProbe | None = None,
+    runtime_safety_state: ExecutionRuntimeSafetyState | None = None,
+    audit_context: ExecutionAuditContext | None = None,
+) -> None:
+    try:
+        runtime_controls = _resolve_runtime_controls(
+            selection=selection,
+            cancellation_probe=cancellation_probe,
+        )
+        _raise_if_cancelled(
+            runtime_controls=runtime_controls,
+            message="Execution canceled before the backend-owned query runner started.",
+        )
+        _require_runtime_safety_controls_allow_execution(
+            candidate_source=candidate_source,
+            runtime_safety_state=runtime_safety_state,
+        )
+    except ExecutionRuntimeCancelledError as exc:
+        raise _attach_cancellation_audit_event(
+            error=exc,
+            candidate_source=candidate_source,
+            audit_context=audit_context,
+        ) from exc
+    except (ExecutionConnectorExecutionError, ExecutionConnectorSelectionError) as exc:
+        raise _attach_execution_denial_audit_event(
+            error=exc,
+            candidate_source=candidate_source,
+            audit_context=audit_context,
+        ) from exc
+
+
 def _raise_if_cancelled(
     *,
     runtime_controls: ExecutionRuntimeControls,
