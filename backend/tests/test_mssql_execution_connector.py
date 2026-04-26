@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import pytest
@@ -142,3 +143,42 @@ def test_execute_mssql_connector_rejects_selection_binding_mismatch_fail_closed(
         )
 
     assert exc_info.value.deny_code == DENY_SOURCE_BINDING_MISMATCH
+
+
+def test_mssql_runtime_readiness_fails_closed_when_pyodbc_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.execution.runtime import (
+        MSSQLExecutionRuntimeUnavailable,
+        check_mssql_execution_runtime_readiness,
+    )
+
+    monkeypatch.setitem(sys.modules, "pyodbc", None)
+
+    with pytest.raises(
+        MSSQLExecutionRuntimeUnavailable,
+        match="pyodbc must be installed before the MSSQL execution connector can run",
+    ):
+        check_mssql_execution_runtime_readiness()
+
+
+def test_mssql_runtime_readiness_requires_odbc_driver_18(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.execution.runtime import (
+        MSSQLExecutionRuntimeUnavailable,
+        check_mssql_execution_runtime_readiness,
+    )
+
+    class FakePyodbcModule:
+        @staticmethod
+        def drivers() -> list[str]:
+            return ["PostgreSQL Unicode"]
+
+    monkeypatch.setitem(sys.modules, "pyodbc", FakePyodbcModule())
+
+    with pytest.raises(
+        MSSQLExecutionRuntimeUnavailable,
+        match="ODBC Driver 18 for SQL Server must be installed",
+    ):
+        check_mssql_execution_runtime_readiness()

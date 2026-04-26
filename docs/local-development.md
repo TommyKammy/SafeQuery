@@ -141,6 +141,13 @@ The backend-owned source registry remains authoritative for source activation.
 Do not infer an active source from a hostname, credential name, driver string,
 or nearby documentation note.
 
+The backend image packages `pyodbc` and Microsoft ODBC Driver 18 for SQL Server
+for the MSSQL connector. Those packages are runtime prerequisites only; MSSQL
+execution remains disabled until
+`SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING` is explicitly configured for
+the business MSSQL source and the request is bound to a backend-owned,
+candidate-only MSSQL connector selection.
+
 The checked-in baseline values are already wired to the compose network:
 
 - application database hostname: `app-postgres`
@@ -281,6 +288,8 @@ fallbacks:
 
 - `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL`
 - `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used.`
+- `pyodbc must be installed before the MSSQL execution connector can run.`
+- `ODBC Driver 18 for SQL Server must be installed before the MSSQL execution connector can run.`
 
 On successful startup, inspect backend logs for the source-role telemetry fields
 that summarize the hardened foundation without inferring from service names:

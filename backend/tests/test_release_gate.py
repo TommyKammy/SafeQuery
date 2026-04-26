@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Union
 from uuid import uuid4
 
@@ -19,6 +20,20 @@ from app.features.mlflow_export import build_mlflow_export_from_evaluation_scena
 
 def _all_scenarios() -> tuple[Union[MSSQLEvaluationScenario, PostgreSQLEvaluationScenario], ...]:
     return list_mssql_evaluation_scenarios() + list_postgresql_evaluation_scenarios()
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def test_backend_runtime_image_packages_mssql_odbc_runtime() -> None:
+    dockerfile = (_repo_root() / "backend" / "Dockerfile").read_text()
+    pyproject = (_repo_root() / "backend" / "pyproject.toml").read_text()
+
+    assert "msodbcsql18" in dockerfile
+    assert "ACCEPT_EULA=Y" in dockerfile
+    assert "unixodbc" in dockerfile
+    assert "pyodbc" in pyproject
 
 
 def _observed_records_from_harness() -> tuple[EvaluationOutcomeRecord, ...]:
