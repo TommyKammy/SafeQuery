@@ -22,6 +22,23 @@ smoke_sleep() {
   :
 }
 
+passing_doctor_payload() {
+  printf '%s\n' '{
+    "status": "pass",
+    "checks": [
+      {"name": "database", "status": "pass", "message": "Application database connectivity is ready."},
+      {"name": "migrations", "status": "pass", "message": "Alembic migration posture is current."},
+      {"name": "source_registry", "status": "pass", "message": "Active demo source registry record is present."},
+      {"name": "dataset_contract", "status": "pass", "message": "Demo source dataset contract linkage is ready."},
+      {"name": "schema_snapshot", "status": "pass", "message": "Demo source schema snapshot is approved."},
+      {"name": "entitlement_seed", "status": "pass", "message": "Dev/local entitlement seed is present."},
+      {"name": "execution_connector", "status": "pass", "message": "Demo source execution connector binding is ready."},
+      {"name": "backend", "status": "pass", "message": "Backend health endpoint is reachable and healthy."},
+      {"name": "frontend", "status": "pass", "message": "Frontend app surface is reachable."}
+    ]
+  }'
+}
+
 doctor_attempts=0
 curl() {
   doctor_attempts=$((doctor_attempts + 1))
@@ -30,7 +47,7 @@ curl() {
     return 0
   fi
 
-  printf '%s\n' '{"status":"pass","checks":[{"name":"frontend","status":"pass","message":"Frontend app is reachable."}]}'
+  passing_doctor_payload
 }
 
 if ! wait_for_first_run_doctor "http://backend.example/doctor/first-run" 3; then
@@ -59,7 +76,7 @@ if [[ "$doctor_attempts" -ne 2 ]]; then
   exit 1
 fi
 
-for expected in '"name": "frontend"' '"status": "fail"' "Frontend app surface is not reachable yet."; do
+for expected in "frontend" "fail" "Frontend app surface is not reachable yet."; do
   if ! grep -Fq "$expected" "$stderr_file"; then
     echo "doctor retry test failed: persistent failure output missing $expected" >&2
     exit 1

@@ -45,6 +45,22 @@ Before Epic K is signed off, a non-developer evaluator should be able to:
 6. Confirm preview submission remains source-scoped and entitlement-gated, while
    execute authority remains candidate-only and not exposed as raw SQL input.
 
+The first-run doctor check names used by docs, smokes, and operator evidence
+are:
+
+- `database`
+- `migrations`
+- `source_registry`
+- `dataset_contract`
+- `schema_snapshot`
+- `entitlement_seed`
+- `execution_connector`
+- `backend`
+- `frontend`
+
+The compose-backed source selector smoke must see each check name in the doctor
+payload before it treats `status: pass` as first-run evidence.
+
 The gate is product-readiness only. It is separate from later Epic L-P work:
 
 - real auth and session bridge wiring
