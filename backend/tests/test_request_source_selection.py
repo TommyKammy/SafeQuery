@@ -109,6 +109,13 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
                         "binding_type": binding_type,
                         "value": binding_value,
                         "source_claim": "groups",
+                        "mapping_state": "valid",
+                        "mapping_evidence": {
+                            "claim_issuer": "https://idp.example.test",
+                            "claim_value_fingerprint": f"sha256:{binding_value}",
+                            "mapping_rule_id": f"rule-{binding_value}-v1",
+                            "review_state": "current",
+                        },
                     },
                 ],
             }

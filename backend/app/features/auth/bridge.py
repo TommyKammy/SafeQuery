@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal, Mapping, Optional
 
 from pydantic import (
@@ -19,6 +20,29 @@ from app.features.auth.governance_bindings import normalize_governance_binding
 
 BindingType = Literal["group", "role", "entitlement"]
 IdentityClaimType = Literal["human_user", "service_account", "workload"]
+MappingState = Literal["valid", "stale", "missing", "ambiguous", "unsupported"]
+
+
+_WORKSTATION_LOCAL_PATH_RE = re.compile(
+    r"(^|\s)(/Users/[^/\s]+/|/home/[^/\s]+/|[A-Za-z]:\\Users\\[^\\\s]+\\)"
+)
+_SECRET_MARKERS = frozenset(
+    {"-----begin", "client_secret", "password", "private_key", "secret=", "token="}
+)
+
+
+def _reject_unsafe_evidence_text(value: str) -> str:
+    if _WORKSTATION_LOCAL_PATH_RE.search(value):
+        raise ValueError(
+            "Enterprise mapping evidence must not contain workstation-local paths."
+        )
+
+    lowered = value.lower()
+    if any(marker in lowered for marker in _SECRET_MARKERS):
+        raise ValueError(
+            "Enterprise mapping evidence must not contain secrets or credentials."
+        )
+    return value
 
 
 class EnterpriseBridgeActor(BaseModel):
@@ -51,6 +75,8 @@ class EnterpriseGovernanceBindingInput(BaseModel):
     binding_type: BindingType
     value: NonEmptyTrimmedString
     source_claim: NonEmptyTrimmedString
+    mapping_state: MappingState = "valid"
+    mapping_evidence: Optional["EnterpriseGovernanceMappingEvidence"] = None
 
     @field_validator("value")
     @classmethod
@@ -62,12 +88,47 @@ class EnterpriseGovernanceBindingInput(BaseModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def require_verifiable_current_mapping(self) -> Self:
+        if self.mapping_state != "valid":
+            raise ValueError(
+                "Enterprise governance mapping is "
+                f"{self.mapping_state}; explicit review is required before "
+                "SafeQuery can grant application authority."
+            )
+
+        if self.mapping_evidence is None:
+            raise ValueError(
+                "Enterprise governance mapping evidence is missing; explicit "
+                "review is required before SafeQuery can grant application authority."
+            )
+        return self
+
     @property
     def normalized_binding(self) -> str:
         normalized = normalize_governance_binding(f"{self.binding_type}:{self.value}")
         if normalized is None:
             raise ValueError("Governance binding is malformed.")
         return normalized
+
+
+class EnterpriseGovernanceMappingEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim_issuer: NonEmptyTrimmedString
+    claim_value_fingerprint: NonEmptyTrimmedString
+    mapping_rule_id: NonEmptyTrimmedString
+    review_state: NonEmptyTrimmedString
+
+    @field_validator(
+        "claim_issuer",
+        "claim_value_fingerprint",
+        "mapping_rule_id",
+        "review_state",
+    )
+    @classmethod
+    def reject_unsafe_evidence_text(cls, value: str) -> str:
+        return _reject_unsafe_evidence_text(value)
 
 
 class EnterpriseAuthBridgeInput(BaseModel):
@@ -135,6 +196,8 @@ class BindingProvenanceAuditMetadata(BaseModel):
     binding_type: BindingType
     source_claim: NonEmptyTrimmedString
     bridge_source: NonEmptyTrimmedString
+    mapping_state: MappingState
+    mapping_evidence: EnterpriseGovernanceMappingEvidence
 
 
 class EnterpriseAuthBridgeAuditMetadata(BaseModel):
@@ -206,6 +269,8 @@ def normalize_enterprise_auth_bridge_input(
                     binding_type=binding.binding_type,
                     source_claim=binding.source_claim,
                     bridge_source=normalized_input.bridge_source,
+                    mapping_state=binding.mapping_state,
+                    mapping_evidence=binding.mapping_evidence,
                 )
                 for binding in normalized_input.governance_bindings
             ],

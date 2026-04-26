@@ -7,6 +7,15 @@ from pydantic import ValidationError
 from app.features.auth.bridge import normalize_enterprise_auth_bridge_input
 
 
+def _mapping_evidence(rule_id: str, review_state: str = "current") -> dict[str, str]:
+    return {
+        "claim_issuer": "https://idp.example.test",
+        "claim_value_fingerprint": f"sha256:{rule_id}",
+        "mapping_rule_id": rule_id,
+        "review_state": review_state,
+    }
+
+
 def _valid_bridge_payload() -> dict[str, object]:
     return {
         "bridge_source": "saml-oidc-bridge",
@@ -30,11 +39,15 @@ def _valid_bridge_payload() -> dict[str, object]:
                 "binding_type": "group",
                 "value": " finance-analysts ",
                 "source_claim": "groups",
+                "mapping_state": "valid",
+                "mapping_evidence": _mapping_evidence("rule-finance-analysts-v1"),
             },
             {
                 "binding_type": "role",
                 "value": " sql-reviewer ",
                 "source_claim": "roles",
+                "mapping_state": "valid",
+                "mapping_evidence": _mapping_evidence("rule-sql-reviewer-v1"),
             },
         ],
         "raw_token": "<bridge-token-redacted>",
@@ -84,16 +97,187 @@ class EnterpriseAuthBridgeContractTestCase(unittest.TestCase):
                         "binding_type": "group",
                         "source_claim": "groups",
                         "bridge_source": "saml-oidc-bridge",
+                        "mapping_state": "valid",
+                        "mapping_evidence": {
+                            "claim_issuer": "https://idp.example.test",
+                            "claim_value_fingerprint": (
+                                "sha256:rule-finance-analysts-v1"
+                            ),
+                            "mapping_rule_id": "rule-finance-analysts-v1",
+                            "review_state": "current",
+                        },
                     },
                     {
                         "binding": "role:sql-reviewer",
                         "binding_type": "role",
                         "source_claim": "roles",
                         "bridge_source": "saml-oidc-bridge",
+                        "mapping_state": "valid",
+                        "mapping_evidence": {
+                            "claim_issuer": "https://idp.example.test",
+                            "claim_value_fingerprint": "sha256:rule-sql-reviewer-v1",
+                            "mapping_rule_id": "rule-sql-reviewer-v1",
+                            "review_state": "current",
+                        },
                     },
                 ],
             },
         )
+
+    def test_valid_enterprise_mapping_produces_typed_binding_evidence(self) -> None:
+        payload = _valid_bridge_payload()
+        payload["governance_bindings"] = [
+            {
+                "binding_type": "group",
+                "value": "finance-analysts",
+                "source_claim": "groups",
+                "mapping_state": "valid",
+                "mapping_evidence": {
+                    "claim_issuer": "https://idp.example.test",
+                    "claim_value_fingerprint": "sha256:finance-analysts",
+                    "mapping_rule_id": "rule-finance-analysts-v1",
+                    "review_state": "current",
+                },
+            }
+        ]
+
+        context = normalize_enterprise_auth_bridge_input(payload)
+
+        self.assertEqual(
+            context.authenticated_subject.normalized_governance_bindings(),
+            frozenset({"group:finance-analysts"}),
+        )
+        self.assertEqual(
+            context.audit_metadata.binding_provenance[0].model_dump(),
+            {
+                "binding": "group:finance-analysts",
+                "binding_type": "group",
+                "source_claim": "groups",
+                "bridge_source": "saml-oidc-bridge",
+                "mapping_state": "valid",
+                "mapping_evidence": {
+                    "claim_issuer": "https://idp.example.test",
+                    "claim_value_fingerprint": "sha256:finance-analysts",
+                    "mapping_rule_id": "rule-finance-analysts-v1",
+                    "review_state": "current",
+                },
+            },
+        )
+
+    def test_stale_mapping_fails_closed_with_explicit_state(self) -> None:
+        payload = _valid_bridge_payload()
+        payload["governance_bindings"] = [
+            {
+                "binding_type": "group",
+                "value": "finance-analysts",
+                "source_claim": "groups",
+                "mapping_state": "stale",
+                "mapping_evidence": {
+                    "claim_issuer": "https://idp.example.test",
+                    "claim_value_fingerprint": "sha256:finance-analysts",
+                    "mapping_rule_id": "rule-finance-analysts-v1",
+                    "review_state": "expired",
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(ValidationError, "stale"):
+            normalize_enterprise_auth_bridge_input(payload)
+
+    def test_ambiguous_mapping_fails_closed_with_explicit_state(self) -> None:
+        payload = _valid_bridge_payload()
+        payload["governance_bindings"] = [
+            {
+                "binding_type": "group",
+                "value": "finance-analysts",
+                "source_claim": "groups",
+                "mapping_state": "ambiguous",
+                "mapping_evidence": {
+                    "claim_issuer": "https://idp.example.test",
+                    "claim_value_fingerprint": "sha256:finance-analysts",
+                    "mapping_rule_id": "rule-conflict-v1",
+                    "review_state": "multiple_matches",
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(ValidationError, "ambiguous"):
+            normalize_enterprise_auth_bridge_input(payload)
+
+    def test_unsupported_mapping_fails_closed_with_explicit_state(self) -> None:
+        payload = _valid_bridge_payload()
+        payload["governance_bindings"] = [
+            {
+                "binding_type": "group",
+                "value": "finance-analysts",
+                "source_claim": "groups",
+                "mapping_state": "unsupported",
+                "mapping_evidence": {
+                    "claim_issuer": "https://idp.example.test",
+                    "claim_value_fingerprint": "sha256:finance-analysts",
+                    "mapping_rule_id": "rule-unsupported-v1",
+                    "review_state": "unsupported_claim",
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(ValidationError, "unsupported"):
+            normalize_enterprise_auth_bridge_input(payload)
+
+    def test_missing_mapping_evidence_fails_closed(self) -> None:
+        payload = _valid_bridge_payload()
+        payload["governance_bindings"] = [
+            {
+                "binding_type": "group",
+                "value": "finance-analysts",
+                "source_claim": "groups",
+                "mapping_state": "missing",
+            }
+        ]
+
+        with self.assertRaisesRegex(ValidationError, "missing"):
+            normalize_enterprise_auth_bridge_input(payload)
+
+    def test_mapping_evidence_rejects_workstation_local_paths(self) -> None:
+        payload = _valid_bridge_payload()
+        local_path = "/" + "Users" + "/" + "alice" + "/SafeQuery/mapping.json"
+        payload["governance_bindings"] = [
+            {
+                "binding_type": "group",
+                "value": "finance-analysts",
+                "source_claim": "groups",
+                "mapping_state": "valid",
+                "mapping_evidence": {
+                    "claim_issuer": "https://idp.example.test",
+                    "claim_value_fingerprint": "sha256:finance-analysts",
+                    "mapping_rule_id": local_path,
+                    "review_state": "current",
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(ValidationError, "workstation-local paths"):
+            normalize_enterprise_auth_bridge_input(payload)
+
+    def test_mapping_evidence_rejects_secret_markers(self) -> None:
+        payload = _valid_bridge_payload()
+        payload["governance_bindings"] = [
+            {
+                "binding_type": "group",
+                "value": "finance-analysts",
+                "source_claim": "groups",
+                "mapping_state": "valid",
+                "mapping_evidence": {
+                    "claim_issuer": "https://idp.example.test",
+                    "claim_value_fingerprint": "token=raw-idp-token",
+                    "mapping_rule_id": "rule-finance-analysts-v1",
+                    "review_state": "current",
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(ValidationError, "secrets or credentials"):
+            normalize_enterprise_auth_bridge_input(payload)
 
     def test_missing_subject_fails_closed(self) -> None:
         payload = _valid_bridge_payload()
@@ -151,11 +335,15 @@ class EnterpriseAuthBridgeContractTestCase(unittest.TestCase):
                 "binding_type": "group",
                 "value": "finance-analysts",
                 "source_claim": "groups",
+                "mapping_state": "valid",
+                "mapping_evidence": _mapping_evidence("rule-finance-analysts-v1"),
             },
             {
                 "binding_type": "group",
                 "value": " finance-analysts ",
                 "source_claim": "groups",
+                "mapping_state": "valid",
+                "mapping_evidence": _mapping_evidence("rule-finance-analysts-copy-v1"),
             },
         ]
 
