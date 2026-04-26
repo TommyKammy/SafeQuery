@@ -426,8 +426,63 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["error"]["code"], "execution_denied")
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_SOURCE_BINDING_MISMATCH",
+        )
         self.assertNotIn("safequery_exec:secret", response.text)
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_rejects_unknown_connector_without_consuming_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        main_module = importlib.import_module("app.main")
+        unexpected_selection = main_module.ExecutionConnectorSelection(
+            source_id="demo-business-postgres",
+            source_family="postgresql",
+            source_flavor="warehouse",
+            connector_id="postgresql_readonly_shadow",
+            ownership="backend",
+        )
+
+        def query_runner(**_: object) -> list[dict[str, object]]:
+            calls.append("called")
+            return []
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        with patch.object(
+            main_module,
+            "select_execution_connector",
+            return_value=unexpected_selection,
+        ):
+            response = self._client(query_runner).post(
+                "/candidates/candidate-123/execute",
+                headers=app_session.headers,
+                cookies=app_session.cookies,
+                json={"selected_source_id": "demo-business-postgres"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_SOURCE_BINDING_MISMATCH",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][0]["query_candidate_id"],
+            "candidate-123",
+        )
         self.assertEqual(calls, [])
         approval = (
             self.session.query(PreviewCandidateApproval)
