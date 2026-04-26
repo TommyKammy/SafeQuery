@@ -189,9 +189,10 @@ class MSSQLExecutionRuntimeUnavailable(RuntimeError):
 def check_mssql_execution_runtime_readiness() -> dict[str, object]:
     try:
         pyodbc = importlib.import_module("pyodbc")
-    except ModuleNotFoundError as exc:
+    except (ModuleNotFoundError, ImportError) as exc:
         raise MSSQLExecutionRuntimeUnavailable(
-            "pyodbc must be installed before the MSSQL execution connector can run."
+            "pyodbc must be installed and importable before the MSSQL execution "
+            "connector can run."
         ) from exc
 
     drivers = getattr(pyodbc, "drivers", None)

@@ -157,9 +157,35 @@ def test_mssql_runtime_readiness_fails_closed_when_pyodbc_is_missing(
 
     with pytest.raises(
         MSSQLExecutionRuntimeUnavailable,
-        match="pyodbc must be installed before the MSSQL execution connector can run",
+        match=(
+            "pyodbc must be installed and importable before the MSSQL execution "
+            "connector can run"
+        ),
     ):
         check_mssql_execution_runtime_readiness()
+
+
+def test_mssql_runtime_readiness_fails_closed_when_pyodbc_import_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.features.execution.runtime as runtime_module
+
+    def broken_pyodbc_import(module_name: str) -> object:
+        assert module_name == "pyodbc"
+        raise ImportError("libodbc.so.2: cannot open shared object file")
+
+    monkeypatch.setattr(runtime_module.importlib, "import_module", broken_pyodbc_import)
+
+    with pytest.raises(
+        runtime_module.MSSQLExecutionRuntimeUnavailable,
+        match=(
+            "pyodbc must be installed and importable before the MSSQL execution "
+            "connector can run"
+        ),
+    ) as exc_info:
+        runtime_module.check_mssql_execution_runtime_readiness()
+
+    assert isinstance(exc_info.value.__cause__, ImportError)
 
 
 def test_mssql_runtime_readiness_requires_odbc_driver_18(
