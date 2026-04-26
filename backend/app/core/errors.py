@@ -19,6 +19,8 @@ _SAFE_API_ERROR_CODES = frozenset(
         "session_invalid",
         "csrf_failed",
         "entitlement_denied",
+        "execution_denied",
+        "execution_unavailable",
         "preview_generation_failed",
         "preview_source_malformed",
         "preview_source_unavailable",
@@ -46,6 +48,31 @@ _SAFE_ENTITLEMENT_DENIAL_AUDIT_FIELDS = frozenset(
         "schema_snapshot_version",
         "primary_deny_code",
         "denial_cause",
+    }
+)
+
+_SAFE_EXECUTION_AUDIT_FIELDS = frozenset(
+    {
+        "event_id",
+        "event_type",
+        "occurred_at",
+        "request_id",
+        "correlation_id",
+        "causation_event_id",
+        "user_subject",
+        "session_id",
+        "query_candidate_id",
+        "candidate_owner_subject",
+        "source_id",
+        "source_family",
+        "source_flavor",
+        "dataset_contract_version",
+        "schema_snapshot_version",
+        "execution_policy_version",
+        "connector_profile_version",
+        "primary_deny_code",
+        "denial_cause",
+        "candidate_state",
     }
 )
 
@@ -140,7 +167,14 @@ def _safe_http_exception_audit(
     *,
     code: str,
 ) -> dict[str, list[dict[str, Any]]] | None:
-    if exc.status_code != 403 or code != "entitlement_denied":
+    if exc.status_code == 403 and code == "entitlement_denied":
+        safe_fields = _SAFE_ENTITLEMENT_DENIAL_AUDIT_FIELDS
+    elif exc.status_code in {403, 503} and code in {
+        "execution_denied",
+        "execution_unavailable",
+    }:
+        safe_fields = _SAFE_EXECUTION_AUDIT_FIELDS
+    else:
         return None
 
     detail: Any = exc.detail
@@ -162,8 +196,7 @@ def _safe_http_exception_audit(
             {
                 key: value
                 for key, value in event.items()
-                if isinstance(key, str)
-                and key in _SAFE_ENTITLEMENT_DENIAL_AUDIT_FIELDS
+                if isinstance(key, str) and key in safe_fields
             }
             for event in events
         ]
