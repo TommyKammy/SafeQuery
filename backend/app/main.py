@@ -166,9 +166,16 @@ def _operator_runtime_safety_state(request: Request) -> ExecutionRuntimeSafetySt
 
 def _operator_control_values(values: object) -> frozenset[str]:
     if isinstance(values, (set, frozenset, list, tuple)):
-        normalized = frozenset(str(value).strip() for value in values)
-        if all(normalized):
-            return normalized
+        normalized_values: set[str] = set()
+        for value in values:
+            if not isinstance(value, str):
+                break
+            normalized = value.strip()
+            if not normalized:
+                break
+            normalized_values.add(normalized)
+        else:
+            return frozenset(normalized_values)
     raise api_error(
         503,
         "execution_unavailable",

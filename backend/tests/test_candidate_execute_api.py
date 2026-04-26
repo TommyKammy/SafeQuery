@@ -733,6 +733,33 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(approval.approval_state, "approved")
         self.assertIsNone(approval.executed_at)
 
+    def test_execute_candidate_api_rejects_malformed_operator_cancellation_state(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        client = self._client(lambda **_: calls.append("called"))
+        client.app.state.execution_cancelled_candidate_ids = ["candidate-123", None]
+
+        response = client.post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "execution_unavailable")
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
     def test_execute_candidate_api_cancellation_probe_reads_operator_state_updates(
         self,
     ) -> None:
