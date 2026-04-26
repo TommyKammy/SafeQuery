@@ -60,6 +60,7 @@ from app.services.candidate_lifecycle import (
 )
 from app.services.first_run_doctor import FirstRunDoctorResult, run_first_run_doctor
 from app.services.health import (
+    build_operator_health,
     check_database_health,
     check_sql_generation_runtime_health,
 )
@@ -462,23 +463,33 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/health")
-    def read_health() -> JSONResponse:
+    def read_health(
+        session: Session = Depends(require_preview_submission_session),
+    ) -> JSONResponse:
         database = check_database_health(str(settings.app_postgres_url))
         sql_generation = check_sql_generation_runtime_health(settings.sql_generation)
+        operator_health = build_operator_health(
+            session,
+            database=database,
+            sql_generation=sql_generation,
+        )
         sql_generation_status = sql_generation["status"]
         healthy = database["status"] == "ok" and sql_generation_status in {
             "ok",
             "disabled",
             "unchecked",
         }
+        backend_healthy = healthy
+        aggregate_healthy = healthy and operator_health["status"] == "ok"
 
         return JSONResponse(
-            status_code=200 if healthy else 503,
+            status_code=200 if backend_healthy else 503,
             content={
-                "status": "ok" if healthy else "degraded",
+                "status": "ok" if aggregate_healthy else "degraded",
                 "service": "safequery-api",
                 "database": database,
                 "sql_generation": sql_generation,
+                "operator_health": operator_health,
             },
         )
 
