@@ -78,6 +78,12 @@ type FirstRunGuidance = {
   title: string;
 };
 
+type OperatorRecoveryGuidance = {
+  action: string;
+  anchor: string;
+  title: string;
+};
+
 type PreviewSubmissionStatus =
   | {
       status: "idle";
@@ -302,6 +308,107 @@ function renderFirstRunGuidance(guidance: FirstRunGuidance) {
         Open first-run setup guide
       </a>
     </div>
+  );
+}
+
+function getOperatorRecoveryGuidance(
+  state: CanonicalWorkflowState,
+  snapshot: OperatorWorkflowSnapshot
+): OperatorRecoveryGuidance | null {
+  if (snapshot.status === "unavailable" || snapshot.status === "malformed") {
+    return {
+      action:
+        "Retry after backend health, migrations, seed data, and first-run doctor pass.",
+      anchor:
+        "Use the authoritative SafeQuery workflow payload before trusting source, request, candidate, run, or audit context.",
+      title:
+        snapshot.status === "malformed" ? "Workflow data malformed" : "Workflow data unavailable"
+    };
+  }
+
+  if (
+    snapshot.status === "unauthenticated" ||
+    snapshot.status === "session_invalid" ||
+    snapshot.status === "csrf_failed" ||
+    snapshot.status === "entitlement_denied"
+  ) {
+    return {
+      action:
+        "Revise the session, request freshness, or entitlement binding before retrying.",
+      anchor:
+        "Use SafeQuery auth and entitlement records as the prerequisite; do not infer access from UI text or external evidence.",
+      title: "Workflow access blocked"
+    };
+  }
+
+  if (state === "review_denied") {
+    return {
+      action: "Revise the request or source binding before retrying preview.",
+      anchor:
+        "Use the authoritative SafeQuery request and candidate record; do not treat advisory context as approval.",
+      title: "Recovery: review denied"
+    };
+  }
+
+  if (state === "execution_denied") {
+    return {
+      action:
+        "Inspect execute-time guard, approval freshness, and runbook state before retrying.",
+      anchor:
+        "Use the authoritative SafeQuery run and audit context; a prior preview does not authorize execution.",
+      title: "Recovery: execution denied"
+    };
+  }
+
+  if (state === "failed") {
+    return {
+      action: "Inspect the run record and audit trail before retrying execution.",
+      anchor:
+        "Use the authoritative SafeQuery run failure and audit events; do not infer success from partial rows or external logs.",
+      title: "Recovery: failed run"
+    };
+  }
+
+  if (state === "empty") {
+    return {
+      action: "Revise filters or business question before retrying.",
+      anchor:
+        "Use the authoritative SafeQuery completed run metadata; zero rows stay distinct from denial, failure, or cancellation.",
+      title: "Recovery: empty result"
+    };
+  }
+
+  if (state === "canceled") {
+    return {
+      action:
+        "Retry only after confirming the cancellation reason and current runbook posture.",
+      anchor:
+        "Use the authoritative SafeQuery run lifecycle and audit context; do not reuse interrupted execution evidence as success.",
+      title: "Recovery: canceled run"
+    };
+  }
+
+  return null;
+}
+
+function renderOperatorRecoveryGuidance(guidance: OperatorRecoveryGuidance) {
+  return (
+    <section
+      aria-label="Operator recovery guidance"
+      className="surface surface-secondary"
+    >
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Recovery</p>
+          <h2 className="panel-title">{guidance.title}</h2>
+        </div>
+        <span className="surface-badge surface-badge-code">Advisory</span>
+      </div>
+      <p className="section-copy">{guidance.action}</p>
+      <p className="section-copy">
+        {guidance.anchor} This guidance does not approve or execute the workflow.
+      </p>
+    </section>
   );
 }
 
@@ -1604,6 +1711,10 @@ export function QueryWorkflowShell({
   const selectedRetrievedCitations =
     historyRunContext?.retrievedCitations ?? candidatePreview?.retrievedCitations ?? [];
   const firstRunGuidance = getFirstRunGuidance(operatorWorkflow);
+  const operatorRecoveryGuidance = getOperatorRecoveryGuidance(
+    normalizedState,
+    operatorWorkflow
+  );
 
   async function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2212,6 +2323,10 @@ export function QueryWorkflowShell({
         </div>
 
         <aside className="support-column">
+          {operatorRecoveryGuidance
+            ? renderOperatorRecoveryGuidance(operatorRecoveryGuidance)
+            : null}
+
           <section className="surface surface-secondary">
             <div className="section-header">
               <div>
