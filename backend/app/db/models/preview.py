@@ -130,6 +130,67 @@ class PreviewCandidate(Base):
     )
 
 
+class PreviewCandidateApproval(Base):
+    __tablename__ = "preview_candidate_approvals"
+    __table_args__ = (
+        UniqueConstraint("approval_id"),
+        UniqueConstraint("preview_candidate_id"),
+        UniqueConstraint("candidate_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        SqlAlchemyUuid,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    approval_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    preview_candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("preview_candidates.id"),
+        nullable=False,
+    )
+    candidate_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    registered_source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("registered_sources.id"),
+        nullable=False,
+    )
+    source_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_family: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_flavor: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    dataset_contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    owner_subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    approval_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    invalidated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    executed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    approval_state: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class PreviewAuditEvent(Base):
     __tablename__ = "preview_audit_events"
     __table_args__ = (UniqueConstraint("event_id"),)

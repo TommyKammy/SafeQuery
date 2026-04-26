@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
+from app.db.models.preview import PreviewCandidate, PreviewCandidateApproval, PreviewRequest
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
@@ -21,6 +22,7 @@ from app.services.candidate_lifecycle import (
     CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
     CandidateLifecycleRevalidationError,
     SourceBoundCandidateMetadata,
+    revalidate_authoritative_candidate_approval,
     revalidate_candidate_lifecycle,
 )
 from app.services.source_entitlements import SourceEntitlementError
@@ -143,6 +145,87 @@ def _audit_context() -> CandidateLifecycleAuditContext:
     )
 
 
+def _seed_preview_candidate_approval(
+    session: Session,
+    *,
+    source: RegisteredSource,
+    candidate_id: str = "candidate-123",
+    request_id: str = "request-123",
+    owner_subject_id: str = "user:alice",
+    approval_expires_at: datetime | None = None,
+) -> PreviewCandidateApproval:
+    dataset_contract = session.get(DatasetContract, source.dataset_contract_id)
+    schema_snapshot = session.get(SchemaSnapshot, source.schema_snapshot_id)
+    assert dataset_contract is not None
+    assert schema_snapshot is not None
+
+    preview_request = PreviewRequest(
+        id=uuid4(),
+        request_id=request_id,
+        registered_source_id=source.id,
+        source_id=source.source_id,
+        source_family=source.source_family,
+        source_flavor=source.source_flavor,
+        dataset_contract_id=dataset_contract.id,
+        dataset_contract_version=dataset_contract.contract_version,
+        schema_snapshot_id=schema_snapshot.id,
+        schema_snapshot_version=schema_snapshot.snapshot_version,
+        authenticated_subject_id=owner_subject_id,
+        auth_source="test-helper",
+        session_id="session-123",
+        governance_bindings="group:finance-analysts",
+        entitlement_decision="allow",
+        request_text="Show approved spend",
+        request_state="previewed",
+    )
+    session.add(preview_request)
+    session.flush()
+
+    preview_candidate = PreviewCandidate(
+        id=uuid4(),
+        candidate_id=candidate_id,
+        preview_request_id=preview_request.id,
+        request_id=request_id,
+        registered_source_id=source.id,
+        source_id=source.source_id,
+        source_family=source.source_family,
+        source_flavor=source.source_flavor,
+        dataset_contract_id=dataset_contract.id,
+        dataset_contract_version=dataset_contract.contract_version,
+        schema_snapshot_id=schema_snapshot.id,
+        schema_snapshot_version=schema_snapshot.snapshot_version,
+        authenticated_subject_id=owner_subject_id,
+        candidate_sql="SELECT vendor_id FROM finance.approved_vendor_spend LIMIT 50",
+        guard_status="allow",
+        candidate_state="preview_ready",
+    )
+    session.add(preview_candidate)
+    session.flush()
+
+    now = datetime.now(timezone.utc)
+    approval = PreviewCandidateApproval(
+        id=uuid4(),
+        approval_id=f"approval-{candidate_id}",
+        preview_candidate_id=preview_candidate.id,
+        candidate_id=candidate_id,
+        request_id=request_id,
+        registered_source_id=source.id,
+        source_id=source.source_id,
+        source_family=source.source_family,
+        source_flavor=source.source_flavor,
+        dataset_contract_version=dataset_contract.contract_version,
+        schema_snapshot_version=schema_snapshot.snapshot_version,
+        owner_subject_id=owner_subject_id,
+        session_id="session-123",
+        approved_at=now,
+        approval_expires_at=approval_expires_at or (now + timedelta(minutes=10)),
+        approval_state="approved",
+    )
+    session.add(approval)
+    session.commit()
+    return approval
+
+
 def test_revalidate_candidate_lifecycle_accepts_current_source_bound_candidate() -> None:
     with _session_scope() as session:
         _seed_source(session, source_id="sap-approved-spend")
@@ -159,6 +242,47 @@ def test_revalidate_candidate_lifecycle_accepts_current_source_bound_candidate()
 
     assert result.source_id == "sap-approved-spend"
     assert result.state == "execution_eligible"
+
+
+def test_authoritative_candidate_approval_is_consumed_once_for_execution() -> None:
+    with _session_scope() as session:
+        source = _seed_source(session, source_id="sap-approved-spend")
+        approval = _seed_preview_candidate_approval(session, source=source)
+
+        result = revalidate_authoritative_candidate_approval(
+            session=session,
+            candidate_id="candidate-123",
+            authenticated_subject=AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            as_of=datetime.now(timezone.utc),
+            selected_source_id="sap-approved-spend",
+            audit_context=_audit_context(),
+        )
+
+        assert result.state == "execution_eligible"
+        session.refresh(approval)
+        assert approval.approval_state == "executed"
+        assert approval.executed_at is not None
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="DENY_CANDIDATE_REPLAYED",
+        ) as exc_info:
+            revalidate_authoritative_candidate_approval(
+                session=session,
+                candidate_id="candidate-123",
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                as_of=datetime.now(timezone.utc),
+                selected_source_id="sap-approved-spend",
+                audit_context=_audit_context(),
+            )
+
+    assert exc_info.value.deny_code == "DENY_CANDIDATE_REPLAYED"
 
 
 def test_revalidate_candidate_lifecycle_rejects_expired_approval() -> None:

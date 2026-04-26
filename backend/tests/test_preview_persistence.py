@@ -17,7 +17,12 @@ from app.db.models.dataset_contract import (
     DatasetContractDataset,
     DatasetContractDatasetKind,
 )
-from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
+from app.db.models.preview import (
+    PreviewAuditEvent,
+    PreviewCandidate,
+    PreviewCandidateApproval,
+    PreviewRequest,
+)
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.db.session import require_preview_submission_session
@@ -179,6 +184,9 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
 
         persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_approval = session.execute(
+            select(PreviewCandidateApproval)
+        ).scalar_one()
         persisted_events = (
             session.execute(
                 select(PreviewAuditEvent).order_by(PreviewAuditEvent.lifecycle_order)
@@ -213,6 +221,16 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert persisted_candidate.registered_source_id == persisted_request.registered_source_id
         assert persisted_candidate.dataset_contract_id == persisted_request.dataset_contract_id
         assert persisted_candidate.schema_snapshot_id == persisted_request.schema_snapshot_id
+        assert persisted_approval.preview_candidate_id == persisted_candidate.id
+        assert persisted_approval.candidate_id == response_candidate_id
+        assert persisted_approval.request_id == request_id
+        assert persisted_approval.source_id == "sap-approved-spend"
+        assert persisted_approval.owner_subject_id == "user:alice"
+        assert persisted_approval.session_id == "application-session-redacted"
+        assert persisted_approval.approval_state == "approved"
+        assert persisted_approval.approved_at is not None
+        assert persisted_approval.approval_expires_at > persisted_approval.approved_at
+        assert persisted_approval.executed_at is None
 
         assert [event.event_type for event in persisted_events] == [
             "query_submitted",

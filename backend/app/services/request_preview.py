@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -10,7 +10,12 @@ from typing_extensions import Annotated
 from uuid import UUID, uuid4
 
 from app.db.models.dataset_contract import DatasetContract
-from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
+from app.db.models.preview import (
+    PreviewAuditEvent,
+    PreviewCandidate,
+    PreviewCandidateApproval,
+    PreviewRequest,
+)
 from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource
 from app.features.audit.event_model import SourceAwareAuditEvent
@@ -407,7 +412,17 @@ def _persist_preview_audit_events(
     preview_candidate: PreviewCandidate | None,
     audit_events: list[SourceAwareAuditEvent],
 ) -> None:
+    event_ids = [event.event_id for event in audit_events]
+    existing_event_ids = set(
+        session.execute(
+            select(PreviewAuditEvent.event_id).where(
+                PreviewAuditEvent.event_id.in_(event_ids)
+            )
+        ).scalars()
+    )
     for lifecycle_order, event in enumerate(audit_events, start=1):
+        if event.event_id in existing_event_ids:
+            continue
         payload = event.model_dump(mode="json", exclude_none=True)
         session.add(
             PreviewAuditEvent(
@@ -459,6 +474,60 @@ def _raise_preview_persistence_contract_error(
 ) -> None:
     session.rollback()
     raise PreviewSubmissionContractError(message)
+
+
+def _persist_candidate_approval_record(
+    session: Session,
+    *,
+    preview_candidate: PreviewCandidate,
+    authenticated_subject_id: str,
+    session_id: str | None,
+    occurred_at: datetime | None,
+    candidate_state: str,
+    guard_status: GuardStatus | None,
+) -> None:
+    existing = session.execute(
+        select(PreviewCandidateApproval).where(
+            PreviewCandidateApproval.candidate_id == preview_candidate.candidate_id
+        )
+    ).scalar_one_or_none()
+    effective_occurred_at = occurred_at or datetime.now(timezone.utc)
+
+    if existing is None:
+        existing = PreviewCandidateApproval(
+            approval_id=f"approval-{preview_candidate.candidate_id}",
+            candidate_id=preview_candidate.candidate_id,
+            preview_candidate_id=preview_candidate.id,
+        )
+        session.add(existing)
+    elif existing.preview_candidate_id != preview_candidate.id:
+        _raise_preview_persistence_contract_error(
+            session,
+            "Candidate approval cannot be rebound to a different preview candidate.",
+        )
+
+    if existing.approval_state == "executed":
+        return
+
+    existing.request_id = preview_candidate.request_id
+    existing.registered_source_id = preview_candidate.registered_source_id
+    existing.source_id = preview_candidate.source_id
+    existing.source_family = preview_candidate.source_family
+    existing.source_flavor = preview_candidate.source_flavor
+    existing.dataset_contract_version = preview_candidate.dataset_contract_version
+    existing.schema_snapshot_version = preview_candidate.schema_snapshot_version
+    existing.owner_subject_id = authenticated_subject_id
+    existing.session_id = session_id
+    if existing.approved_at is None:
+        existing.approved_at = effective_occurred_at
+    if existing.approval_expires_at is None:
+        existing.approval_expires_at = effective_occurred_at + timedelta(minutes=5)
+
+    if candidate_state != "preview_ready":
+        existing.approval_state = "invalidated"
+        existing.invalidated_at = effective_occurred_at
+    elif guard_status in {None, "allow", PREVIEW_PENDING_GUARD_STATUS}:
+        existing.approval_state = "approved"
 
 
 def _persist_preview_submission_records(
@@ -604,6 +673,17 @@ def _persist_preview_submission_records(
             preview_candidate.guard_status = PREVIEW_PENDING_GUARD_STATUS
             preview_candidate.candidate_state = candidate_state
             session.flush()
+            _persist_candidate_approval_record(
+                session,
+                preview_candidate=preview_candidate,
+                authenticated_subject_id=subject_id,
+                session_id=preview_request.session_id,
+                occurred_at=(
+                    audit_context.occurred_at if audit_context is not None else None
+                ),
+                candidate_state=candidate_state,
+                guard_status=preview_candidate.guard_status,
+            )
             _persist_preview_audit_events(
                 session,
                 preview_request=preview_request,
@@ -667,6 +747,18 @@ def persist_generated_candidate_audit_context(
             preview_candidate.candidate_state = candidate_state
         if guard_status is not None:
             preview_candidate.guard_status = guard_status
+        if candidate_state is not None:
+            _persist_candidate_approval_record(
+                session,
+                preview_candidate=preview_candidate,
+                authenticated_subject_id=preview_candidate.authenticated_subject_id,
+                session_id=preview_request.session_id,
+                occurred_at=(
+                    audit_events[-1].occurred_at if audit_events else None
+                ),
+                candidate_state=candidate_state,
+                guard_status=guard_status,
+            )
         _persist_preview_audit_events(
             session,
             preview_request=preview_request,
