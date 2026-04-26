@@ -111,6 +111,19 @@ def test_execute_postgresql_connector_uses_backend_owned_connection_path() -> No
                 "approved_spend": 4200,
             }
         ],
+        "metadata": {
+            "source_id": "approved-spend",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+            "candidate_id": None,
+            "execution_run_id": None,
+            "row_count": 1,
+            "row_limit": 200,
+            "payload_bytes": 51,
+            "payload_limit_bytes": 65536,
+            "result_truncated": False,
+            "truncation_reason": None,
+        },
     }
     assert captured == {
         "database_url": BUSINESS_POSTGRES_URL,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import importlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -44,6 +45,10 @@ DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY = {
     "mssql": 200,
     "postgresql": 200,
 }
+DEFAULT_MAX_PAYLOAD_BYTES_BY_SOURCE_FAMILY = {
+    "mssql": 64 * 1024,
+    "postgresql": 64 * 1024,
+}
 MSSQL_ODBC_DRIVER_NAME = "ODBC Driver 18 for SQL Server"
 
 
@@ -52,6 +57,7 @@ class ExecutionRuntimeControls:
     source_family: str
     timeout_seconds: int
     max_rows: int
+    max_payload_bytes: int = 64 * 1024
     cancellation_probe: CancellationProbe | None = None
 
 
@@ -81,6 +87,22 @@ class _PostgresConnectionIdentity:
         return (self.host, self.port, self.database)
 
 
+class ExecutionResultMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: NonEmptyTrimmedString
+    source_family: NonEmptyTrimmedString
+    source_flavor: Optional[NonEmptyTrimmedString] = None
+    candidate_id: Optional[NonEmptyTrimmedString] = None
+    execution_run_id: Optional[UUID] = None
+    row_count: int
+    row_limit: int
+    payload_bytes: int
+    payload_limit_bytes: int
+    result_truncated: bool
+    truncation_reason: Optional[NonEmptyTrimmedString] = None
+
+
 class ExecutionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     _audit_event: Optional[SourceAwareAuditEvent] = PrivateAttr(default=None)
@@ -90,6 +112,7 @@ class ExecutionResult(BaseModel):
     connector_id: NonEmptyTrimmedString
     ownership: str
     rows: list[dict[str, Any]]
+    metadata: ExecutionResultMetadata
 
     @property
     def audit_event(self) -> Optional[SourceAwareAuditEvent]:
@@ -488,6 +511,9 @@ def _resolve_runtime_controls(
     try:
         timeout_seconds = DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY[selection.source_family]
         max_rows = DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY[selection.source_family]
+        max_payload_bytes = DEFAULT_MAX_PAYLOAD_BYTES_BY_SOURCE_FAMILY[
+            selection.source_family
+        ]
     except KeyError as exc:
         raise ExecutionConnectorSelectionError(
             deny_code=DENY_UNSUPPORTED_SOURCE_BINDING,
@@ -501,6 +527,7 @@ def _resolve_runtime_controls(
         source_family=selection.source_family,
         timeout_seconds=timeout_seconds,
         max_rows=max_rows,
+        max_payload_bytes=max_payload_bytes,
         cancellation_probe=cancellation_probe,
     )
 
@@ -623,10 +650,54 @@ def _cap_rows(
     rows: list[dict[str, Any]],
     *,
     runtime_controls: ExecutionRuntimeControls,
-) -> list[dict[str, Any]]:
-    if len(rows) <= runtime_controls.max_rows:
-        return rows
-    return rows[: runtime_controls.max_rows]
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: ExecutionAuditContext | None,
+) -> tuple[list[dict[str, Any]], ExecutionResultMetadata]:
+    row_limited_rows = rows[: runtime_controls.max_rows]
+    capped_rows: list[dict[str, Any]] = []
+    payload_bytes = _result_payload_size(capped_rows)
+    payload_truncated = False
+
+    for row in row_limited_rows:
+        candidate_rows = [*capped_rows, row]
+        candidate_payload_bytes = _result_payload_size(candidate_rows)
+        if candidate_payload_bytes > runtime_controls.max_payload_bytes:
+            payload_truncated = True
+            break
+        capped_rows = candidate_rows
+        payload_bytes = candidate_payload_bytes
+
+    row_truncated = len(rows) > len(row_limited_rows)
+    truncation_reason: str | None = None
+    if payload_truncated:
+        truncation_reason = "payload_limit"
+    elif row_truncated:
+        truncation_reason = "row_limit"
+
+    return capped_rows, ExecutionResultMetadata(
+        source_id=candidate_source.source_id,
+        source_family=candidate_source.source_family,
+        source_flavor=candidate_source.source_flavor,
+        candidate_id=audit_context.query_candidate_id if audit_context is not None else None,
+        execution_run_id=audit_context.event_id if audit_context is not None else None,
+        row_count=len(capped_rows),
+        row_limit=runtime_controls.max_rows,
+        payload_bytes=payload_bytes,
+        payload_limit_bytes=runtime_controls.max_payload_bytes,
+        result_truncated=truncation_reason is not None,
+        truncation_reason=truncation_reason,
+    )
+
+
+def _result_payload_size(rows: list[dict[str, Any]]) -> int:
+    return len(
+        json.dumps(
+            rows,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
 
 
 def _postgres_identity_from_url(
@@ -799,20 +870,26 @@ def execute_candidate_sql(
             audit_context=audit_context,
         ) from exc
 
-    capped_rows = _cap_rows(rows, runtime_controls=runtime_controls)
+    capped_rows, metadata = _cap_rows(
+        rows,
+        runtime_controls=runtime_controls,
+        candidate_source=candidate.source,
+        audit_context=audit_context,
+    )
 
     result = ExecutionResult(
         source_id=selection.source_id,
         connector_id=selection.connector_id,
         ownership=selection.ownership,
         rows=capped_rows,
+        metadata=metadata,
     )
     result._audit_events = _build_execution_audit_events(
         event_types=["execution_requested", "execution_started", "execution_completed"],
         candidate_source=candidate.source,
         audit_context=audit_context,
-        execution_row_count=len(capped_rows),
-        result_truncated=len(rows) > len(capped_rows),
+        execution_row_count=metadata.row_count,
+        result_truncated=metadata.result_truncated,
     )
     result._audit_event = result._audit_events[-1] if result._audit_events else None
     return result

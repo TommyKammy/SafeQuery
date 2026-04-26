@@ -232,6 +232,41 @@ def test_execute_candidate_sql_caps_rows_to_source_bound_maximum() -> None:
     assert result.rows[-1] == {
         "row_number": DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY["postgresql"] - 1
     }
+    assert result.metadata.row_count == DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY["postgresql"]
+    assert result.metadata.row_limit == DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY["postgresql"]
+    assert result.metadata.result_truncated is True
+    assert result.metadata.truncation_reason == "row_limit"
+
+
+def test_execute_candidate_sql_caps_payload_bytes_to_source_bound_maximum() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    result = execute_candidate_sql(
+        candidate=_candidate(
+            canonical_sql="SELECT vendor_notes FROM finance.approved_vendor_spend",
+            source_id="approved-spend",
+            source_family="postgresql",
+            source_flavor="warehouse",
+        ),
+        selection=_selection(
+            source_id="approved-spend",
+            source_family="postgresql",
+            source_flavor="warehouse",
+            connector_id="postgresql_readonly",
+        ),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
+        query_runner=lambda **_: [
+            {"vendor_notes": "x" * 4096}
+            for _ in range(DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY["postgresql"])
+        ],
+    )
+
+    assert len(result.rows) < DEFAULT_MAX_ROWS_BY_SOURCE_FAMILY["postgresql"]
+    assert result.metadata.row_count == len(result.rows)
+    assert result.metadata.result_truncated is True
+    assert result.metadata.truncation_reason == "payload_limit"
+    assert result.metadata.payload_bytes <= result.metadata.payload_limit_bytes
 
 
 def test_execute_candidate_sql_denies_source_kill_switch_before_runner() -> None:
