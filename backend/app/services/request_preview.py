@@ -631,12 +631,22 @@ def _persist_candidate_approval_record(
 
     if candidate_state != "preview_ready":
         existing.approval_state = "invalidated"
+        existing.approved_sql = None
         existing.invalidated_at = effective_occurred_at
-    elif guard_status in {None, "allow", PREVIEW_PENDING_GUARD_STATUS}:
+    elif guard_status == "allow":
         existing.approval_state = "approved"
         existing.approved_sql = preview_candidate.candidate_sql
         existing.invalidated_at = None
         existing.approval_expires_at = effective_occurred_at + timedelta(minutes=5)
+    elif guard_status in {None, PREVIEW_PENDING_GUARD_STATUS}:
+        existing.approval_state = "pending_guard"
+        existing.approved_sql = None
+        existing.invalidated_at = None
+        existing.approval_expires_at = effective_occurred_at + timedelta(minutes=5)
+    else:
+        existing.approval_state = "invalidated"
+        existing.approved_sql = None
+        existing.invalidated_at = effective_occurred_at
 
 
 def _persist_preview_submission_records(

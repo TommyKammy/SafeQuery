@@ -46,6 +46,7 @@ def _seed_authoritative_source_governance(
     *,
     include_datasets: bool = True,
     source_posture: SourceActivationPosture = SourceActivationPosture.ACTIVE,
+    connection_reference: str = "vault:sap-approved-spend",
 ) -> None:
     source = RegisteredSource(
         id=uuid4(),
@@ -59,7 +60,7 @@ def _seed_authoritative_source_governance(
         dataset_contract_id=None,
         schema_snapshot_id=None,
         execution_policy_id=None,
-        connection_reference="vault:sap-approved-spend",
+        connection_reference=connection_reference,
     )
     session.add(source)
     session.flush()
@@ -230,7 +231,7 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert persisted_approval.session_id == "application-session-redacted"
         assert persisted_approval.execution_policy_version == 3
         assert persisted_approval.approved_sql is None
-        assert persisted_approval.approval_state == "approved"
+        assert persisted_approval.approval_state == "pending_guard"
         assert persisted_approval.approved_at is not None
         assert persisted_approval.approval_expires_at > persisted_approval.approved_at
         assert persisted_approval.executed_at is None
@@ -283,6 +284,10 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
         "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
         "http://sql-generation.example.test",
     )
+    monkeypatch.setenv(
+        "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        "postgresql://safequery_exec:secret@business-postgres-source:5432/business",
+    )
     get_settings.cache_clear()
 
     engine = create_engine(
@@ -310,7 +315,10 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
     client = TestClient(app)
 
     try:
-        _seed_authoritative_source_governance(session)
+        _seed_authoritative_source_governance(
+            session,
+            connection_reference="env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        )
         app_session = create_test_application_session(subject)
 
         response = client.post(
@@ -367,7 +375,25 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
         persisted_approval = session.execute(
             select(PreviewCandidateApproval)
         ).scalar_one()
-        assert persisted_approval.approved_sql == candidate_sql
+        assert persisted_approval.approved_sql is None
+        assert persisted_approval.approval_state == "pending_guard"
+        assert persisted_approval.executed_at is None
+
+        calls: list[str] = []
+        app.state.execution_query_runner = lambda **_: calls.append("called")
+        execute_response = client.post(
+            f"/candidates/{persisted_candidate.candidate_id}/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "sap-approved-spend"},
+        )
+
+        assert execute_response.status_code == 403
+        assert execute_response.json()["error"]["code"] == "execution_denied"
+        assert calls == []
+        session.refresh(persisted_approval)
+        assert persisted_approval.approval_state == "pending_guard"
+        assert persisted_approval.executed_at is None
         assert persisted_candidate.adapter_provider == "local_llm"
         assert persisted_candidate.adapter_model == "safequery-test-sql"
         assert persisted_candidate.adapter_version == "test.local_llm.v1"
