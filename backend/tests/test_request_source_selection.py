@@ -365,6 +365,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             {
                 "source_id": "sap-approved-spend",
                 "state": "pending",
+                "primary_deny_code": None,
+                "denial_reason": None,
             },
         )
 

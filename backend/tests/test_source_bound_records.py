@@ -124,5 +124,7 @@ def test_preview_submission_binds_all_records_to_authoritative_source_id() -> No
         "evaluation": {
             "source_id": "sap-approved-spend",
             "state": "pending",
+            "primary_deny_code": None,
+            "denial_reason": None,
         },
     }
