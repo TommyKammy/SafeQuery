@@ -127,6 +127,7 @@ class SourceAwareAuditEvent(BaseModel):
     retrieved_asset_ids: Optional[list[NonEmptyTrimmedString]] = None
     retrieved_citations: Optional[list[RetrievalCitationAuditPayload]] = None
     executed_evidence: Optional[list[ExecutedEvidenceAuditPayload]] = None
+    release_gate_scenario: Optional[dict[str, object]] = None
     analyst_mode_version: Optional[NonEmptyTrimmedString] = None
 
     source_id: SourceIdentifier

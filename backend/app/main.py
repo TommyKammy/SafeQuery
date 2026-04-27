@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Callable, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -24,7 +24,7 @@ from app.core.errors import (
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.db.models.preview import PreviewCandidate
+from app.db.models.preview import PreviewAuditEvent, PreviewCandidate
 from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
 from app.features.audit import SourceAwareAuditEvent
@@ -296,6 +296,22 @@ def _build_execution_source_binding_denial_audit_event(
         primary_deny_code=DENY_SOURCE_BINDING_MISMATCH,
         denial_cause="source_binding_mismatch",
         candidate_state="denied",
+    )
+
+
+def _latest_guard_audit_event_id(
+    session: Session,
+    *,
+    candidate_id: str,
+) -> UUID | None:
+    return session.scalar(
+        select(PreviewAuditEvent.event_id)
+        .where(
+            PreviewAuditEvent.candidate_id == candidate_id,
+            PreviewAuditEvent.event_type == "guard_evaluated",
+        )
+        .order_by(PreviewAuditEvent.lifecycle_order.desc())
+        .limit(1)
     )
 
 
@@ -631,6 +647,10 @@ def create_app() -> FastAPI:
             query_candidate_id=candidate_id,
             candidate_owner_subject=user_subject,
         )
+        guard_audit_event_id = _latest_guard_audit_event_id(
+            session,
+            candidate_id=candidate_id,
+        )
         try:
             candidate: ExecutableCandidateRecord | None = None
             selection: ExecutionConnectorSelection | None = None
@@ -675,6 +695,7 @@ def create_app() -> FastAPI:
                     session_id=application_session.audit_session_id,
                     query_candidate_id=candidate_id,
                     candidate_owner_subject=user_subject,
+                    guard_audit_event_id=guard_audit_event_id,
                     execution_policy_version=(
                         prepared_candidate.source.execution_policy_version
                     ),
@@ -724,6 +745,7 @@ def create_app() -> FastAPI:
                 session_id=application_session.audit_session_id,
                 query_candidate_id=candidate_id,
                 candidate_owner_subject=user_subject,
+                guard_audit_event_id=guard_audit_event_id,
                 execution_policy_version=candidate.source.execution_policy_version,
                 connector_profile_version=candidate.source.connector_profile_version,
             )

@@ -17,6 +17,9 @@ from app.features.audit.event_model import (
     ExecutedEvidenceAuditPayload,
     SourceAwareAuditEvent,
 )
+from app.features.evaluation.scenario_metadata import (
+    build_release_gate_scenario_metadata,
+)
 from app.features.execution.connector_selection import (
     ExecutionConnectorSelection,
     ExecutionConnectorSelectionError,
@@ -172,6 +175,7 @@ class ExecutionAuditContext(BaseModel):
     session_id: str
     query_candidate_id: Optional[str] = None
     candidate_owner_subject: Optional[str] = None
+    guard_audit_event_id: Optional[UUID] = None
     execution_policy_version: Optional[int] = None
     connector_profile_version: Optional[int] = None
 
@@ -315,6 +319,7 @@ def _build_execution_audit_event(
     event_type: str,
     candidate_source: SourceBoundCandidateMetadata,
     audit_context: ExecutionAuditContext | None,
+    canonical_sql: str | None = None,
     primary_deny_code: str | None = None,
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
@@ -323,7 +328,7 @@ def _build_execution_audit_event(
     if audit_context is None:
         return None
 
-    return SourceAwareAuditEvent(
+    event = SourceAwareAuditEvent(
         event_id=(
             audit_context.event_id
             if event_type in {"execution_completed", "execution_denied"}
@@ -364,6 +369,38 @@ def _build_execution_audit_event(
         execution_row_count=execution_row_count,
         result_truncated=result_truncated,
     )
+    if canonical_sql is not None and event_type in {
+        "execution_completed",
+        "execution_denied",
+    }:
+        guard_decision = "allow" if primary_deny_code is None else "reject"
+        metadata = build_release_gate_scenario_metadata(
+            source_id=candidate_source.source_id,
+            source_family=candidate_source.source_family,
+            source_flavor=candidate_source.source_flavor,
+            dataset_contract_version=candidate_source.dataset_contract_version,
+            schema_snapshot_version=candidate_source.schema_snapshot_version,
+            execution_policy_version=(
+                audit_context.execution_policy_version
+                or candidate_source.execution_policy_version
+            ),
+            connector_profile_version=(
+                audit_context.connector_profile_version
+                or candidate_source.connector_profile_version
+            ),
+            canonical_sql=canonical_sql,
+            candidate_id=audit_context.query_candidate_id,
+            guard_decision=guard_decision,
+            guard_audit_event_id=audit_context.guard_audit_event_id,
+            execution_run_id=event.event_id,
+            execution_audit_event_id=event.event_id,
+        )
+        if metadata is not None:
+            event.release_gate_scenario = metadata.model_dump(
+                mode="json",
+                exclude_none=True,
+            )
+    return event
 
 
 def _build_execution_audit_events(
@@ -371,6 +408,7 @@ def _build_execution_audit_events(
     event_types: list[str],
     candidate_source: SourceBoundCandidateMetadata,
     audit_context: ExecutionAuditContext | None,
+    canonical_sql: str | None = None,
     primary_deny_code: str | None = None,
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
@@ -386,6 +424,7 @@ def _build_execution_audit_events(
             event_type=event_type,
             candidate_source=candidate_source,
             audit_context=audit_context,
+            canonical_sql=canonical_sql,
             primary_deny_code=(
                 primary_deny_code
                 if event_type
@@ -427,6 +466,7 @@ def _attach_execution_denial_audit_event(
             event_types=["execution_requested", "execution_denied"],
             candidate_source=candidate_source,
             audit_context=audit_context,
+            canonical_sql=None,
             primary_deny_code=error.deny_code,
         ),
     )
@@ -446,6 +486,7 @@ def _attach_cancellation_audit_event(
             event_types=["execution_requested", "execution_failed"],
             candidate_source=candidate_source,
             audit_context=audit_context,
+            canonical_sql=None,
             candidate_state="canceled",
         ),
     )
@@ -469,6 +510,7 @@ def _attach_runtime_failure_audit_event(
             ],
             candidate_source=candidate_source,
             audit_context=audit_context,
+            canonical_sql=None,
             candidate_state="failed",
         ),
     )
@@ -994,6 +1036,7 @@ def execute_candidate_sql(
         event_types=["execution_requested", "execution_started", "execution_completed"],
         candidate_source=candidate.source,
         audit_context=audit_context,
+        canonical_sql=candidate.canonical_sql,
         execution_row_count=metadata.row_count,
         result_truncated=metadata.result_truncated,
     )

@@ -22,6 +22,9 @@ from app.db.models.source_registry import RegisteredSource
 from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.auth.context import AuthenticatedSubject
 from app.features.auth.governance_bindings import normalize_governance_binding
+from app.features.evaluation.scenario_metadata import (
+    build_release_gate_scenario_metadata,
+)
 from app.features.guard import (
     SQLGuardEvaluation,
     evaluate_mssql_sql_guard,
@@ -369,6 +372,30 @@ def _build_preview_lifecycle_audit_events(
                 else None
             ),
         )
+        if event_type == "guard_evaluated" and guard_evaluation is not None:
+            execution_policy_version = (
+                CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
+                    resolved_source.source_family
+                )
+            )
+            metadata = build_release_gate_scenario_metadata(
+                source_id=resolved_source.source_id,
+                source_family=resolved_source.source_family,
+                source_flavor=resolved_source.source_flavor,
+                dataset_contract_version=dataset_contract.contract_version,
+                schema_snapshot_version=schema_snapshot.snapshot_version,
+                execution_policy_version=execution_policy_version,
+                connector_profile_version=None,
+                canonical_sql=guard_evaluation.canonical_sql,
+                candidate_id=audit_context.query_candidate_id,
+                guard_decision=guard_evaluation.decision,
+                guard_audit_event_id=event.event_id,
+            )
+            if metadata is not None:
+                event.release_gate_scenario = metadata.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                )
         causation_event_id = event.event_id
         events.append(event)
 

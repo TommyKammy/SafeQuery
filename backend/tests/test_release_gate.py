@@ -98,6 +98,54 @@ def test_release_gate_passes_when_authoritative_records_match_harness() -> None:
     assert decision.failures == ()
 
 
+def test_release_gate_accepts_scenario_id_from_shared_audit_metadata() -> None:
+    scenario = list_postgresql_evaluation_scenarios()[0]
+    event_id = uuid4()
+    audit_artifact = {
+        "event": {
+            "event_id": event_id,
+            "event_type": "execution_completed",
+            "occurred_at": datetime.now(timezone.utc),
+            "request_id": f"request-{scenario.scenario_id}",
+            "correlation_id": f"correlation-{scenario.scenario_id}",
+            "user_subject": "user:release-gate",
+            "session_id": "session-release-gate",
+            "source_id": scenario.source.source_id,
+            "source_family": scenario.source.source_family,
+            "source_flavor": scenario.source.source_flavor,
+            "dialect_profile_version": scenario.source.dialect_profile_version,
+            "dataset_contract_version": scenario.source.dataset_contract_version,
+            "schema_snapshot_version": scenario.source.schema_snapshot_version,
+            "execution_policy_version": scenario.source.execution_policy_version,
+            "connector_profile_version": scenario.source.connector_profile_version,
+            "release_gate_scenario": {
+                "scenario_id": scenario.scenario_id,
+                "source_id": scenario.source.source_id,
+                "candidate_id": "candidate-release-gate",
+                "guard_decision": "allow",
+                "guard_audit_event_id": str(uuid4()),
+                "execution_run_id": str(event_id),
+                "execution_audit_event_id": str(event_id),
+            },
+        },
+    }
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=_observed_records_from_harness(),
+        audit_artifacts=(
+            audit_artifact,
+            *(
+                artifact
+                for artifact in _audit_artifacts_from_harness()
+                if artifact["scenario_id"] != scenario.scenario_id
+            ),
+        ),
+    )
+
+    assert decision.status == "pass"
+    assert decision.failure_count == 0
+
+
 def test_release_gate_fails_closed_when_evaluations_have_no_audit_artifacts() -> None:
     decision = reconstruct_release_gate(observed_artifacts=_observed_records_from_harness())
 

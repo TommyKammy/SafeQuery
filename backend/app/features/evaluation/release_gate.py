@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Iterable as TypingIterable, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.evaluation.comparison import (
@@ -51,6 +51,28 @@ class ReleaseGateAuditArtifact(BaseModel):
 
     scenario_id: str
     event: SourceAwareAuditEvent
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hydrate_scenario_id_from_event_metadata(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping) or value.get("scenario_id") is not None:
+            return value
+
+        event = value.get("event")
+        release_gate_scenario = None
+        if isinstance(event, SourceAwareAuditEvent):
+            release_gate_scenario = event.release_gate_scenario
+        elif isinstance(event, Mapping):
+            release_gate_scenario = event.get("release_gate_scenario")
+
+        if not isinstance(release_gate_scenario, Mapping):
+            return value
+
+        scenario_id = release_gate_scenario.get("scenario_id")
+        if not isinstance(scenario_id, str) or not scenario_id.strip():
+            return value
+
+        return {**value, "scenario_id": scenario_id}
 
 
 class ReleaseGateDecision(BaseModel):
