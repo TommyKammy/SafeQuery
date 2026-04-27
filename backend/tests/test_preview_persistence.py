@@ -281,7 +281,7 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         get_settings.cache_clear()
 
 
-def test_http_preview_submission_persists_adapter_generated_candidate(
+def test_http_preview_allow_path_creates_approved_candidate_and_executes(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv(
@@ -495,7 +495,7 @@ def test_guard_denial_reason_sanitizer_keeps_truncation_within_cap() -> None:
     assert sanitized.endswith("...")
 
 
-def test_http_preview_submission_blocks_guard_rejected_adapter_sql(
+def test_http_preview_guard_denied_candidate_remains_non_executable(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv(
@@ -634,7 +634,17 @@ def test_http_preview_submission_blocks_guard_rejected_adapter_sql(
         )
 
         assert execute_response.status_code == 403
-        assert execute_response.json()["error"]["code"] == "execution_denied"
+        execute_payload = execute_response.json()
+        assert execute_payload["error"] == {
+            "code": "execution_denied",
+            "message": "Candidate execution was denied.",
+        }
+        assert len(execute_payload["audit"]["events"]) == 1
+        denial_event = execute_payload["audit"]["events"][0]
+        assert denial_event["event_type"] == "execution_denied"
+        assert denial_event["primary_deny_code"] == "DENY_CANDIDATE_NOT_APPROVED"
+        assert denial_event["denial_cause"] == "candidate_not_approved"
+        assert "DELETE FROM" not in str(execute_payload)
         assert calls == []
     finally:
         session.close()

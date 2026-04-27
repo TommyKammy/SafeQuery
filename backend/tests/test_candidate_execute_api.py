@@ -32,6 +32,8 @@ from app.services.candidate_lifecycle import (
 
 
 class CandidateExecuteApiTestCase(unittest.TestCase):
+    """Lower-level execute revalidation tests seed approved candidates directly."""
+
     def setUp(self) -> None:
         self._previous_env = {
             name: os.environ.get(name)
