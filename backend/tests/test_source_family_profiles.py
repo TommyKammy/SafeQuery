@@ -17,6 +17,7 @@ from app.services.source_family_profiles import (
     MARIADB_FAMILY_PROFILE_REQUIREMENTS,
     MYSQL_FAMILY_PROFILE_REQUIREMENTS,
     ORACLE_FAMILY_PROFILE_REQUIREMENTS,
+    get_active_source_runtime_posture_requirements,
     get_planned_source_flavor_profile_requirements,
     get_planned_source_family_profile_requirements,
 )
@@ -83,6 +84,41 @@ def test_future_family_activation_checklist_requires_authoritative_coverage() ->
             "safequery_evaluation_outcomes",
             "safequery_source_aware_audit_events",
         }.issubset(audit_and_evaluation.authoritative_release_gate_artifacts)
+
+
+def test_active_source_runtime_posture_is_explicit_for_timeout_retry_and_pooling() -> None:
+    for source_family in ACTIVE_SOURCE_FAMILIES:
+        posture = get_active_source_runtime_posture_requirements(source_family)
+
+        assert posture is not None
+        assert posture.source_family == source_family
+        assert posture.rollout_status == "active_baseline"
+        assert posture.preview_timeout_seconds == DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY[
+            source_family
+        ]
+        assert posture.guard_timeout_seconds == DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY[
+            source_family
+        ]
+        assert posture.execute_timeout_seconds == DEFAULT_TIMEOUT_SECONDS_BY_SOURCE_FAMILY[
+            source_family
+        ]
+        assert posture.retryable_unavailable_states == (
+            "connection_timeout",
+            "source_unreachable",
+            "transient_driver_unavailable",
+        )
+        assert posture.non_retryable_workflow_states == (
+            "malformed_request",
+            "policy_denied",
+            "source_binding_mismatch",
+            "unsupported_source_binding",
+            "guard_denied",
+        )
+        assert posture.pool_boundary == "per_registered_source"
+        assert posture.pool_sharing == "no_cross_source_or_application_postgres_reuse"
+        assert posture.pool_owner == "backend"
+        assert posture.retry_attempts == 1
+        assert posture.retry_backoff == "none_inside_authoritative_execution_boundary"
 
 
 def test_mysql_family_requirements_are_planned_and_backend_selected() -> None:

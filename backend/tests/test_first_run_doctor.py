@@ -64,6 +64,33 @@ def _ready_surface_probes() -> dict[str, object]:
     }
 
 
+def _expected_runtime_posture(source_family: str) -> dict[str, object]:
+    return {
+        "source_family": source_family,
+        "rollout_status": "active_baseline",
+        "preview_timeout_seconds": 30,
+        "guard_timeout_seconds": 30,
+        "execute_timeout_seconds": 30,
+        "retryable_unavailable_states": [
+            "connection_timeout",
+            "source_unreachable",
+            "transient_driver_unavailable",
+        ],
+        "non_retryable_workflow_states": [
+            "malformed_request",
+            "policy_denied",
+            "source_binding_mismatch",
+            "unsupported_source_binding",
+            "guard_denied",
+        ],
+        "retry_attempts": 1,
+        "retry_backoff": "none_inside_authoritative_execution_boundary",
+        "pool_boundary": "per_registered_source",
+        "pool_sharing": "no_cross_source_or_application_postgres_reuse",
+        "pool_owner": "backend",
+    }
+
+
 def test_http_probe_rejects_non_http_schemes_before_urlopen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -159,6 +186,7 @@ def test_first_run_doctor_passes_after_demo_seed() -> None:
         "source_flavor": "warehouse",
         "connector_id": "postgresql_readonly",
         "ownership": "backend",
+        "runtime_posture": _expected_runtime_posture("postgresql"),
         "runtime_status": "available",
         "runtime": {"dict_row": "available", "psycopg": "available"},
     }
@@ -434,6 +462,7 @@ def test_first_run_doctor_fails_closed_when_postgresql_driver_runtime_is_missing
         "ownership": "backend",
         "runtime_status": "unavailable",
         "error": "PostgreSQLExecutionRuntimeUnavailable",
+        "runtime_posture": _expected_runtime_posture("postgresql"),
         "runtime_dependency": "psycopg",
     }
 
@@ -478,6 +507,7 @@ def test_first_run_doctor_fails_closed_when_mssql_driver_runtime_is_missing(
             "ownership": "backend",
             "runtime_status": "unavailable",
             "error": "MSSQLExecutionRuntimeUnavailable",
+            "runtime_posture": _expected_runtime_posture("mssql"),
             "runtime_dependency": "pyodbc/odbc-driver-18",
         },
     }
