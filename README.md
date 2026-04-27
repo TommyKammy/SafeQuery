@@ -52,6 +52,9 @@ For limited pilot operations after first-run setup, use
 classify normal, degraded, maintenance, incident, and recovery posture. Keep
 SafeQuery control-plane records authoritative over UI summaries, LLM output,
 adapter output, MLflow, Search, Analyst, and external evidence.
+Use [docs/pilot-deployment-profile.md](./docs/pilot-deployment-profile.md) to
+classify required, optional, and forbidden environment values before treating a
+local first-run stack as pilot evidence.
 
 Known product-readiness gaps remain for later Epic K/O/P work:
 
@@ -184,6 +187,9 @@ connector binding are missing. The CLI doctor also probes
 `SAFEQUERY_BACKEND_BASE_URL` `/health` and `SAFEQUERY_FRONTEND_BASE_URL`;
 unreachable or unhealthy surfaces are reported as failures instead of
 first-run-ready passes.
+For the required, optional, and forbidden environment-value contract that frames
+these checks, see
+[docs/pilot-deployment-profile.md](./docs/pilot-deployment-profile.md).
 
 6. Confirm the live operator workflow contract exposes an active source selector
    option:
@@ -287,8 +293,8 @@ hostname:
 ```bash
 python3 -m pip install -e backend
 cd backend
-SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic upgrade head
-SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic current
+SAFEQUERY_APP_POSTGRES_URL="<reachable-app-postgres-url>" alembic upgrade head
+SAFEQUERY_APP_POSTGRES_URL="<reachable-app-postgres-url>" alembic current
 ```
 
 Source-foundation smoke verification:

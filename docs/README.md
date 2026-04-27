@@ -35,6 +35,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 - [01_READING_ORDER.md](./01_READING_ORDER.md): recommended reading sequence for engineers and reviewers
 - [README.md](../README.md): repository-level startup and baseline orientation that points contributors back to the reviewed docs set
 - [local-development.md](./local-development.md): contributor startup path for env setup, compose startup, migrations, and baseline troubleshooting
+- [pilot-deployment-profile.md](./pilot-deployment-profile.md): local/pilot profile and environment contract for required, optional, and forbidden values
 
 ### Normative Baseline
 
@@ -70,6 +71,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 - [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md): governed semantic retrieval and analyst-style orchestration in the current source-aware baseline
 - [design/evaluation-harness.md](./design/evaluation-harness.md): evaluation goals, datasets, and scoring for the current baseline
 - [pilot-safety-verification-checklist.md](./pilot-safety-verification-checklist.md): pilot-readiness verification checklist for the completed 2-source core path
+- [pilot-deployment-profile.md](./pilot-deployment-profile.md): pilot deployment assumptions and environment contract for safe local/pilot operation
 - [pilot-operations-runbook.md](./pilot-operations-runbook.md): operator runbook and incident state taxonomy for normal, degraded, maintenance, incident, and recovery pilot states
 - [security/threat-model.md](./security/threat-model.md): threat model and residual risk summary for the current source-aware and UX-foundation baseline
 

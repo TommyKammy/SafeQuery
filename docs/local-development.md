@@ -32,6 +32,9 @@ For limited pilot operations after first-run setup, use
 degraded, maintenance, incident, and recovery posture. The runbook keeps
 SafeQuery control-plane records authoritative over UI summaries, LLM output,
 adapter output, MLflow, Search, Analyst, and external evidence.
+Use [pilot-deployment-profile.md](./pilot-deployment-profile.md) to classify
+required, optional, and forbidden environment values before promoting a local
+first-run stack into a pilot window.
 
 ## Current Baseline
 
@@ -119,6 +122,11 @@ The full stack expects a repository-level `.env` file:
 ```bash
 cp .env.example .env
 ```
+
+For the pilot environment contract, including required, optional, and forbidden
+values, use [pilot-deployment-profile.md](./pilot-deployment-profile.md).
+Missing required values should fail closed, and raw secrets must not be placed
+in frontend/public values, audit exports, or support bundles.
 
 That file provides the baseline values for:
 
@@ -345,8 +353,8 @@ Example host-shell path:
 ```bash
 python3 -m pip install -e backend
 cd backend
-SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic upgrade head
-SAFEQUERY_APP_POSTGRES_URL="postgresql://safequery:change-me-for-shared-environments@127.0.0.1:5432/safequery" alembic current
+SAFEQUERY_APP_POSTGRES_URL="<reachable-app-postgres-url>" alembic upgrade head
+SAFEQUERY_APP_POSTGRES_URL="<reachable-app-postgres-url>" alembic current
 ```
 
 ## 6. Optional Host-Shell Component Checks
