@@ -701,6 +701,8 @@ def test_support_bundle_endpoint_returns_secret_safe_json(monkeypatch) -> None:
         "SAFEQUERY_APP_POSTGRES_URL",
         "postgresql://safequery:app-secret@db:5432/safequery",
     )
+    monkeypatch.setenv("SAFEQUERY_ENVIRONMENT", "development")
+    monkeypatch.setenv("SAFEQUERY_DEV_AUTH_ENABLED", "true")
     monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
     get_settings.cache_clear()
     main_module = importlib.import_module("app.main")

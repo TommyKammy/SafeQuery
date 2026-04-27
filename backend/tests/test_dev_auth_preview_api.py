@@ -236,6 +236,53 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
             },
         )
 
+    def test_missing_csrf_blocks_preview_http_request_with_valid_session(self) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        response = self._client().post(
+            "/requests/preview",
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": DEMO_SOURCE_ID,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "csrf_failed",
+                    "message": "Refresh the page before submitting preview requests.",
+                }
+            },
+        )
+
+    def test_missing_csrf_blocks_execute_http_request_with_valid_session(self) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+
+        response = self._client().post(
+            "/candidates/candidate-not-reached/execute",
+            cookies=app_session.cookies,
+            json={},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "csrf_failed",
+                    "message": "Refresh the page before submitting preview requests.",
+                }
+            },
+        )
+
     def test_mismatched_session_subject_blocks_preview_http_request(self) -> None:
         os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
         os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
@@ -359,6 +406,40 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
                 "source_id": DEMO_SOURCE_ID,
             },
         )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "unauthenticated",
+                    "message": "Sign in before submitting preview requests.",
+                }
+            },
+        )
+
+    def test_production_default_dev_auth_blocks_operator_workflow_http_request(
+        self,
+    ) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "production"
+
+        response = self._client().get("/operator/workflow")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "unauthenticated",
+                    "message": "Sign in before submitting preview requests.",
+                }
+            },
+        )
+
+    def test_production_default_dev_auth_blocks_support_bundle_http_request(self) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "production"
+
+        response = self._client().get("/support/bundle")
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(
