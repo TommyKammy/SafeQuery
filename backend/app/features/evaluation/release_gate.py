@@ -297,6 +297,41 @@ def _audit_mismatches_for_scenario(
     expected_event_type: str,
     expected_primary_code: str | None,
 ) -> tuple[str, ...]:
+    mismatches: list[str] = []
+    release_gate_scenario = event.release_gate_scenario
+    if release_gate_scenario is None:
+        mismatches.append("release_gate_scenario")
+    else:
+        scenario_expected_values = {
+            "release_gate_scenario.scenario_id": scenario.scenario_id,
+            "release_gate_scenario.source_id": scenario.source.source_id,
+            "release_gate_scenario.guard_decision": scenario.expected.decision,
+        }
+        mismatches.extend(
+            field
+            for field, expected in scenario_expected_values.items()
+            if getattr(
+                release_gate_scenario,
+                field.removeprefix("release_gate_scenario."),
+            )
+            != expected
+        )
+        if (
+            event.query_candidate_id is not None
+            and release_gate_scenario.candidate_id != event.query_candidate_id
+        ):
+            mismatches.append("release_gate_scenario.candidate_id")
+        if (
+            expected_event_type == "guard_evaluated"
+            and release_gate_scenario.guard_audit_event_id != event.event_id
+        ):
+            mismatches.append("release_gate_scenario.guard_audit_event_id")
+        if expected_event_type in {"execution_completed", "execution_denied"}:
+            if release_gate_scenario.execution_run_id != event.event_id:
+                mismatches.append("release_gate_scenario.execution_run_id")
+            if release_gate_scenario.execution_audit_event_id != event.event_id:
+                mismatches.append("release_gate_scenario.execution_audit_event_id")
+
     expected_values = {
         "event_type": expected_event_type,
         "source_id": scenario.source.source_id,
@@ -309,11 +344,12 @@ def _audit_mismatches_for_scenario(
         "connector_profile_version": scenario.source.connector_profile_version,
         "primary_deny_code": expected_primary_code,
     }
-    return tuple(
+    mismatches.extend(
         field
         for field, expected in expected_values.items()
         if getattr(event, field) != expected
     )
+    return tuple(mismatches)
 
 
 def _failures_for_row(row: EvaluationComparisonRow) -> tuple[ReleaseGateFailure, ...]:
