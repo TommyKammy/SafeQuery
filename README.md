@@ -322,11 +322,23 @@ Pilot safety UI/API smoke verification:
 bash tests/smoke/test-pilot-safety-ui-api-workflow.sh
 ```
 
-This smoke is the single command-backed pilot path for the local unit-contract
-layer. It runs the checklist guard, a focused frontend workflow smoke, and
-backend preview, denial, cancellation, execute, and audit-history tests. It
-does not start Docker; use the compose-backed smokes below when containerized
-source dependencies also need verification.
+This aggregate smoke is the single command-backed pilot path for the local
+unit-contract layer. It runs the checklist guard, then delegates to focused
+smokes whose names identify the failed pilot-critical surface:
+
+```bash
+bash tests/smoke/test-pilot-safety-ui-workflow.sh
+bash tests/smoke/test-pilot-safety-api-preview.sh
+bash tests/smoke/test-pilot-safety-api-execute.sh
+```
+
+The UI smoke verifies source selection, source-bound preview, execution
+posture, result, and audit surfaces without placeholder SQL or placeholder
+result rows. The API preview smoke verifies preview persistence, source
+entitlement denial, and guard audit behavior separately from the API execute
+smoke, which verifies candidate-only execute, result inspection, cancellation,
+and audit history. These smokes do not start Docker; use the compose-backed
+smokes below when containerized source dependencies also need verification.
 
 Compose-backed real source execution smoke verification:
 

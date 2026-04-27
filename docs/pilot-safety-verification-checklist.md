@@ -115,6 +115,9 @@ Run these focused checks from the repository root unless a command changes into
 `backend`.
 
 ```bash
+bash tests/smoke/test-pilot-safety-ui-workflow.sh
+bash tests/smoke/test-pilot-safety-api-preview.sh
+bash tests/smoke/test-pilot-safety-api-execute.sh
 bash tests/smoke/test-pilot-safety-ui-api-workflow.sh
 bash tests/smoke/test-pilot-safety-checklist.sh
 bash tests/smoke/test-local-topology-roles.sh
@@ -167,12 +170,24 @@ Inspection points:
 - `tests/smoke/test-compose-operator-workflow-source-selector.sh` still proves
   the compose-backed first-run path migrates, seeds demo governance data, passes
   the first-run doctor, and exposes a non-empty active source selector.
-- `tests/smoke/test-pilot-safety-ui-api-workflow.sh` still proves the pilot
-  workflow through source selection, preview, guard, execute, result, and audit
-  inspection by combining the focused UI smoke with backend preview,
-  entitlement-denial, execution-denial, cancellation, and audit-history tests.
-  It fails if placeholder SQL or placeholder result rows return to the product
-  workflow surface.
+- `tests/smoke/test-pilot-safety-ui-workflow.sh` still proves source selection,
+  source-bound preview, execution posture, result, and audit surfaces. It fails
+  if placeholder SQL or placeholder result rows return to the product workflow
+  surface.
+- `tests/smoke/test-pilot-safety-api-preview.sh` still proves preview
+  persistence, source entitlement denial, and guard audit contract behavior.
+- `tests/smoke/test-pilot-safety-api-execute.sh` still proves candidate-only
+  execute, result inspection, cancellation, and audit history contract behavior.
+- `tests/smoke/test-pilot-safety-ui-api-workflow.sh` still proves the full
+  local unit-contract pilot workflow through source selection, preview, guard,
+  execute, result, and audit inspection by combining the focused UI and API
+  smokes.
+- Together, the split smokes identify the failed pilot-critical path for source selection, preview, guard, execute, result, and audit diagnosis.
+- The aggregate smoke preserves full-path inspection by combining the focused UI and API smokes.
+- API preview smoke label: preview persistence, source entitlement denial, and guard audit contract.
+- API preview smoke still covers entitlement-denial.
+- API execute smoke label: candidate-only execute, result inspection, cancellation, and audit history contract.
+- API execute smoke still covers execution-denial.
 - `backend/tests/test_source_bound_execute_path.py`,
   `backend/tests/test_execution_runtime_controls.py`,
   `backend/tests/test_mssql_execution_connector.py`, and
