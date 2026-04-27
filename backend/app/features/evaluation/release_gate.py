@@ -316,10 +316,9 @@ def _audit_mismatches_for_scenario(
             )
             != expected
         )
-        if (
-            event.query_candidate_id is not None
-            and release_gate_scenario.candidate_id != event.query_candidate_id
-        ):
+        if event.query_candidate_id is None:
+            mismatches.append("query_candidate_id")
+        elif release_gate_scenario.candidate_id != event.query_candidate_id:
             mismatches.append("release_gate_scenario.candidate_id")
         if (
             expected_event_type == "guard_evaluated"
@@ -327,8 +326,6 @@ def _audit_mismatches_for_scenario(
         ):
             mismatches.append("release_gate_scenario.guard_audit_event_id")
         if expected_event_type in {"execution_completed", "execution_denied"}:
-            if release_gate_scenario.execution_run_id != event.event_id:
-                mismatches.append("release_gate_scenario.execution_run_id")
             if release_gate_scenario.execution_audit_event_id != event.event_id:
                 mismatches.append("release_gate_scenario.execution_audit_event_id")
 

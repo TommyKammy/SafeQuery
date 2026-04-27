@@ -381,6 +381,59 @@ def test_release_gate_fails_closed_when_execute_audit_linkage_is_missing() -> No
     assert "release_gate_scenario.execution_audit_event_id" in decision.failures[0].detail
 
 
+def test_release_gate_fails_closed_when_query_candidate_linkage_is_missing() -> None:
+    audit_artifacts = list(_audit_artifacts_from_harness())
+    target_index = next(
+        index
+        for index, artifact in enumerate(audit_artifacts)
+        if artifact["scenario_id"] == "postgresql-positive-approved-vendor-count-by-region"
+    )
+    event = dict(audit_artifacts[target_index]["event"])
+    event.pop("query_candidate_id")
+    audit_artifacts[target_index] = {
+        **audit_artifacts[target_index],
+        "event": event,
+    }
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=_observed_records_from_harness(),
+        audit_artifacts=tuple(audit_artifacts),
+    )
+
+    assert decision.status == "fail"
+    assert decision.failure_count == 1
+    assert decision.failures[0].deny_code == "DENY_STALE_AUDIT_COVERAGE"
+    assert decision.failures[0].source_id == "business-postgres-source"
+    assert decision.failures[0].source_family == "postgresql"
+    assert decision.failures[0].scenario_id == "postgresql-positive-approved-vendor-count-by-region"
+    assert "query_candidate_id" in decision.failures[0].detail
+
+
+def test_release_gate_accepts_execution_run_id_distinct_from_audit_event_id() -> None:
+    audit_artifacts = list(_audit_artifacts_from_harness())
+    target_index = next(
+        index
+        for index, artifact in enumerate(audit_artifacts)
+        if artifact["scenario_id"] == "mssql-positive-approved-vendor-spend-top-vendors"
+    )
+    event = dict(audit_artifacts[target_index]["event"])
+    release_gate_scenario = dict(event["release_gate_scenario"])
+    release_gate_scenario["execution_run_id"] = str(uuid4())
+    event["release_gate_scenario"] = release_gate_scenario
+    audit_artifacts[target_index] = {
+        **audit_artifacts[target_index],
+        "event": event,
+    }
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=_observed_records_from_harness(),
+        audit_artifacts=tuple(audit_artifacts),
+    )
+
+    assert decision.status == "pass"
+    assert decision.failure_count == 0
+
+
 def test_release_gate_fails_closed_for_safety_regression() -> None:
     mutated_records = list(_observed_records_from_harness())
     target_index = next(
