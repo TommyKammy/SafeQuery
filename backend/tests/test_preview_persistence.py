@@ -74,6 +74,8 @@ def _load_preview_to_execute_golden_fixture(name: str) -> dict[str, object]:
         "execution_run_id",
         "execution_audit_event_id",
     ]
+    for fixture in fixture_set["fixtures"]:
+        assert "scenario_id" in fixture["authoritative_fields"]
     fixtures = {
         fixture["name"]: fixture for fixture in fixture_set["fixtures"]
     }
@@ -916,25 +918,26 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
         assert denial_event["primary_deny_code"] == "DENY_CANDIDATE_NOT_APPROVED"
         assert denial_event["denial_cause"] == "candidate_not_approved"
         assert calls == []
-        persisted_execution_events = (
+        persisted_post_execute_events = (
             session.execute(
-                select(PreviewAuditEvent)
-                .where(PreviewAuditEvent.event_type.like("execution_%"))
-                .order_by(PreviewAuditEvent.lifecycle_order)
+                select(PreviewAuditEvent).order_by(PreviewAuditEvent.lifecycle_order)
             )
             .scalars()
             .all()
         )
-        assert [event.event_type for event in persisted_execution_events] == (
+        persisted_post_execute_events = persisted_post_execute_events[
+            len(persisted_preview_events) :
+        ]
+        assert [event.event_type for event in persisted_post_execute_events] == (
             fixture["expected_execution_events"]
         )
         assert all(
             event.candidate_id == persisted_candidate.candidate_id
-            for event in persisted_execution_events
+            for event in persisted_post_execute_events
         )
         assert all(
             event.source_id == fixture["source_id"]
-            for event in persisted_execution_events
+            for event in persisted_post_execute_events
         )
         assert "execution_run_id" not in str(
             persisted_guard_event.audit_payload["release_gate_scenario"]
