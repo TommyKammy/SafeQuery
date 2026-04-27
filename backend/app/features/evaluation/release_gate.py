@@ -22,6 +22,7 @@ from app.features.evaluation.harness import (
 
 
 ReleaseGateStatus = Literal["pass", "fail"]
+AuditEvidenceStatus = Literal["matched", "missing", "stale", "not_evaluated"]
 ScenarioArtifact = Union[MSSQLEvaluationScenario, PostgreSQLEvaluationScenario]
 
 _SOURCE_REQUIRED_FIELDS = {
@@ -104,6 +105,32 @@ class ReleaseGateAuditArtifact(BaseModel):
         )
 
 
+class ReleaseGateDiffScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_id: Optional[str] = None
+    source_id: Optional[str] = None
+    source_family: Optional[str] = None
+    scenario_category: Optional[str] = None
+    expected_decision: Optional[Literal["allow", "reject"]] = None
+    actual_decision: Optional[Literal["allow", "reject"]] = None
+    audit_evidence_status: AuditEvidenceStatus
+    changed_fields: tuple[str, ...] = ()
+    deny_codes: tuple[str, ...]
+    detail: str
+
+
+class ReleaseGateDiffArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_version: Literal["release_gate_v2_evaluation_diff"] = (
+        "release_gate_v2_evaluation_diff"
+    )
+    status: ReleaseGateStatus
+    failure_count: int
+    scenarios: tuple[ReleaseGateDiffScenario, ...]
+
+
 class ReleaseGateDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -111,6 +138,7 @@ class ReleaseGateDecision(BaseModel):
     evaluated_scenario_count: int
     failure_count: int
     failures: tuple[ReleaseGateFailure, ...]
+    diff_artifact: ReleaseGateDiffArtifact
 
 
 def reconstruct_release_gate(
@@ -143,35 +171,195 @@ def reconstruct_release_gate(
             failures.append(_audit_validation_failure_for(artifact=artifact, error=exc))
 
     if failures:
-        return ReleaseGateDecision(
+        return _decision(
             status="fail",
             evaluated_scenario_count=len(normalized_records),
-            failure_count=len(failures),
             failures=tuple(failures),
+            diff_scenarios=_diff_scenarios_for_validation_failures(failures),
         )
 
     comparison = compare_evaluation_outcomes(
         baseline=_baseline_records_from_harness(),
         candidate=tuple(normalized_records),
     )
-    failures = [failure for row in comparison for failure in _failures_for_row(row)]
-    failures.extend(
-        _audit_failures_for_scenario(
-            scenario=scenario,
-            audit_artifacts=tuple(normalized_audit_artifacts),
+    row_failures = [
+        failure for row in comparison for failure in _failures_for_row(row)
+    ]
+    audit_results = [
+        (
+            scenario,
+            _audit_failures_for_scenario(
+                scenario=scenario,
+                audit_artifacts=tuple(normalized_audit_artifacts),
+            ),
         )
         for scenario in (
             list_mssql_evaluation_scenarios() + list_postgresql_evaluation_scenarios()
         )
-    )
-    failures = [failure for failure in failures if failure is not None]
+    ]
+    audit_failures = [
+        failure for _, failure in audit_results if failure is not None
+    ]
+    failures = [*row_failures, *audit_failures]
+    audit_status_by_identity = {
+        (scenario.source.source_id, scenario.scenario_id): _audit_status_for_failure(
+            audit_failure
+        )
+        for scenario, audit_failure in audit_results
+    }
 
-    return ReleaseGateDecision(
+    return _decision(
         status="pass" if not failures else "fail",
         evaluated_scenario_count=len(comparison),
-        failure_count=len(failures),
         failures=tuple(failures),
+        diff_scenarios=_diff_scenarios_from_comparison(
+            comparison=comparison,
+            failures=tuple(failures),
+            audit_status_by_identity=audit_status_by_identity,
+        ),
     )
+
+
+def _decision(
+    *,
+    status: ReleaseGateStatus,
+    evaluated_scenario_count: int,
+    failures: tuple[ReleaseGateFailure, ...],
+    diff_scenarios: tuple[ReleaseGateDiffScenario, ...],
+) -> ReleaseGateDecision:
+    return ReleaseGateDecision(
+        status=status,
+        evaluated_scenario_count=evaluated_scenario_count,
+        failure_count=len(failures),
+        failures=failures,
+        diff_artifact=ReleaseGateDiffArtifact(
+            status=status,
+            failure_count=len(failures),
+            scenarios=diff_scenarios,
+        ),
+    )
+
+
+def _diff_scenarios_for_validation_failures(
+    failures: list[ReleaseGateFailure],
+) -> tuple[ReleaseGateDiffScenario, ...]:
+    return tuple(
+        ReleaseGateDiffScenario(
+            scenario_id=failure.scenario_id,
+            source_id=failure.source_id,
+            source_family=failure.source_family,
+            scenario_category=failure.scenario_category,
+            audit_evidence_status="not_evaluated",
+            deny_codes=(failure.deny_code,),
+            detail=failure.detail,
+        )
+        for failure in sorted(
+            failures,
+            key=lambda failure: (
+                failure.source_family or "",
+                failure.source_id or "",
+                failure.scenario_id or "",
+                failure.deny_code,
+            ),
+        )
+    )
+
+
+def _diff_scenarios_from_comparison(
+    *,
+    comparison: tuple[EvaluationComparisonRow, ...],
+    failures: tuple[ReleaseGateFailure, ...],
+    audit_status_by_identity: dict[tuple[str, str], AuditEvidenceStatus],
+) -> tuple[ReleaseGateDiffScenario, ...]:
+    if not failures:
+        return ()
+
+    row_by_identity = {
+        (row.key.source_id, row.key.scenario_id): row for row in comparison
+    }
+    grouped_failures: dict[tuple[str, str], list[ReleaseGateFailure]] = {}
+    fallback_failures: list[ReleaseGateFailure] = []
+    for failure in failures:
+        if failure.source_id is None or failure.scenario_id is None:
+            fallback_failures.append(failure)
+            continue
+        grouped_failures.setdefault(
+            (failure.source_id, failure.scenario_id),
+            [],
+        ).append(failure)
+
+    diff_scenarios = [
+        _diff_scenario_from_group(
+            identity=identity,
+            row=row_by_identity.get(identity),
+            failures=tuple(group),
+            audit_status=audit_status_by_identity.get(identity, "not_evaluated"),
+        )
+        for identity, group in grouped_failures.items()
+    ]
+    diff_scenarios.extend(
+        ReleaseGateDiffScenario(
+            scenario_id=failure.scenario_id,
+            source_id=failure.source_id,
+            source_family=failure.source_family,
+            scenario_category=failure.scenario_category,
+            audit_evidence_status="not_evaluated",
+            deny_codes=(failure.deny_code,),
+            detail=failure.detail,
+        )
+        for failure in fallback_failures
+    )
+    return tuple(
+        sorted(
+            diff_scenarios,
+            key=lambda scenario: (
+                scenario.source_family or "",
+                scenario.source_id or "",
+                scenario.scenario_id or "",
+                scenario.deny_codes,
+            ),
+        )
+    )
+
+
+def _diff_scenario_from_group(
+    *,
+    identity: tuple[str, str],
+    row: EvaluationComparisonRow | None,
+    failures: tuple[ReleaseGateFailure, ...],
+    audit_status: AuditEvidenceStatus,
+) -> ReleaseGateDiffScenario:
+    first_failure = failures[0]
+    baseline_outcome = row.baseline.outcome if row is not None and row.baseline else None
+    candidate_outcome = row.candidate.outcome if row is not None and row.candidate else None
+    changed_fields = row.regressions if row is not None and row.status == "regression" else ()
+
+    return ReleaseGateDiffScenario(
+        scenario_id=identity[1],
+        source_id=identity[0],
+        source_family=first_failure.source_family,
+        scenario_category=first_failure.scenario_category,
+        expected_decision=(
+            baseline_outcome.decision if baseline_outcome is not None else None
+        ),
+        actual_decision=(
+            candidate_outcome.decision if candidate_outcome is not None else None
+        ),
+        audit_evidence_status=audit_status,
+        changed_fields=changed_fields,
+        deny_codes=tuple(failure.deny_code for failure in failures),
+        detail=" | ".join(failure.detail for failure in failures),
+    )
+
+
+def _audit_status_for_failure(
+    failure: ReleaseGateFailure | None,
+) -> AuditEvidenceStatus:
+    if failure is None:
+        return "matched"
+    if failure.deny_code == "DENY_MISSING_AUDIT_COVERAGE":
+        return "missing"
+    return "stale"
 
 
 def _baseline_records_from_harness() -> tuple[EvaluationOutcomeRecord, ...]:

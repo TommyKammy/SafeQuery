@@ -23,6 +23,8 @@ from app.features.evaluation.harness import (
 from app.features.evaluation.release_gate import (
     ReleaseGateAuditArtifact,
     ReleaseGateDecision,
+    ReleaseGateDiffArtifact,
+    ReleaseGateDiffScenario,
     ReleaseGateFailure,
     reconstruct_release_gate,
 )
@@ -41,6 +43,8 @@ __all__ = [
     "PostgreSQLEvaluationScenario",
     "ReleaseGateAuditArtifact",
     "ReleaseGateDecision",
+    "ReleaseGateDiffArtifact",
+    "ReleaseGateDiffScenario",
     "ReleaseGateFailure",
     "SourceRegressionMatrixEntry",
     "compare_evaluation_outcomes",
