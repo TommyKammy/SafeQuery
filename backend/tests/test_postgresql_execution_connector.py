@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import builtins
+import sys
+import types
 from typing import Any
 
 import pytest
@@ -214,24 +215,14 @@ def test_execute_postgresql_connector_rejects_equivalent_application_endpoint_co
 def test_default_postgresql_query_runner_requires_psycopg_driver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    real_import = builtins.__import__
-
-    def fake_import(
-        name: str,
-        globalns: dict[str, Any] | None = None,
-        localns: dict[str, Any] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> Any:
-        if name == "psycopg":
-            raise ModuleNotFoundError("No module named 'psycopg'")
-        return real_import(name, globalns, localns, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setitem(sys.modules, "psycopg", None)
 
     with pytest.raises(
         RuntimeError,
-        match=r"psycopg must be installed before the PostgreSQL execution connector can run\.",
+        match=(
+            r"psycopg must be installed and importable before the PostgreSQL "
+            r"execution connector can run\."
+        ),
     ):
         _default_postgresql_query_runner(
             database_url="postgresql://business-postgres-source:5432/business",
@@ -242,3 +233,90 @@ def test_default_postgresql_query_runner_requires_psycopg_driver(
                 max_rows=200,
             ),
         )
+
+
+def test_postgresql_runtime_readiness_fails_closed_when_psycopg_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.execution.runtime import (
+        PostgreSQLExecutionRuntimeUnavailable,
+        check_postgresql_execution_runtime_readiness,
+    )
+
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+
+    with pytest.raises(
+        PostgreSQLExecutionRuntimeUnavailable,
+        match=(
+            "psycopg must be installed and importable before the PostgreSQL "
+            "execution connector can run"
+        ),
+    ):
+        check_postgresql_execution_runtime_readiness()
+
+
+def test_postgresql_runtime_readiness_fails_closed_when_psycopg_import_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.features.execution.runtime as runtime_module
+
+    def broken_psycopg_import(module_name: str) -> object:
+        assert module_name == "psycopg"
+        raise ImportError("libpq.so: cannot open shared object file")
+
+    monkeypatch.setattr(runtime_module.importlib, "import_module", broken_psycopg_import)
+
+    with pytest.raises(
+        runtime_module.PostgreSQLExecutionRuntimeUnavailable,
+        match=(
+            "psycopg must be installed and importable before the PostgreSQL "
+            "execution connector can run"
+        ),
+    ) as exc_info:
+        runtime_module.check_postgresql_execution_runtime_readiness()
+
+    assert isinstance(exc_info.value.__cause__, ImportError)
+
+
+def test_postgresql_runtime_readiness_fails_closed_when_psycopg_initialization_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.features.execution.runtime as runtime_module
+
+    def broken_psycopg_import(module_name: str) -> object:
+        assert module_name == "psycopg"
+        raise RuntimeError("libpq initialization failed")
+
+    monkeypatch.setattr(runtime_module.importlib, "import_module", broken_psycopg_import)
+
+    with pytest.raises(
+        runtime_module.PostgreSQLExecutionRuntimeUnavailable,
+        match="psycopg failed to initialize for the PostgreSQL execution connector",
+    ) as exc_info:
+        runtime_module.check_postgresql_execution_runtime_readiness()
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+def test_postgresql_runtime_readiness_fails_closed_when_dict_row_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.features.execution.runtime as runtime_module
+
+    def fake_psycopg_import(module_name: str) -> object:
+        if module_name == "psycopg":
+            return types.SimpleNamespace(connect=lambda *args, **kwargs: None)
+        if module_name == "psycopg.rows":
+            return types.SimpleNamespace(dict_row=None)
+        raise AssertionError(f"unexpected module import: {module_name}")
+
+    monkeypatch.setattr(runtime_module.importlib, "import_module", fake_psycopg_import)
+
+    with pytest.raises(
+        runtime_module.PostgreSQLExecutionRuntimeUnavailable,
+        match=(
+            "psycopg row factory support is unavailable; the PostgreSQL execution "
+            "connector cannot materialize result rows"
+        ),
+    ):
+        runtime_module.check_postgresql_execution_runtime_readiness()
