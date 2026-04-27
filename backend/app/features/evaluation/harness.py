@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import copy
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, PositiveInt, model_validator
 
 
 EvaluationScenarioKind = Literal["positive", "safety", "regression"]
 EvaluationBoundary = Literal["guard", "connector_selection", "lifecycle", "execution"]
+RegressionValidationSurface = Literal["generation", "guard", "execute", "audit"]
+RegressionRolloutStatus = Literal["active_baseline", "planned", "planned_flavor"]
+
+ScenarioArtifact = Union["MSSQLEvaluationScenario", "PostgreSQLEvaluationScenario"]
 
 
 class EvaluationSourceProfile(BaseModel):
@@ -79,6 +83,22 @@ class PostgreSQLEvaluationScenario(BaseModel):
     @property
     def identity(self) -> tuple[str, str]:
         return (self.source.source_id, self.scenario_id)
+
+
+class SourceRegressionMatrixEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_id: Optional[str] = None
+    scenario_kind: Optional[EvaluationScenarioKind] = None
+    evaluation_boundary: Optional[EvaluationBoundary] = None
+    source_id: Optional[str] = None
+    source_family: str
+    source_flavor: Optional[str] = None
+    rollout_status: RegressionRolloutStatus
+    executable: bool
+    validates: tuple[RegressionValidationSurface, ...]
+    expected_decision: Optional[Literal["allow", "reject"]] = None
+    primary_code: Optional[str] = None
 
 
 _MSSQL_SOURCE = EvaluationSourceProfile(
@@ -416,3 +436,75 @@ def list_mssql_evaluation_scenarios() -> tuple[MSSQLEvaluationScenario, ...]:
 
 def list_postgresql_evaluation_scenarios() -> tuple[PostgreSQLEvaluationScenario, ...]:
     return tuple(copy.deepcopy(scenario) for scenario in POSTGRESQL_EVALUATION_SCENARIOS)
+
+
+def list_source_regression_matrix() -> tuple[SourceRegressionMatrixEntry, ...]:
+    active_entries = tuple(
+        _matrix_entry_from_scenario(scenario)
+        for scenario in (
+            list_mssql_evaluation_scenarios() + list_postgresql_evaluation_scenarios()
+        )
+    )
+    planned_entries = (
+        SourceRegressionMatrixEntry(
+            source_family="mysql",
+            rollout_status="planned",
+            executable=False,
+            validates=(),
+        ),
+        SourceRegressionMatrixEntry(
+            source_family="mariadb",
+            rollout_status="planned",
+            executable=False,
+            validates=(),
+        ),
+        SourceRegressionMatrixEntry(
+            source_family="postgresql",
+            source_flavor="aurora-postgresql",
+            rollout_status="planned_flavor",
+            executable=False,
+            validates=(),
+        ),
+        SourceRegressionMatrixEntry(
+            source_family="mysql",
+            source_flavor="aurora-mysql",
+            rollout_status="planned_flavor",
+            executable=False,
+            validates=(),
+        ),
+        SourceRegressionMatrixEntry(
+            source_family="oracle",
+            rollout_status="planned",
+            executable=False,
+            validates=(),
+        ),
+    )
+    return active_entries + planned_entries
+
+
+def _matrix_entry_from_scenario(
+    scenario: ScenarioArtifact,
+) -> SourceRegressionMatrixEntry:
+    return SourceRegressionMatrixEntry(
+        scenario_id=scenario.scenario_id,
+        scenario_kind=scenario.kind,
+        evaluation_boundary=scenario.evaluation_boundary,
+        source_id=scenario.source.source_id,
+        source_family=scenario.source.source_family,
+        source_flavor=scenario.source.source_flavor,
+        rollout_status="active_baseline",
+        executable=True,
+        validates=_validated_surfaces_for(scenario),
+        expected_decision=scenario.expected.decision,
+        primary_code=scenario.expected.primary_code,
+    )
+
+
+def _validated_surfaces_for(
+    scenario: ScenarioArtifact,
+) -> tuple[RegressionValidationSurface, ...]:
+    if scenario.evaluation_boundary == "guard":
+        return ("generation", "guard", "audit")
+    if scenario.evaluation_boundary == "execution":
+        return ("generation", "guard", "execute", "audit")
+    return ("execute", "audit")

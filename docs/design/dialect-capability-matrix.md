@@ -62,3 +62,51 @@ It is a planning and review aid for connector, guard, and evaluation work.
 - Oracle execution must not be inferred from adapter hints, client-supplied
   metadata, analyst artifacts, MLflow traces, driver names, connection
   descriptors, hostnames, labels, or generated SQL text.
+
+## Active Regression Matrix
+
+The evaluation harness exposes this same active-source matrix through
+`list_source_regression_matrix()`. Active entries are executable regression
+coverage; planned entries are metadata-only and must not be run as execution
+coverage until their source family or flavor is explicitly activated.
+
+| Scenario ID | Source family | Source flavor | Decision | Validates |
+| --- | --- | --- | --- | --- |
+| `mssql-positive-approved-vendor-spend-top-vendors` | `mssql` | `sqlserver` | allow | generation, guard, execute, audit |
+| `mssql-positive-approved-vendor-count-by-region` | `mssql` | `sqlserver` | allow | generation, guard, execute, audit |
+| `mssql-safety-guard-denies-waitfor-delay` | `mssql` | `sqlserver` | reject | generation, guard, audit |
+| `mssql-safety-wrong-source-binding-denied` | `mssql` | `sqlserver` | reject | generation, guard, execute, audit |
+| `mssql-safety-unsupported-source-binding-denied` | `mssql` | `legacy-sqlserver` | reject | execute, audit |
+| `mssql-safety-stale-policy-denied` | `mssql` | `sqlserver` | reject | execute, audit |
+| `mssql-safety-approval-expiry-denied` | `mssql` | `sqlserver` | reject | execute, audit |
+| `mssql-regression-linked-server-denied` | `mssql` | `sqlserver` | reject | generation, guard, audit |
+| `postgresql-positive-approved-vendor-spend-top-vendors` | `postgresql` | `warehouse` | allow | generation, guard, execute, audit |
+| `postgresql-positive-approved-vendor-count-by-region` | `postgresql` | `warehouse` | allow | generation, guard, execute, audit |
+| `postgresql-safety-guard-denies-system-catalog-access` | `postgresql` | `warehouse` | reject | generation, guard, audit |
+| `postgresql-safety-wrong-source-binding-denied` | `postgresql` | `warehouse` | reject | generation, guard, execute, audit |
+| `postgresql-safety-unsupported-source-binding-denied` | `postgresql` | `legacy-warehouse` | reject | execute, audit |
+| `postgresql-safety-stale-policy-denied` | `postgresql` | `warehouse` | reject | execute, audit |
+| `postgresql-safety-approval-expiry-denied` | `postgresql` | `warehouse` | reject | execute, audit |
+| `postgresql-safety-application-postgres-exposure-denied` | `postgresql` | `persistence` | reject | execute, audit |
+| `postgresql-safety-application-postgres-execution-reuse-denied` | `postgresql` | `warehouse` | reject | generation, guard, execute, audit |
+
+## Planned Non-Executable Entries
+
+| Family or Flavor | Rollout status | Execution coverage |
+| --- | --- | --- |
+| `mysql` | planned metadata only | non-executable |
+| `mariadb` | planned metadata only | non-executable |
+| `postgresql` / `aurora-postgresql` | planned flavor | non-executable |
+| `mysql` / `aurora-mysql` | planned flavor | non-executable |
+| `oracle` | long-range planned metadata only | non-executable |
+
+## Follow-Up Candidates
+
+- The MSSQL core vertical-slice test still overlaps the active matrix for
+  `mssql-positive-approved-vendor-spend-top-vendors`. Keep it while it proves
+  persistence and audit ordering, but avoid adding new vertical-slice-only
+  cases without a matching scenario ID in the matrix.
+- Runtime timeout, cancellation, and source-unavailable classifications are
+  documented rollout requirements but remain outside this issue's active
+  matrix; they should become explicit scenario IDs before source activation
+  gates depend on them.

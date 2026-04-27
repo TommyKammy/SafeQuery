@@ -30,6 +30,7 @@ from app.features.evaluation import (
     compare_evaluation_outcomes,
     list_mssql_evaluation_scenarios,
     list_postgresql_evaluation_scenarios,
+    list_source_regression_matrix,
 )
 from app.features.execution import (
     ExecutionConnectorExecutionError,
@@ -350,6 +351,43 @@ def test_postgresql_evaluation_fixture_listing_returns_defensive_copies() -> Non
     assert fresh_scenario.source is not mutated_scenario.source
     assert fresh_scenario.scenario_id == original_scenario_id
     assert fresh_scenario.source.source_id == original_source_id
+
+
+def test_source_regression_matrix_covers_active_families_and_keeps_planned_non_executable() -> None:
+    matrix = list_source_regression_matrix()
+    active_entries = [entry for entry in matrix if entry.rollout_status == "active_baseline"]
+    planned_entries = [entry for entry in matrix if entry.rollout_status != "active_baseline"]
+
+    assert {entry.source_family for entry in active_entries} == {"mssql", "postgresql"}
+    assert planned_entries
+    assert all(entry.executable is False for entry in planned_entries)
+    assert all(entry.scenario_id is None for entry in planned_entries)
+
+    for entry in active_entries:
+        assert entry.scenario_id
+        assert entry.source_id
+        assert entry.source_family in {"mssql", "postgresql"}
+        assert entry.source_flavor
+        assert entry.validates
+        assert set(entry.validates) <= {"generation", "guard", "execute", "audit"}
+        assert "audit" in entry.validates
+
+    for source_family in ("mssql", "postgresql"):
+        family_entries = [
+            entry for entry in active_entries if entry.source_family == source_family
+        ]
+        decisions = {entry.expected_decision for entry in family_entries}
+        validated_surfaces = {
+            surface for entry in family_entries for surface in entry.validates
+        }
+
+        assert {"allow", "reject"} <= decisions
+        assert {"generation", "guard", "execute", "audit"} <= validated_surfaces
+        assert any(entry.scenario_kind == "positive" for entry in family_entries)
+        assert any(
+            entry.expected_decision == "reject" and entry.primary_code
+            for entry in family_entries
+        )
 
 
 @pytest.mark.parametrize(
