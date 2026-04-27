@@ -181,6 +181,152 @@ stop or escalate:
 - Escalate if rollback requires secrets, permissions, production data access, or
   a decision outside the documented pilot scope.
 
+## Pilot Migration Backup and Rollback Runbook
+
+Use this runbook before changing the SafeQuery application database schema or
+rolling out runtime changes that depend on a new migration head. It covers
+application database migrations only. Business source connectivity checks are a
+separate source-readiness concern: they may prove that an explicitly registered
+business PostgreSQL or MSSQL source is reachable, but they do not replace
+application migration evidence and must not reuse application database
+credentials.
+Treat business source connectivity checks as independent readiness evidence,
+not as proof that application database migrations are safe or current.
+
+Run these steps with the environment-value contract in
+[pilot-deployment-profile.md](./pilot-deployment-profile.md) and capture only
+bounded diagnostic artifacts described in
+[Secret-Safe Support Bundle](#secret-safe-support-bundle). Keep evidence free
+of database URLs, passwords, tokens, raw result rows, raw SQL, and
+workstation-local absolute paths.
+
+### Migration preflight
+
+Before applying a migration, put the affected pilot path in Maintenance and
+record before-migration evidence:
+
+- pilot window, operator, affected environment label, and affected source ids
+  if any source records are expected to be read after migration
+- current commit or release identifier and expected Alembic head
+- current migration posture from the application database:
+
+```bash
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alembic current
+```
+
+- first-run doctor output after environment setup and before the migration:
+
+```bash
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend python -m app.cli.first_run_doctor
+```
+
+- support-bundle or equivalent bounded diagnostic artifact when reviewers need
+  a shareable snapshot of migration posture and health summaries
+
+Stop before applying the migration if the application database is unreachable,
+the current head is unknown, the expected head is not documented, required env
+values are missing or placeholder-like, the backup plan is absent, or the pilot
+cannot be paused for the affected surface.
+
+### Backup expectations
+
+Take a backup of the application database before any pilot migration that
+changes durable records or runtime expectations. The backup artifact identifier
+must be recorded in the maintenance note along with the command family used,
+the environment label, the application database name or bounded database id,
+the timestamp, and the operator who verified the artifact exists.
+
+The runbook does not prescribe a universal backup command because the pilot
+database host, permissions, encryption, and retention policy are deployment
+specific. Use the deployment-approved backup mechanism for the application
+database. Do not place raw backup paths, credentials, connection URLs, or
+storage tokens in shared docs, issues, support bundles, or screenshots.
+
+Before continuing, an operator must be able to answer:
+
+- where the backup is stored inside the approved backup boundary
+- which application database and migration head it represents
+- how the artifact will be integrity-checked before any restore attempt
+- who is authorized to approve restore or destructive rollback steps
+
+### Apply and verify
+
+Apply migrations through the repo-owned backend context so Alembic uses the same
+application settings as the pilot stack:
+
+```bash
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alembic upgrade head
+docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend alembic current
+```
+
+After the migration, record after-migration evidence from authoritative
+surfaces:
+
+- `alembic current` reports the expected head
+- `python -m app.cli.first_run_doctor` reports the expected migration posture
+  and still distinguishes migrations from source registry, entitlement,
+  connector, backend, and frontend checks
+- the relevant smoke or release-gate command for the changed surface passed
+- support bundle migration posture is current when a bounded diagnostic artifact
+  is needed for review
+- operator workflow state is refreshed from backend records, not from stale UI
+  summaries or prior support bundles
+
+If a business source connectivity check fails after a successful application
+migration, keep the source path degraded or blocked and troubleshoot source
+registry, connector profile, secret indirection, entitlement, and network
+readiness separately. Do not roll back an application migration solely because
+an unrelated business source probe failed.
+
+### Rollback decision guidance
+
+Rollback is a decision point, not an automatic command.
+Do not run destructive rollback or restore commands without explicit operator
+confirmation.
+Require a verified backup artifact identifier and an owner for the affected
+pilot window before any rollback or restore attempt.
+
+Prefer the least destructive recovery path that keeps authority boundaries
+intact:
+
+- if the migration failed before durable writes, keep pilot traffic paused,
+  preserve logs and command output, and rerun only after the cause is clear
+- if the migration applied but verification failed, keep the system in
+  Recovery, block affected pilot use, and compare migration posture,
+  first-run doctor output, support-bundle migration posture, and audit evidence
+  from one current snapshot
+- if a forward fix is safer than restore, document the fix, rerun the same
+  verification commands, and keep old candidates, runs, exports, and UI
+  summaries from being reused as current evidence
+- if restore is required, escalate for the deployment-approved restore
+  procedure and verify that no orphan records, partial durable writes,
+  half-restored state, or mixed-snapshot evidence remains
+
+Never infer rollback safety from service names, path shape, nearby comments,
+client-provided headers, or UI status text. If provenance, scope, backup
+integrity, auth context, or source binding is missing, keep the rollback path
+blocked until the prerequisite is real.
+
+### Post-incident notes
+
+After a failed migration, unsafe rollout, restore, or rollback decision, record:
+
+- the before-migration evidence and after-migration evidence that were captured
+- exact command names, exit status, and bounded output summaries
+- migration head before and after the attempt
+- backup artifact identifier and whether integrity verification was completed
+- affected source ids, request ids, candidate ids, run ids, and audit ids
+- whether application database migrations or business source connectivity
+  checks caused the failure
+- whether any partial durable write, orphan record, half-restored state, stale
+  candidate, missing audit event, or mixed-snapshot read set survived
+- recovery verification commands and the explicit operator decision to resume,
+  keep degraded, escalate, or stop the pilot path
+
+Do not attach secrets, raw SQL, raw rows, database URLs, connection strings,
+tokens, cookies, private keys, source connection references, or local
+user-profile paths to the post-incident note.
+
 ## Incident
 
 Operational meaning:
