@@ -121,6 +121,7 @@ class SourceAwareAuditEvent(BaseModel):
     prompt_version: Optional[NonEmptyTrimmedString] = None
     prompt_fingerprint: Optional[NonEmptyTrimmedString] = None
     guard_version: Optional[NonEmptyTrimmedString] = None
+    guard_decision: Optional[Literal["allow", "reject"]] = None
     application_version: Optional[NonEmptyTrimmedString] = None
     retrieval_corpus_version: Optional[NonEmptyTrimmedString] = None
     retrieved_asset_ids: Optional[list[NonEmptyTrimmedString]] = None
@@ -138,6 +139,7 @@ class SourceAwareAuditEvent(BaseModel):
     connector_profile_version: Optional[PositiveInt] = None
     primary_deny_code: Optional[NonEmptyTrimmedString] = None
     denial_cause: Optional[NonEmptyTrimmedString] = None
+    denial_reason: Optional[NonEmptyTrimmedString] = None
     candidate_state: Optional[NonEmptyTrimmedString] = None
     execution_row_count: Optional[int] = None
     result_truncated: Optional[bool] = None

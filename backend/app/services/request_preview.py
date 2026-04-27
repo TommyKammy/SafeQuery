@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -55,6 +56,22 @@ from app.services.sql_generation_adapter import (
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 PREVIEW_PENDING_GUARD_STATUS: GuardStatus = "pending"
+_MAX_DENIAL_REASON_LENGTH = 240
+_RAW_WORKSTATION_PATH_PATTERN = re.compile(
+    r"(?i)(?:"
+    r"(?:^|(?<=[\s'\"(=]))/(?:[^/\s:;,'\")]+/)+[^\s:;,'\")]*"
+    r"|[a-z]:[\\/](?:[^\\/\s:;,'\")]+[\\/])*[^\\/\s:;,'\")]+"
+    r"|\\\\[^\\\s/:;,'\")]+\\[^\\\s:;,'\")]+(?:\\[^\\\s:;,'\")]+)*"
+    r"|(?<!\S)~[\\/][^\s:;,'\")]+"
+    r")"
+)
+_CREDENTIAL_MARKER_PATTERN = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])("
+    r"password|passwd|pwd|secret|token|credential|bearer"
+    r"|api[_ -]?key|access[_ -]?key|private[_ -]?key"
+    r"|client[_ -]?secret|connection[_ -]?string"
+    r")(?![A-Za-z0-9_])"
+)
 _GUARD_VERSION_BY_SOURCE_FAMILY = {
     "mssql": "mssql-guard-v1",
     "postgresql": "postgresql-guard-v1",
@@ -73,6 +90,43 @@ def _resolve_sql_guard_controls(source_family: str) -> tuple[str, Any]:
             f"Unsupported source family '{source_family}' cannot be guarded."
         )
     return guard_version, evaluator
+
+
+def _sanitized_guard_denial_reason(
+    guard_evaluation: SQLGuardEvaluation | None,
+) -> str | None:
+    if (
+        guard_evaluation is None
+        or guard_evaluation.decision == "allow"
+        or not guard_evaluation.rejections
+    ):
+        return None
+
+    detail = guard_evaluation.rejections[0].detail.strip()
+    if (
+        not detail
+        or _RAW_WORKSTATION_PATH_PATTERN.search(detail)
+        or _CREDENTIAL_MARKER_PATTERN.search(detail)
+    ):
+        return "SQL guard rejected the generated candidate."
+
+    if len(detail) > _MAX_DENIAL_REASON_LENGTH:
+        suffix = "..."
+        max_prefix = max(1, _MAX_DENIAL_REASON_LENGTH - len(suffix))
+        return f"{detail[:max_prefix].rstrip()}{suffix}"
+    return detail
+
+
+def _primary_guard_deny_code(
+    guard_evaluation: SQLGuardEvaluation | None,
+) -> str | None:
+    if (
+        guard_evaluation is None
+        or guard_evaluation.decision == "allow"
+        or not guard_evaluation.rejections
+    ):
+        return None
+    return guard_evaluation.rejections[0].code
 
 
 class PreviewSubmissionRequest(BaseModel):
@@ -99,6 +153,8 @@ class CandidateRecord(BaseModel):
     dataset_contract_version: int
     schema_snapshot_version: int
     state: str
+    primary_deny_code: Optional[str] = None
+    denial_reason: Optional[str] = None
 
 
 class AuditRecord(BaseModel):
@@ -110,6 +166,8 @@ class AuditRecord(BaseModel):
 class EvaluationRecord(BaseModel):
     source_id: str
     state: str
+    primary_deny_code: Optional[str] = None
+    denial_reason: Optional[str] = None
 
 
 class PreviewSubmissionResponse(BaseModel):
@@ -234,6 +292,12 @@ def _build_preview_lifecycle_audit_events(
                 if event_type == "guard_evaluated"
                 else None
             ),
+            guard_decision=(
+                guard_evaluation.decision
+                if event_type == "guard_evaluated"
+                and guard_evaluation is not None
+                else None
+            ),
             application_version=audit_context.application_version,
             adapter_provider=(
                 adapter_metadata.adapter_provider
@@ -288,11 +352,8 @@ def _build_preview_lifecycle_audit_events(
                 else None
             ),
             primary_deny_code=(
-                guard_evaluation.rejections[0].code
+                _primary_guard_deny_code(guard_evaluation)
                 if event_type == "guard_evaluated"
-                and guard_evaluation is not None
-                and guard_evaluation.decision != "allow"
-                and guard_evaluation.rejections
                 else None
             ),
             denial_cause=(
@@ -300,6 +361,11 @@ def _build_preview_lifecycle_audit_events(
                 if event_type == "guard_evaluated"
                 and guard_evaluation is not None
                 and guard_evaluation.decision != "allow"
+                else None
+            ),
+            denial_reason=(
+                _sanitized_guard_denial_reason(guard_evaluation)
+                if event_type == "guard_evaluated"
                 else None
             ),
         )
@@ -1258,6 +1324,8 @@ def submit_preview_request(
         candidate_state=candidate_state,
         guard_status=guard_status,
     )
+    primary_deny_code = _primary_guard_deny_code(guard_evaluation)
+    denial_reason = _sanitized_guard_denial_reason(guard_evaluation)
 
     return PreviewSubmissionResponse(
         request=RequestRecord(
@@ -1276,6 +1344,8 @@ def submit_preview_request(
             dataset_contract_version=dataset_contract.contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
             state=candidate_state,
+            primary_deny_code=primary_deny_code,
+            denial_reason=denial_reason,
         ),
         audit=audit,
         evaluation=EvaluationRecord(
@@ -1287,5 +1357,7 @@ def submit_preview_request(
                 if guard_evaluation.decision == "allow"
                 else "blocked"
             ),
+            primary_deny_code=primary_deny_code,
+            denial_reason=denial_reason,
         ),
     )

@@ -101,6 +101,8 @@ class OperatorWorkflowAuditEventSummary(BaseModel):
     source_id: str = Field(serialization_alias="sourceId")
     candidate_state: Optional[str] = Field(default=None, serialization_alias="candidateState")
     primary_deny_code: Optional[str] = Field(default=None, serialization_alias="primaryDenyCode")
+    guard_decision: Optional[str] = Field(default=None, serialization_alias="guardDecision")
+    denial_reason: Optional[str] = Field(default=None, serialization_alias="denialReason")
     row_count: Optional[int] = Field(default=None, serialization_alias="rowCount")
     result_truncated: Optional[bool] = Field(default=None, serialization_alias="resultTruncated")
 
@@ -400,6 +402,8 @@ def _audit_event_summary(event: PreviewAuditEvent) -> OperatorWorkflowAuditEvent
         source_id=event.source_id,
         candidate_state=event.candidate_state,
         primary_deny_code=event.primary_deny_code,
+        guard_decision=_read_text(event.audit_payload.get("guard_decision")),
+        denial_reason=_read_text(event.audit_payload.get("denial_reason")),
         row_count=_read_non_negative_int(event.audit_payload.get("execution_row_count")),
         result_truncated=_read_bool(event.audit_payload.get("result_truncated")),
     )
@@ -592,6 +596,9 @@ def _build_operator_history(
                 candidate_sql=candidate.candidate_sql,
                 request_id=candidate.request_id,
                 guard_status=candidate.guard_status,
+                primary_deny_code=(
+                    candidate_event.primary_deny_code if candidate_event else None
+                ),
                 audit_events=(
                     [_audit_event_summary(candidate_event)] if candidate_event else []
                 ),
