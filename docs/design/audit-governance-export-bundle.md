@@ -32,9 +32,9 @@ entitlement checks, SQL Guard, source activation posture, or execution policy
 revalidation.
 
 The export intentionally excludes raw SQL, raw result rows, connection strings,
-raw credentials, tokens, source connection references, and workstation-local
-paths. A missing field should be interpreted as unavailable or intentionally
-redacted, not as proof that an action was safe.
+raw credentials, tokens, raw identity payloads, source connection references,
+and workstation-local paths. A missing field should be interpreted as
+unavailable or intentionally redacted, not as proof that an action was safe.
 
 The bundle summarizes a committed database snapshot at generation time. It does
 not prove that external services were reachable later, that a subordinate
@@ -55,5 +55,5 @@ Generated exports should be inspected for:
 - lifecycle completeness across request, candidate, review, and execution
   records
 - clear authority labels on control-plane and subordinate evidence
-- absence of raw SQL, result rows, credentials, tokens, connection references,
-  and workstation-local paths
+- absence of raw SQL, result rows, credentials, tokens, raw identity payloads,
+  connection references, and workstation-local paths

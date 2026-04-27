@@ -463,6 +463,7 @@ def test_support_bundle_service_includes_bounded_diagnostics_without_secrets(
                 "tokens",
                 "raw_result_rows",
                 "candidate_sql",
+                "raw_identity_payloads",
                 "workstation_local_paths",
                 "source_connection_references",
             ]
@@ -609,6 +610,92 @@ def test_governance_review_execute_result_rejects_boolean_row_count(
     assert execute_result["resultTruncated"] is False
 
 
+def test_governance_review_export_rejects_unsafe_export_values_by_category(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    unsafe_cases = (
+        (
+            "ghp_unsafeTokenShouldNotEcho123456789",
+            "token-like values",
+            lambda session: setattr(
+                session.query(PreviewCandidate).one(),
+                "adapter_run_id",
+                "ghp_unsafeTokenShouldNotEcho123456789",
+            ),
+        ),
+        (
+            "postgresql://reader:secret-value@db:5432/business",
+            "connection-string-like values",
+            lambda session: setattr(
+                session.query(PreviewRequest).one(),
+                "auth_source",
+                "postgresql://reader:secret-value@db:5432/business",
+            ),
+        ),
+        (
+            "database_password",
+            "raw credential names",
+            lambda session: setattr(
+                session.query(PreviewCandidate).one(),
+                "adapter_provider",
+                "database_password",
+            ),
+        ),
+        (
+            "operator@example.test",
+            "raw identity payloads",
+            lambda session: setattr(
+                session.query(PreviewRequest).one(),
+                "authenticated_subject_id",
+                '{"sub":"user:demo","email":"operator@example.test"}',
+            ),
+        ),
+        (
+            "/".join(["", "Users", "example", ".safequery", "private.log"]),
+            "workstation-local paths",
+            lambda session: setattr(
+                session.query(PreviewCandidate).one(),
+                "prompt_fingerprint",
+                "/".join(["", "Users", "example", ".safequery", "private.log"]),
+            ),
+        ),
+    )
+
+    for unsafe_value, expected_category, mutate in unsafe_cases:
+        with _session_scope() as session:
+            _add_governance_review_workflow_records(session)
+            mutate(session)
+            session.commit()
+
+            try:
+                build_support_bundle(
+                    session,
+                    settings=get_settings(),
+                    database={"status": "ok", "detail": "ready"},
+                    sql_generation={
+                        "status": "disabled",
+                        "detail": "provider_disabled",
+                    },
+                    generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+                )
+            except ValueError as exc:
+                message = str(exc)
+            else:
+                raise AssertionError(
+                    f"Expected support bundle export to reject {expected_category}."
+                )
+
+        assert expected_category in message
+        assert unsafe_value not in message
+
+
 def test_support_bundle_endpoint_returns_secret_safe_json(monkeypatch) -> None:
     monkeypatch.setenv(
         "SAFEQUERY_APP_POSTGRES_URL",
@@ -641,6 +728,7 @@ def test_support_bundle_endpoint_returns_secret_safe_json(monkeypatch) -> None:
         "tokens",
         "raw_result_rows",
         "candidate_sql",
+        "raw_identity_payloads",
         "workstation_local_paths",
         "source_connection_references",
     ]
