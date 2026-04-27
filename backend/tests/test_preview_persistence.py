@@ -29,7 +29,7 @@ from app.db.models.source_registry import RegisteredSource, SourceActivationPost
 from app.db.session import require_preview_submission_session
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 from app.features.auth.session import create_test_application_session
-from app.features.guard import SQLGuardEvaluation
+from app.features.guard import SQLGuardEvaluation, SQLGuardRejection
 from app.services import request_preview as request_preview_service
 from app.services.request_preview import (
     PreviewAuditContext,
@@ -37,6 +37,7 @@ from app.services.request_preview import (
     PreviewSubmissionRequest,
     _build_preview_lifecycle_audit_events,
     _persist_candidate_approval_record,
+    _sanitized_guard_denial_reason,
     submit_preview_request,
 )
 from app.services.operator_workflow import get_operator_workflow_snapshot
@@ -428,6 +429,55 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
         engine.dispose()
         app.dependency_overrides.clear()
         get_settings.cache_clear()
+
+
+def _rejected_guard_evaluation(detail: str) -> SQLGuardEvaluation:
+    return SQLGuardEvaluation(
+        decision="reject",
+        profile="postgresql",
+        canonical_sql="SELECT 1",
+        source=None,
+        rejections=[
+            SQLGuardRejection(
+                code="DENY_TEST",
+                detail=detail,
+                path="canonical_sql",
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "guard detail referenced " + "/" + "/".join(("home", "alice", "query.sql")),
+        "guard detail referenced " + "/" + "/".join(("tmp", "safequery.sql")),
+        "guard detail referenced " + "/" + "/".join(("var", "log", "safequery")),
+        "guard detail referenced C:" + "\\" + "\\".join(("temp", "safequery.sql")),
+        "guard detail referenced "
+        + "\\" * 2
+        + "\\".join(("fileserver", "share", "safequery.sql")),
+        "guard detail referenced ~" + "/" + "safequery/query.sql",
+        "guard detail referenced bearer token in adapter output",
+    ],
+)
+def test_guard_denial_reason_sanitizer_blocks_paths_and_credentials(
+    detail: str,
+) -> None:
+    assert (
+        _sanitized_guard_denial_reason(_rejected_guard_evaluation(detail))
+        == "SQL guard rejected the generated candidate."
+    )
+
+
+def test_guard_denial_reason_sanitizer_keeps_truncation_within_cap() -> None:
+    detail = "Guard rejection detail " + ("x" * 260)
+
+    sanitized = _sanitized_guard_denial_reason(_rejected_guard_evaluation(detail))
+
+    assert sanitized is not None
+    assert len(sanitized) == request_preview_service._MAX_DENIAL_REASON_LENGTH
+    assert sanitized.endswith("...")
 
 
 def test_http_preview_submission_blocks_guard_rejected_adapter_sql(

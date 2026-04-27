@@ -58,10 +58,19 @@ NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, 
 PREVIEW_PENDING_GUARD_STATUS: GuardStatus = "pending"
 _MAX_DENIAL_REASON_LENGTH = 240
 _RAW_WORKSTATION_PATH_PATTERN = re.compile(
-    r"(?i)(?:/users/[^\s:;,'\")]+|[a-z]:\\users\\[^\s:;,'\")]+)"
+    r"(?i)(?:"
+    r"(?<!:)/(?:[^/\s:;,'\")]+/)+[^\s:;,'\")]*"
+    r"|[a-z]:[\\/](?:[^\\/\s:;,'\")]+[\\/])*[^\\/\s:;,'\")]+"
+    r"|\\\\[^\\\s/:;,'\")]+\\[^\\\s:;,'\")]+(?:\\[^\\\s:;,'\")]+)*"
+    r"|(?<!\S)~[\\/][^\s:;,'\")]+"
+    r")"
 )
 _CREDENTIAL_MARKER_PATTERN = re.compile(
-    r"(?i)(password|passwd|pwd|secret|token|credential|connection[_ -]?string)"
+    r"(?i)("
+    r"password|passwd|pwd|secret|token|credential|bearer"
+    r"|api[_ -]?key|access[_ -]?key|private[_ -]?key"
+    r"|client[_ -]?secret|connection[_ -]?string"
+    r")"
 )
 _GUARD_VERSION_BY_SOURCE_FAMILY = {
     "mssql": "mssql-guard-v1",
@@ -102,7 +111,9 @@ def _sanitized_guard_denial_reason(
         return "SQL guard rejected the generated candidate."
 
     if len(detail) > _MAX_DENIAL_REASON_LENGTH:
-        return f"{detail[:_MAX_DENIAL_REASON_LENGTH].rstrip()}..."
+        suffix = "..."
+        max_prefix = max(1, _MAX_DENIAL_REASON_LENGTH - len(suffix))
+        return f"{detail[:max_prefix].rstrip()}{suffix}"
     return detail
 
 
