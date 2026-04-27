@@ -10,8 +10,8 @@ if [[ ! -x frontend/node_modules/.bin/vitest ]]; then
   exit 1
 fi
 
-bash tests/smoke/test-pilot-safety-checklist.sh
-
-bash tests/smoke/test-pilot-safety-ui-workflow.sh
-bash tests/smoke/test-pilot-safety-api-preview.sh
-bash tests/smoke/test-pilot-safety-api-execute.sh
+echo "pilot-safety-ui: source selection, source-bound preview, execution posture, result, and audit surfaces"
+(
+  cd frontend
+  npm test -- app/pilot-safety-smoke.test.tsx
+)
