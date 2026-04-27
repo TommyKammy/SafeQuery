@@ -422,6 +422,41 @@ def test_first_run_doctor_fails_closed_when_demo_source_connector_binding_drifts
     }
 
 
+def test_first_run_doctor_fails_closed_when_demo_source_reuses_app_postgres_reference() -> None:
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+        source = session.get(RegisteredSource, DEMO_SOURCE_UUID)
+        assert source is not None
+        source.connection_reference = "env:SAFEQUERY_APP_POSTGRES_URL"
+        session.commit()
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["source_registry"]["status"] == "pass"
+    assert sections["dataset_contract"]["status"] == "pass"
+    assert sections["schema_snapshot"]["status"] == "pass"
+    assert sections["entitlement_seed"]["status"] == "pass"
+    assert sections["execution_connector"]["status"] == "fail"
+    assert sections["execution_connector"]["message"] == (
+        "Active demo source is not bound to the backend-owned execution "
+        "connection reference."
+    )
+    assert sections["execution_connector"]["detail"] == {
+        "source_id": "demo-business-postgres",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "connector_id": "postgresql_readonly",
+        "ownership": "backend",
+        "deny_code": "DENY_SOURCE_BINDING_MISMATCH",
+    }
+
+
 def test_first_run_doctor_fails_closed_when_postgresql_driver_runtime_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -487,6 +522,7 @@ def test_first_run_doctor_fails_closed_when_mssql_driver_runtime_is_missing(
             source_id="business-mssql-source",
             source_family="mssql",
             source_flavor="sqlserver",
+            connection_reference="env:SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING",
         ),
         SimpleNamespace(contract_version=3),
         SimpleNamespace(snapshot_version=7),
