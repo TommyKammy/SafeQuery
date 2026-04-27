@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import types
 from typing import Any
 
 import pytest
@@ -275,3 +276,47 @@ def test_postgresql_runtime_readiness_fails_closed_when_psycopg_import_breaks(
         runtime_module.check_postgresql_execution_runtime_readiness()
 
     assert isinstance(exc_info.value.__cause__, ImportError)
+
+
+def test_postgresql_runtime_readiness_fails_closed_when_psycopg_initialization_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.features.execution.runtime as runtime_module
+
+    def broken_psycopg_import(module_name: str) -> object:
+        assert module_name == "psycopg"
+        raise RuntimeError("libpq initialization failed")
+
+    monkeypatch.setattr(runtime_module.importlib, "import_module", broken_psycopg_import)
+
+    with pytest.raises(
+        runtime_module.PostgreSQLExecutionRuntimeUnavailable,
+        match="psycopg failed to initialize for the PostgreSQL execution connector",
+    ) as exc_info:
+        runtime_module.check_postgresql_execution_runtime_readiness()
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+def test_postgresql_runtime_readiness_fails_closed_when_dict_row_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.features.execution.runtime as runtime_module
+
+    def fake_psycopg_import(module_name: str) -> object:
+        if module_name == "psycopg":
+            return types.SimpleNamespace(connect=lambda *args, **kwargs: None)
+        if module_name == "psycopg.rows":
+            return types.SimpleNamespace(dict_row=None)
+        raise AssertionError(f"unexpected module import: {module_name}")
+
+    monkeypatch.setattr(runtime_module.importlib, "import_module", fake_psycopg_import)
+
+    with pytest.raises(
+        runtime_module.PostgreSQLExecutionRuntimeUnavailable,
+        match=(
+            "psycopg row factory support is unavailable; the PostgreSQL execution "
+            "connector cannot materialize result rows"
+        ),
+    ):
+        runtime_module.check_postgresql_execution_runtime_readiness()

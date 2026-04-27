@@ -263,10 +263,15 @@ def check_mssql_execution_runtime_readiness() -> dict[str, object]:
 def check_postgresql_execution_runtime_readiness() -> dict[str, object]:
     try:
         psycopg = importlib.import_module("psycopg")
+        psycopg_rows = importlib.import_module("psycopg.rows")
     except (ModuleNotFoundError, ImportError) as exc:
         raise PostgreSQLExecutionRuntimeUnavailable(
             "psycopg must be installed and importable before the PostgreSQL "
             "execution connector can run."
+        ) from exc
+    except Exception as exc:
+        raise PostgreSQLExecutionRuntimeUnavailable(
+            "psycopg failed to initialize for the PostgreSQL execution connector."
         ) from exc
 
     if not callable(getattr(psycopg, "connect", None)):
@@ -275,7 +280,13 @@ def check_postgresql_execution_runtime_readiness() -> dict[str, object]:
             "connector cannot open backend-owned source connections."
         )
 
-    return {"psycopg": "available"}
+    if not callable(getattr(psycopg_rows, "dict_row", None)):
+        raise PostgreSQLExecutionRuntimeUnavailable(
+            "psycopg row factory support is unavailable; the PostgreSQL execution "
+            "connector cannot materialize result rows."
+        )
+
+    return {"psycopg": "available", "dict_row": "available"}
 
 
 def _source_flavor_matches(

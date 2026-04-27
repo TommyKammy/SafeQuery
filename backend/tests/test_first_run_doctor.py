@@ -160,7 +160,7 @@ def test_first_run_doctor_passes_after_demo_seed() -> None:
         "connector_id": "postgresql_readonly",
         "ownership": "backend",
         "runtime_status": "available",
-        "runtime": {"psycopg": "available"},
+        "runtime": {"dict_row": "available", "psycopg": "available"},
     }
     assert sections["backend"]["status"] == "pass"
     assert sections["frontend"]["status"] == "pass"
