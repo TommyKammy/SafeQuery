@@ -49,7 +49,7 @@ class ReleaseGateFailure(BaseModel):
 class ReleaseGateAuditArtifact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scenario_id: str
+    scenario_id: Optional[str] = None
     event: SourceAwareAuditEvent
 
     @model_validator(mode="before")
@@ -86,6 +86,22 @@ class ReleaseGateAuditArtifact(BaseModel):
             return value
 
         return {**value, "scenario_id": embedded_scenario_id}
+
+    @model_validator(mode="after")
+    def _require_scenario_id_except_raw_generation_failure(
+        self,
+    ) -> "ReleaseGateAuditArtifact":
+        if self.scenario_id is not None:
+            return self
+        if (
+            self.event.event_type == "generation_failed"
+            and self.event.release_gate_scenario is None
+        ):
+            return self
+        raise ValueError(
+            "scenario_id is required unless a raw generation_failed audit event "
+            "omits release_gate_scenario by design."
+        )
 
 
 class ReleaseGateDecision(BaseModel):
@@ -174,6 +190,7 @@ def _record_from_scenario(scenario: ScenarioArtifact) -> EvaluationOutcomeRecord
         source=EvaluationOutcomeSnapshot.model_validate(scenario.source.model_dump()),
         outcome=EvaluationObservedOutcome(
             decision=scenario.expected.decision,
+            outcome_category=scenario.expected.outcome_category,
             primary_code=scenario.expected.primary_code,
         ),
     )
@@ -245,7 +262,7 @@ def _audit_failures_for_scenario(
     candidates = [
         artifact.event
         for artifact in audit_artifacts
-        if artifact.scenario_id == scenario.scenario_id
+        if _audit_artifact_can_cover_scenario(artifact=artifact, scenario=scenario)
     ]
     if not candidates:
         return ReleaseGateFailure(
@@ -283,8 +300,12 @@ def _audit_failures_for_scenario(
 
 
 def _expected_audit_event_type_for(scenario: ScenarioArtifact) -> str:
+    if scenario.evaluation_boundary == "generation":
+        return "generation_failed"
     if scenario.evaluation_boundary == "guard":
         return "guard_evaluated"
+    if scenario.evaluation_boundary == "runtime":
+        return "execution_failed"
     if scenario.expected.decision == "allow":
         return "execution_completed"
     return "execution_denied"
@@ -299,13 +320,23 @@ def _audit_mismatches_for_scenario(
 ) -> tuple[str, ...]:
     mismatches: list[str] = []
     release_gate_scenario = event.release_gate_scenario
-    if release_gate_scenario is None:
-        mismatches.append("release_gate_scenario")
+    if expected_event_type == "generation_failed":
+        release_gate_scenario_required = False
     else:
+        release_gate_scenario_required = True
+
+    if release_gate_scenario is None and release_gate_scenario_required:
+        mismatches.append("release_gate_scenario")
+    elif release_gate_scenario is not None:
+        expected_guard_decision = (
+            scenario.expected.decision
+            if scenario.evaluation_boundary == "guard"
+            else "allow"
+        )
         scenario_expected_values = {
             "release_gate_scenario.scenario_id": scenario.scenario_id,
             "release_gate_scenario.source_id": scenario.source.source_id,
-            "release_gate_scenario.guard_decision": scenario.expected.decision,
+            "release_gate_scenario.guard_decision": expected_guard_decision,
         }
         mismatches.extend(
             field
@@ -347,6 +378,49 @@ def _audit_mismatches_for_scenario(
         if getattr(event, field) != expected
     )
     return tuple(mismatches)
+
+
+def _audit_artifact_can_cover_scenario(
+    *,
+    artifact: ReleaseGateAuditArtifact,
+    scenario: ScenarioArtifact,
+) -> bool:
+    if artifact.scenario_id == scenario.scenario_id:
+        return True
+    if artifact.scenario_id is not None:
+        return False
+    event = artifact.event
+    return (
+        scenario.evaluation_boundary == "generation"
+        and event.event_type == "generation_failed"
+        and event.release_gate_scenario is None
+        and _raw_generation_audit_identity_is_unique(scenario)
+        and event.source_id == scenario.source.source_id
+        and event.source_family == scenario.source.source_family
+        and event.primary_deny_code == scenario.expected.primary_code
+    )
+
+
+def _raw_generation_audit_identity_is_unique(scenario: ScenarioArtifact) -> bool:
+    identity = (
+        scenario.source.source_id,
+        scenario.source.source_family,
+        scenario.expected.primary_code,
+    )
+    matching_scenario_count = sum(
+        1
+        for candidate in (
+            list_mssql_evaluation_scenarios() + list_postgresql_evaluation_scenarios()
+        )
+        if candidate.evaluation_boundary == "generation"
+        and (
+            candidate.source.source_id,
+            candidate.source.source_family,
+            candidate.expected.primary_code,
+        )
+        == identity
+    )
+    return matching_scenario_count == 1
 
 
 def _failures_for_row(row: EvaluationComparisonRow) -> tuple[ReleaseGateFailure, ...]:
@@ -407,6 +481,21 @@ def _regression_detail(row: EvaluationComparisonRow) -> str:
             "Observed decision does not match the authoritative scenario expectation: "
             f"expected decision={expected_decision!r}, observed decision={observed_decision!r}, "
             f"expected deny code={expected_code!r}, observed deny code={observed_code!r}."
+        )
+    if set(row.regressions) == {"outcome_category"}:
+        baseline_outcome = row.baseline.outcome if row.baseline is not None else None
+        candidate_outcome = row.candidate.outcome if row.candidate is not None else None
+        expected_category = (
+            baseline_outcome.outcome_category if baseline_outcome is not None else None
+        )
+        observed_category = (
+            candidate_outcome.outcome_category if candidate_outcome is not None else None
+        )
+        return (
+            "Observed outcome category does not match the authoritative scenario "
+            "expectation while decision and deny code remained stable: "
+            f"expected outcome category={expected_category!r}, "
+            f"observed outcome category={observed_category!r}."
         )
 
     return (

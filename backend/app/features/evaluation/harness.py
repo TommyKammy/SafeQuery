@@ -7,7 +7,24 @@ from pydantic import BaseModel, ConfigDict, PositiveInt, model_validator
 
 
 EvaluationScenarioKind = Literal["positive", "safety", "regression"]
-EvaluationBoundary = Literal["guard", "connector_selection", "lifecycle", "execution"]
+EvaluationBoundary = Literal[
+    "generation",
+    "guard",
+    "connector_selection",
+    "lifecycle",
+    "execution",
+    "runtime",
+]
+EvaluationOutcomeCategory = Literal[
+    "bounded_success",
+    "connector_selection_denial",
+    "guard_denial",
+    "lifecycle_denial",
+    "malformed_generation",
+    "runtime_timeout",
+    "runtime_unavailable",
+    "source_binding_denial",
+]
 RegressionValidationSurface = Literal["generation", "guard", "execute", "audit"]
 RegressionRolloutStatus = Literal["active_baseline", "planned", "planned_flavor"]
 
@@ -40,6 +57,7 @@ class EvaluationExpectedOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: Literal["allow", "reject"]
+    outcome_category: EvaluationOutcomeCategory
     primary_code: Optional[str] = None
     canonical_sql: Optional[str] = None
     execution_evidence: Optional[EvaluationExecutionEvidence] = None
@@ -98,6 +116,7 @@ class SourceRegressionMatrixEntry(BaseModel):
     executable: bool
     validates: tuple[RegressionValidationSurface, ...]
     expected_decision: Optional[Literal["allow", "reject"]] = None
+    expected_outcome_category: Optional[EvaluationOutcomeCategory] = None
     primary_code: Optional[str] = None
 
 
@@ -174,6 +193,7 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
         ),
         expected=EvaluationExpectedOutcome(
             decision="allow",
+            outcome_category="bounded_success",
             canonical_sql=(
                 "SELECT TOP 10 vendor_name, approved_amount "
                 "FROM dbo.approved_vendor_spend "
@@ -200,6 +220,7 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
         ),
         expected=EvaluationExpectedOutcome(
             decision="allow",
+            outcome_category="bounded_success",
             canonical_sql=(
                 "SELECT region, COUNT(*) AS vendor_count "
                 "FROM dbo.approved_vendor_spend "
@@ -225,7 +246,21 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
         ),
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="guard_denial",
             primary_code="DENY_RESOURCE_ABUSE",
+        ),
+    ),
+    MSSQLEvaluationScenario(
+        scenario_id="mssql-safety-guard-denies-write-operation",
+        kind="safety",
+        evaluation_boundary="guard",
+        source=_MSSQL_SOURCE,
+        prompt="Delete old approved vendor spend records.",
+        canonical_sql="DELETE FROM dbo.approved_vendor_spend WHERE approved_amount = 0",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            outcome_category="guard_denial",
+            primary_code="DENY_WRITE_OPERATION",
         ),
     ),
     MSSQLEvaluationScenario(
@@ -237,6 +272,7 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT TOP 10 vendor_name FROM dbo.approved_vendor_spend",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="source_binding_denial",
             primary_code="DENY_SOURCE_BINDING_MISMATCH",
         ),
     ),
@@ -249,6 +285,7 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT TOP 10 vendor_name FROM dbo.approved_vendor_spend",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="connector_selection_denial",
             primary_code="DENY_UNSUPPORTED_SOURCE_BINDING",
         ),
     ),
@@ -261,6 +298,7 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT TOP 10 vendor_name FROM dbo.approved_vendor_spend",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="lifecycle_denial",
             primary_code="DENY_POLICY_VERSION_STALE",
         ),
     ),
@@ -273,6 +311,7 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT TOP 10 vendor_name FROM dbo.approved_vendor_spend",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="lifecycle_denial",
             primary_code="DENY_APPROVAL_EXPIRED",
         ),
     ),
@@ -285,7 +324,34 @@ MSSQL_EVALUATION_SCENARIOS: tuple[MSSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT vendor_name FROM [remote].[sales].[dbo].[vendors]",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="guard_denial",
             primary_code="DENY_LINKED_SERVER",
+        ),
+    ),
+    MSSQLEvaluationScenario(
+        scenario_id="mssql-regression-malformed-adapter-output-denied",
+        kind="regression",
+        evaluation_boundary="generation",
+        source=_MSSQL_SOURCE,
+        prompt="Return approved vendor spend with malformed adapter output.",
+        canonical_sql="",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            outcome_category="malformed_generation",
+            primary_code="DENY_SQL_GENERATION_FAILED",
+        ),
+    ),
+    MSSQLEvaluationScenario(
+        scenario_id="mssql-regression-runtime-timeout-denied",
+        kind="regression",
+        evaluation_boundary="runtime",
+        source=_MSSQL_SOURCE,
+        prompt="Run approved vendor spend query when the runtime times out.",
+        canonical_sql="SELECT TOP 10 vendor_name FROM dbo.approved_vendor_spend",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            outcome_category="runtime_timeout",
+            primary_code="DENY_RUNTIME_TIMEOUT",
         ),
     ),
 )
@@ -304,6 +370,7 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         ),
         expected=EvaluationExpectedOutcome(
             decision="allow",
+            outcome_category="bounded_success",
             canonical_sql=(
                 "SELECT vendor_name, approved_spend "
                 "FROM finance.approved_vendor_spend "
@@ -330,6 +397,7 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         ),
         expected=EvaluationExpectedOutcome(
             decision="allow",
+            outcome_category="bounded_success",
             canonical_sql=(
                 "SELECT region, COUNT(*) AS vendor_count "
                 "FROM finance.approved_vendor_spend "
@@ -352,7 +420,21 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT schemaname FROM pg_catalog.pg_tables",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="guard_denial",
             primary_code="DENY_SYSTEM_CATALOG_ACCESS",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-safety-guard-denies-write-operation",
+        kind="safety",
+        evaluation_boundary="guard",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Update approved vendor spend amounts.",
+        canonical_sql="UPDATE finance.approved_vendor_spend SET approved_spend = 0",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            outcome_category="guard_denial",
+            primary_code="DENY_WRITE_OPERATION",
         ),
     ),
     PostgreSQLEvaluationScenario(
@@ -364,6 +446,7 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="source_binding_denial",
             primary_code="DENY_SOURCE_BINDING_MISMATCH",
         ),
     ),
@@ -376,6 +459,7 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="connector_selection_denial",
             primary_code="DENY_UNSUPPORTED_SOURCE_BINDING",
         ),
     ),
@@ -388,6 +472,7 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="lifecycle_denial",
             primary_code="DENY_POLICY_VERSION_STALE",
         ),
     ),
@@ -400,6 +485,7 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="lifecycle_denial",
             primary_code="DENY_APPROVAL_EXPIRED",
         ),
     ),
@@ -412,6 +498,7 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT id FROM public.query_candidates LIMIT 10",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="connector_selection_denial",
             primary_code="DENY_UNSUPPORTED_SOURCE_BINDING",
         ),
     ),
@@ -424,7 +511,60 @@ POSTGRESQL_EVALUATION_SCENARIOS: tuple[PostgreSQLEvaluationScenario, ...] = (
         canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
         expected=EvaluationExpectedOutcome(
             decision="reject",
+            outcome_category="source_binding_denial",
             primary_code="DENY_APPLICATION_POSTGRES_REUSE",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-regression-malformed-adapter-output-denied",
+        kind="regression",
+        evaluation_boundary="generation",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Return approved vendor spend with malformed adapter output.",
+        canonical_sql="",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            outcome_category="malformed_generation",
+            primary_code="DENY_SQL_GENERATION_FAILED",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-regression-runtime-unavailable-denied",
+        kind="regression",
+        evaluation_boundary="runtime",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Run approved vendor spend query when the PostgreSQL runtime is unavailable.",
+        canonical_sql="SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 10",
+        expected=EvaluationExpectedOutcome(
+            decision="reject",
+            outcome_category="runtime_unavailable",
+            primary_code="DENY_RUNTIME_UNAVAILABLE",
+        ),
+    ),
+    PostgreSQLEvaluationScenario(
+        scenario_id="postgresql-positive-payload-bounded-approved-vendor-spend",
+        kind="positive",
+        evaluation_boundary="execution",
+        source=_POSTGRESQL_SOURCE,
+        prompt="Show approved vendor spend notes within bounded result payload limits.",
+        canonical_sql=(
+            "SELECT vendor_name, vendor_notes "
+            "FROM finance.approved_vendor_spend "
+            "ORDER BY vendor_name LIMIT 500"
+        ),
+        expected=EvaluationExpectedOutcome(
+            decision="allow",
+            outcome_category="bounded_success",
+            canonical_sql=(
+                "SELECT vendor_name, vendor_notes "
+                "FROM finance.approved_vendor_spend "
+                "ORDER BY vendor_name LIMIT 500"
+            ),
+            execution_evidence={
+                "connector_id": "postgresql_readonly",
+                "ownership": "backend",
+                "row_shape": ("vendor_name", "vendor_notes"),
+            },
         ),
     ),
 )
@@ -496,6 +636,7 @@ def _matrix_entry_from_scenario(
         executable=True,
         validates=_validated_surfaces_for(scenario),
         expected_decision=scenario.expected.decision,
+        expected_outcome_category=scenario.expected.outcome_category,
         primary_code=scenario.expected.primary_code,
     )
 
@@ -503,8 +644,10 @@ def _matrix_entry_from_scenario(
 def _validated_surfaces_for(
     scenario: ScenarioArtifact,
 ) -> tuple[RegressionValidationSurface, ...]:
+    if scenario.evaluation_boundary == "generation":
+        return ("generation", "audit")
     if scenario.evaluation_boundary == "guard":
         return ("generation", "guard", "audit")
-    if scenario.evaluation_boundary == "execution":
+    if scenario.evaluation_boundary in {"execution", "runtime"}:
         return ("generation", "guard", "execute", "audit")
     return ("execute", "audit")

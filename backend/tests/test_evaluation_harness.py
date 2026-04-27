@@ -17,7 +17,12 @@ from app.db.models.dataset_contract import (
     DatasetContractDatasetKind,
 )
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
-from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
+from app.db.models.preview import (
+    PreviewAuditEvent,
+    PreviewCandidate,
+    PreviewCandidateApproval,
+    PreviewRequest,
+)
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
 from app.features.evaluation import (
@@ -288,6 +293,7 @@ def test_mssql_evaluation_fixtures_are_source_bound_and_reconstructable() -> Non
         assert scenario.source.schema_snapshot_version > 0
         assert scenario.source.execution_policy_version > 0
         assert scenario.expected.decision in {"allow", "reject"}
+        assert scenario.expected.outcome_category
         if scenario.expected.decision == "reject":
             assert scenario.expected.primary_code
 
@@ -330,6 +336,7 @@ def test_postgresql_evaluation_fixtures_are_source_bound_and_reconstructable() -
         assert scenario.source.schema_snapshot_version > 0
         assert scenario.source.execution_policy_version > 0
         assert scenario.expected.decision in {"allow", "reject"}
+        assert scenario.expected.outcome_category
         if scenario.expected.decision == "reject":
             assert scenario.expected.primary_code
 
@@ -388,6 +395,104 @@ def test_source_regression_matrix_covers_active_families_and_keeps_planned_non_e
             entry.expected_decision == "reject" and entry.primary_code
             for entry in family_entries
         )
+        assert {
+            "malformed_generation",
+            "guard_denial",
+            "bounded_success",
+        } <= {entry.expected_outcome_category for entry in family_entries}
+
+
+def test_evaluation_harness_covers_issue_365_failure_and_bound_cases() -> None:
+    scenarios = list_mssql_evaluation_scenarios() + list_postgresql_evaluation_scenarios()
+    categories = {scenario.expected.outcome_category for scenario in scenarios}
+    scenario_ids = {scenario.scenario_id for scenario in scenarios}
+    serialized = " ".join(scenario.model_dump_json() for scenario in scenarios)
+
+    assert {
+        "malformed_generation",
+        "guard_denial",
+        "runtime_timeout",
+        "runtime_unavailable",
+        "bounded_success",
+    } <= categories
+    assert {
+        "mssql-safety-guard-denies-write-operation",
+        "postgresql-safety-guard-denies-write-operation",
+        "mssql-regression-malformed-adapter-output-denied",
+        "postgresql-regression-malformed-adapter-output-denied",
+        "mssql-regression-runtime-timeout-denied",
+        "postgresql-regression-runtime-unavailable-denied",
+        "postgresql-positive-payload-bounded-approved-vendor-spend",
+    } <= scenario_ids
+    assert "password" not in serialized.lower()
+    assert "connection_string" not in serialized.lower()
+    assert "/Users/" not in serialized
+    assert "C:\\Users\\" not in serialized
+
+
+def test_malformed_adapter_output_scenario_fails_before_candidate_approval() -> None:
+    from app.services.request_preview import (
+        PreviewAuditContext,
+        PreviewSubmissionContractError,
+        PreviewSubmissionRequest,
+        submit_preview_request,
+    )
+
+    scenario = _postgresql_scenarios_by_id()[
+        "postgresql-regression-malformed-adapter-output-denied"
+    ]
+
+    class MalformedAdapter:
+        def generate_sql(self, request):
+            del request
+            return type("MalformedAdapterResponse", (), {"candidate_sql": "   "})()
+
+    with _session_scope() as session:
+        _seed_postgresql_source(session, scenario=scenario)
+
+        with pytest.raises(PreviewSubmissionContractError) as exc_info:
+            submit_preview_request(
+                payload=PreviewSubmissionRequest(
+                    question=scenario.prompt,
+                    source_id=scenario.source.source_id,
+                ),
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                session=session,
+                sql_generation_adapter=MalformedAdapter(),
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="request-365-malformed-generation",
+                    correlation_id="correlation-365-malformed-generation",
+                    user_subject="user:alice",
+                    session_id="session-365-malformed-generation",
+                    query_candidate_id="candidate-365-malformed-generation",
+                    candidate_owner_subject="user:alice",
+                    application_version="safequery-test",
+                ),
+            )
+
+        persisted_events = (
+            session.query(PreviewAuditEvent)
+            .order_by(PreviewAuditEvent.lifecycle_order)
+            .all()
+        )
+        persisted_candidates = session.query(PreviewCandidate).all()
+        persisted_approvals = session.query(PreviewCandidateApproval).all()
+
+    assert exc_info.value.public_code == "preview_generation_failed"
+    assert persisted_candidates == []
+    assert persisted_approvals == []
+    assert [event.event_type for event in persisted_events] == ["generation_failed"]
+    assert persisted_events[0].audit_payload["denial_cause"] == (
+        "sql_generation_response_invalid"
+    )
+    serialized_events = str([event.audit_payload for event in persisted_events])
+    assert "password" not in serialized_events.lower()
+    assert "connection_string" not in serialized_events.lower()
+    assert "/Users/" not in serialized_events
 
 
 @pytest.mark.parametrize(
@@ -1348,6 +1453,7 @@ def test_postgresql_core_vertical_slice_cancellation_probe_blocks_before_executi
     "scenario_id",
     (
         "mssql-safety-guard-denies-waitfor-delay",
+        "mssql-safety-guard-denies-write-operation",
         "mssql-regression-linked-server-denied",
     ),
 )
@@ -1458,6 +1564,7 @@ def test_mssql_safety_approval_expiry_denies_at_lifecycle_boundary() -> None:
     "scenario_id",
     (
         "postgresql-safety-guard-denies-system-catalog-access",
+        "postgresql-safety-guard-denies-write-operation",
     ),
 )
 def test_postgresql_guard_safety_scenarios_deny_with_expected_codes(
@@ -1620,7 +1727,7 @@ def test_evaluation_comparison_keeps_same_family_different_sources_separate() ->
                 schema_snapshot_version=9,
                 execution_policy_version=3,
             ),
-            outcome={"decision": "allow"},
+            outcome={"decision": "allow", "outcome_category": "bounded_success"},
         ),
     )
     candidate = (
@@ -1638,7 +1745,7 @@ def test_evaluation_comparison_keeps_same_family_different_sources_separate() ->
                 schema_snapshot_version=9,
                 execution_policy_version=3,
             ),
-            outcome={"decision": "allow"},
+            outcome={"decision": "allow", "outcome_category": "bounded_success"},
         ),
     )
 
@@ -1668,7 +1775,7 @@ def test_evaluation_comparison_marks_profile_version_drift_as_regression() -> No
             schema_snapshot_version=7,
             execution_policy_version=2,
         ),
-        outcome={"decision": "allow"},
+        outcome={"decision": "allow", "outcome_category": "bounded_success"},
     )
     candidate = EvaluationOutcomeRecord(
         scenario_id="mssql-positive-approved-vendor-spend-top-vendors",
@@ -1684,7 +1791,7 @@ def test_evaluation_comparison_marks_profile_version_drift_as_regression() -> No
             schema_snapshot_version=7,
             execution_policy_version=2,
         ),
-        outcome={"decision": "allow"},
+        outcome={"decision": "allow", "outcome_category": "bounded_success"},
     )
 
     comparison = compare_evaluation_outcomes(
@@ -1715,7 +1822,11 @@ def test_evaluation_observed_outcome_reject_requires_non_blank_primary_code(
         ValueError,
         match="Reject outcomes must include a machine-readable primary code.",
     ):
-        EvaluationObservedOutcome(decision="reject", primary_code=primary_code)
+        EvaluationObservedOutcome(
+            decision="reject",
+            outcome_category="guard_denial",
+            primary_code=primary_code,
+        )
 
 
 @pytest.mark.parametrize("duplicate_side", ("baseline", "candidate"))
@@ -1736,7 +1847,7 @@ def test_evaluation_comparison_rejects_duplicate_comparison_identity(
             schema_snapshot_version=9,
             execution_policy_version=3,
         ),
-        outcome={"decision": "allow"},
+        outcome={"decision": "allow", "outcome_category": "bounded_success"},
     )
     baseline = (record, record) if duplicate_side == "baseline" else (record,)
     candidate = (record, record) if duplicate_side == "candidate" else (record,)

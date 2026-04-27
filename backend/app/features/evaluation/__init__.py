@@ -10,6 +10,7 @@ from app.features.evaluation.comparison import (
 )
 from app.features.evaluation.harness import (
     EvaluationExpectedOutcome,
+    EvaluationOutcomeCategory,
     EvaluationScenarioKind,
     EvaluationSourceProfile,
     MSSQLEvaluationScenario,
@@ -31,6 +32,7 @@ __all__ = [
     "EvaluationComparisonRow",
     "EvaluationExpectedOutcome",
     "EvaluationObservedOutcome",
+    "EvaluationOutcomeCategory",
     "EvaluationScenarioKind",
     "EvaluationOutcomeRecord",
     "EvaluationOutcomeSnapshot",
