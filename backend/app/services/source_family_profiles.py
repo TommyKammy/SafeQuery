@@ -48,6 +48,23 @@ class AuditAndEvaluationRequirements(BaseModel):
     supplemental_only_artifacts: tuple[str, ...]
 
 
+class ActiveSourceRuntimePostureRequirements(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_family: str
+    rollout_status: Literal["active_baseline"]
+    preview_timeout_seconds: int
+    guard_timeout_seconds: int
+    execute_timeout_seconds: int
+    retryable_unavailable_states: tuple[str, ...]
+    non_retryable_workflow_states: tuple[str, ...]
+    retry_attempts: int
+    retry_backoff: str
+    pool_boundary: Literal["per_registered_source"]
+    pool_sharing: Literal["no_cross_source_or_application_postgres_reuse"]
+    pool_owner: Literal["backend"]
+
+
 class SourceFamilyProfileRequirements(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -87,6 +104,57 @@ class SourceFlavorProfileRequirements(BaseModel):
 
 
 ACTIVE_SOURCE_FAMILIES: tuple[str, ...] = ("mssql", "postgresql")
+
+ACTIVE_SOURCE_RETRYABLE_UNAVAILABLE_STATES: tuple[str, ...] = (
+    "connection_timeout",
+    "source_unreachable",
+    "transient_driver_unavailable",
+)
+
+ACTIVE_SOURCE_NON_RETRYABLE_WORKFLOW_STATES: tuple[str, ...] = (
+    "malformed_request",
+    "policy_denied",
+    "source_binding_mismatch",
+    "unsupported_source_binding",
+    "guard_denied",
+)
+
+MSSQL_ACTIVE_RUNTIME_POSTURE_REQUIREMENTS = ActiveSourceRuntimePostureRequirements(
+    source_family="mssql",
+    rollout_status="active_baseline",
+    preview_timeout_seconds=30,
+    guard_timeout_seconds=30,
+    execute_timeout_seconds=30,
+    retryable_unavailable_states=ACTIVE_SOURCE_RETRYABLE_UNAVAILABLE_STATES,
+    non_retryable_workflow_states=ACTIVE_SOURCE_NON_RETRYABLE_WORKFLOW_STATES,
+    retry_attempts=1,
+    retry_backoff="none_inside_authoritative_execution_boundary",
+    pool_boundary="per_registered_source",
+    pool_sharing="no_cross_source_or_application_postgres_reuse",
+    pool_owner="backend",
+)
+
+POSTGRESQL_ACTIVE_RUNTIME_POSTURE_REQUIREMENTS = ActiveSourceRuntimePostureRequirements(
+    source_family="postgresql",
+    rollout_status="active_baseline",
+    preview_timeout_seconds=30,
+    guard_timeout_seconds=30,
+    execute_timeout_seconds=30,
+    retryable_unavailable_states=ACTIVE_SOURCE_RETRYABLE_UNAVAILABLE_STATES,
+    non_retryable_workflow_states=ACTIVE_SOURCE_NON_RETRYABLE_WORKFLOW_STATES,
+    retry_attempts=1,
+    retry_backoff="none_inside_authoritative_execution_boundary",
+    pool_boundary="per_registered_source",
+    pool_sharing="no_cross_source_or_application_postgres_reuse",
+    pool_owner="backend",
+)
+
+ACTIVE_SOURCE_RUNTIME_POSTURE_REQUIREMENTS: tuple[
+    ActiveSourceRuntimePostureRequirements, ...
+] = (
+    MSSQL_ACTIVE_RUNTIME_POSTURE_REQUIREMENTS,
+    POSTGRESQL_ACTIVE_RUNTIME_POSTURE_REQUIREMENTS,
+)
 
 FUTURE_FAMILY_ACTIVATION_REQUIRED_COVERAGE: tuple[str, ...] = (
     "positive_scenarios",
@@ -784,6 +852,16 @@ PLANNED_SOURCE_FLAVOR_PROFILE_REQUIREMENTS: tuple[
     AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS,
     AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS,
 )
+
+
+def get_active_source_runtime_posture_requirements(
+    source_family: str,
+) -> ActiveSourceRuntimePostureRequirements | None:
+    normalized_source_family = source_family.strip().lower()
+    for requirements in ACTIVE_SOURCE_RUNTIME_POSTURE_REQUIREMENTS:
+        if requirements.source_family == normalized_source_family:
+            return requirements
+    return None
 
 
 def get_planned_source_family_profile_requirements(

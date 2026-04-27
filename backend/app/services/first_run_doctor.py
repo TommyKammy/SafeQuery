@@ -40,6 +40,9 @@ from app.services.source_entitlements import (
     SourceEntitlementError,
     ensure_subject_is_entitled_for_source,
 )
+from app.services.source_family_profiles import (
+    get_active_source_runtime_posture_requirements,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -432,6 +435,9 @@ def _check_execution_connector(
         PostgreSQLExecutionRuntimeUnavailable,
     ) as exc:
         family_name = "MSSQL" if selection.source_family == "mssql" else "PostgreSQL"
+        runtime_posture = get_active_source_runtime_posture_requirements(
+            selection.source_family
+        )
         detail: dict[str, object] = {
             "source_id": selection.source_id,
             "source_family": selection.source_family,
@@ -441,6 +447,8 @@ def _check_execution_connector(
             "runtime_status": "unavailable",
             "error": exc.__class__.__name__,
         }
+        if runtime_posture is not None:
+            detail["runtime_posture"] = runtime_posture.model_dump(mode="json")
         if runtime_dependency is not None:
             detail["runtime_dependency"] = runtime_dependency
         return FirstRunDoctorCheck(
@@ -460,6 +468,11 @@ def _check_execution_connector(
         "connector_id": selection.connector_id,
         "ownership": selection.ownership,
     }
+    runtime_posture = get_active_source_runtime_posture_requirements(
+        selection.source_family
+    )
+    if runtime_posture is not None:
+        detail["runtime_posture"] = runtime_posture.model_dump(mode="json")
     if runtime_detail:
         detail["runtime_status"] = "available"
         detail["runtime"] = runtime_detail
