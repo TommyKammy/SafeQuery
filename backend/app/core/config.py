@@ -242,7 +242,12 @@ class Settings(BaseSettings):
             return value
 
         parts = _mssql_connection_string_parts(normalized)
-        password = parts.get("pwd") or parts.get("password")
+        if "pwd" in parts:
+            password = parts["pwd"]
+        elif "password" in parts:
+            password = parts["password"]
+        else:
+            password = None
         if password is None:
             return value
 

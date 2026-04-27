@@ -256,6 +256,33 @@ class SettingsTestCase(unittest.TestCase):
 
         self.assertNotIn("Pwd=change-me", str(exc_info.exception))
 
+    def test_business_mssql_source_rejects_empty_password_values(self) -> None:
+        for password_kv in ("Pwd=", "Pwd=   ", "Password=", "Password=   "):
+            with self.subTest(password_kv=password_kv):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must "
+                    "include a non-empty password",
+                ) as exc_info:
+                    Settings(
+                        app_postgres_url=(
+                            "postgresql://safequery:safequery@db:5432/safequery"
+                        ),
+                        business_mssql_source_connection_string=(
+                            "Driver={ODBC Driver 18 for SQL Server};"
+                            "Server=tcp:mssql-source,1433;"
+                            "Database=business;"
+                            "Uid=safequery_reader;"
+                            f"{password_kv};"
+                            "Encrypt=yes;"
+                            "TrustServerCertificate=no"
+                        ),
+                        _env_file=None,
+                        _env_prefix="SAFEQUERY_",
+                    )
+
+                self.assertNotIn(f"{password_kv};", str(exc_info.exception))
+
     def test_dev_auth_is_disabled_by_default_and_can_enable_for_development(self) -> None:
         default_settings = Settings(
             app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
