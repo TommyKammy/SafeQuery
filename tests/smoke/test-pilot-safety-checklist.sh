@@ -109,6 +109,12 @@ runbook_required_patterns=(
   "^## Maintenance$"
   "^## Incident$"
   "^## Recovery$"
+  "^## Pilot Migration Backup and Rollback Runbook$"
+  "^### Migration preflight$"
+  "^### Backup expectations$"
+  "^### Apply and verify$"
+  "^### Rollback decision guidance$"
+  "^### Post-incident notes$"
   "preview"
   "generation"
   "guard"
@@ -132,6 +138,15 @@ runbook_required_patterns=(
   "execution_connector"
   "backend"
   "frontend"
+  "application database migrations"
+  "business source connectivity checks"
+  "Do not run destructive rollback or restore commands"
+  "confirmation"
+  "backup artifact identifier"
+  "before-migration evidence"
+  "after-migration evidence"
+  "pilot-deployment-profile.md"
+  "Secret-Safe Support Bundle"
 )
 
 for pattern in "${runbook_required_patterns[@]}"; do
