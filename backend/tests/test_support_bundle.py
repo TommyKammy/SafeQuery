@@ -357,6 +357,29 @@ def test_support_bundle_service_includes_bounded_diagnostics_without_secrets(
                 "activationPosture": "active",
                 "datasetContractVersion": 1,
                 "schemaSnapshotVersion": 1,
+                "governanceBindings": [
+                    {
+                        "role": "owner",
+                        "state": "valid",
+                        "affectsEntitlement": True,
+                        "summary": "Owner binding is current and normalized.",
+                        "recovery": "No operator recovery is required for this binding.",
+                    },
+                    {
+                        "role": "security_review",
+                        "state": "valid",
+                        "affectsEntitlement": False,
+                        "summary": "Security Review binding is current and normalized.",
+                        "recovery": "No operator recovery is required for this binding.",
+                    },
+                    {
+                        "role": "exception_policy",
+                        "state": "missing",
+                        "affectsEntitlement": False,
+                        "summary": "Exception Policy binding is missing or malformed.",
+                        "recovery": "Reconcile the authoritative dataset contract before granting access.",
+                    },
+                ],
             }
         ],
         "health": {

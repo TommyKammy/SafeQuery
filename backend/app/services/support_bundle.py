@@ -22,7 +22,10 @@ from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.services.first_run_doctor import _alembic_heads
 from app.services.health import build_operator_health
-from app.services.operator_workflow import get_operator_workflow_snapshot
+from app.services.operator_workflow import (
+    OperatorWorkflowGovernanceBindingStatus,
+    get_operator_workflow_snapshot,
+)
 
 
 _APP_VERSION = "0.1.0"
@@ -73,6 +76,10 @@ class SupportBundleSource(BaseModel):
     schema_snapshot_version: Optional[int] = Field(
         default=None,
         serialization_alias="schemaSnapshotVersion",
+    )
+    governance_bindings: list[OperatorWorkflowGovernanceBindingStatus] = Field(
+        default_factory=list,
+        serialization_alias="governanceBindings",
     )
 
 
@@ -258,9 +265,15 @@ class SupportBundle(BaseModel):
 
 
 def _active_sources(session: Session) -> list[SupportBundleSource]:
+    workflow_snapshot = get_operator_workflow_snapshot(session)
+    sources_by_id = {
+        source.source_id: source
+        for source in workflow_snapshot.sources
+        if source.activation_posture == SourceActivationPosture.ACTIVE.value
+    }
     sources = session.scalars(
         select(RegisteredSource)
-        .where(RegisteredSource.activation_posture == SourceActivationPosture.ACTIVE)
+        .where(RegisteredSource.source_id.in_(sources_by_id))
         .order_by(RegisteredSource.source_id)
     )
     bundle_sources: list[SupportBundleSource] = []
@@ -287,6 +300,9 @@ def _active_sources(session: Session) -> list[SupportBundleSource]:
                 schema_snapshot_version=(
                     snapshot.snapshot_version if snapshot is not None else None
                 ),
+                governance_bindings=sources_by_id[
+                    source.source_id
+                ].governance_bindings,
             )
         )
     return bundle_sources

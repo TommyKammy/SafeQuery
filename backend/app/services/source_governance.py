@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.dataset_contract import DatasetContract
@@ -53,6 +53,19 @@ def resolve_authoritative_source_governance(
         raise SourceGovernanceResolutionError(
             f"Registered source '{source.source_id}' is missing "
             "authoritative source-scoped governance artifacts."
+        )
+    latest_contract_version = session.execute(
+        select(func.max(DatasetContract.contract_version)).where(
+            DatasetContract.registered_source_id == source.id
+        )
+    ).scalar_one()
+    if (
+        latest_contract_version is not None
+        and dataset_contract.contract_version < latest_contract_version
+    ):
+        raise SourceGovernanceResolutionError(
+            f"Registered source '{source.source_id}' is linked to a stale "
+            "source-scoped governance contract."
         )
 
     if schema_snapshot is None or schema_snapshot.registered_source_id != source.id:

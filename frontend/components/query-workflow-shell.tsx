@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { HealthStatusCard } from "./health-status-card";
 import type { HealthSnapshot } from "../lib/health";
 import type {
+  GovernanceBindingStatus,
   OperatorWorkflowAuditEvent,
   OperatorWorkflowExecutedEvidence,
   OperatorHistoryItem,
@@ -419,6 +420,45 @@ function findSourceOption(
   return sourceOptions.find((source) => source.sourceId === sourceId);
 }
 
+function governanceBindingStateLabel(binding: GovernanceBindingStatus): string {
+  return `${binding.role.replace("_", " ")}: ${binding.state}`;
+}
+
+function hasEntitlementAffectingGovernanceDrift(source?: SourceOption): boolean {
+  return (
+    source?.governanceBindings.some(
+      (binding) => binding.affectsEntitlement && binding.state !== "valid"
+    ) ?? false
+  );
+}
+
+function renderGovernanceBindingStatuses(source?: SourceOption) {
+  if (!source || source.governanceBindings.length === 0) {
+    return null;
+  }
+
+  const hasDrift = hasEntitlementAffectingGovernanceDrift(source);
+  return (
+    <div
+      aria-label="Governance binding status"
+      className={`state-callout state-callout-${hasDrift ? "danger" : "empty"}`}
+    >
+      <p className="state-callout-title">
+        {hasDrift ? "Governance binding review required" : "Governance bindings current"}
+      </p>
+      <div className="guard-list">
+        {source.governanceBindings.map((binding) => (
+          <div className="guard-item" key={`${source.sourceId}:${binding.role}`}>
+            <span className="meta-label">{governanceBindingStateLabel(binding)}</span>
+            <strong>{binding.summary}</strong>
+            <span>{binding.recovery}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -779,6 +819,15 @@ function resolveSourceBinding(
       };
     }
 
+    if (hasEntitlementAffectingGovernanceDrift(source)) {
+      return {
+        blockedReason:
+          "Resolve entitlement-affecting governance binding status before preview can be requested.",
+        source,
+        state: "query"
+      };
+    }
+
     return {
       source,
       state
@@ -795,6 +844,15 @@ function resolveSourceBinding(
   if (source.activationPosture !== "active") {
     return {
       blockedReason: "The selected source is not executable for preview submission.",
+      state: "query"
+    };
+  }
+
+  if (hasEntitlementAffectingGovernanceDrift(source)) {
+    return {
+      blockedReason:
+        "Resolve entitlement-affecting governance binding status before preview can be requested.",
+      source,
       state: "query"
     };
   }
@@ -1746,6 +1804,16 @@ export function QueryWorkflowShell({
       return;
     }
 
+    if (hasEntitlementAffectingGovernanceDrift(selectedSource)) {
+      setPreviewSubmission({
+        code: "preview_governance_binding_review_required",
+        message:
+          "Resolve entitlement-affecting governance binding status before preview can be requested.",
+        status: "failed"
+      });
+      return;
+    }
+
     setPreviewSubmission({ status: "submitting" });
 
     const headers: Record<string, string> = {
@@ -2151,6 +2219,7 @@ export function QueryWorkflowShell({
                     Choose one explicit source before preview submission. SafeQuery does not infer or
                     auto-route the initial source binding.
                   </p>
+                  {renderGovernanceBindingStatuses(sourceBinding.source)}
                   {sourceBinding.blockedReason ? (
                     <div className="state-callout state-callout-danger">
                       <p className="state-callout-title">Preview submission blocked</p>
