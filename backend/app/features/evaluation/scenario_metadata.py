@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import Literal, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
-
+from app.features.audit.event_model import ReleaseGateScenarioAuditPayload
 from app.features.evaluation.harness import (
     MSSQLEvaluationScenario,
     PostgreSQLEvaluationScenario,
@@ -14,18 +13,6 @@ from app.features.evaluation.harness import (
 
 
 ScenarioArtifact = Union[MSSQLEvaluationScenario, PostgreSQLEvaluationScenario]
-
-
-class ReleaseGateScenarioMetadata(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    scenario_id: str
-    source_id: str
-    candidate_id: str
-    guard_decision: Literal["allow", "reject"]
-    guard_audit_event_id: UUID
-    execution_run_id: Optional[UUID] = None
-    execution_audit_event_id: Optional[UUID] = None
 
 
 def build_release_gate_scenario_metadata(
@@ -43,7 +30,7 @@ def build_release_gate_scenario_metadata(
     guard_audit_event_id: UUID | None,
     execution_run_id: UUID | None = None,
     execution_audit_event_id: UUID | None = None,
-) -> ReleaseGateScenarioMetadata | None:
+) -> ReleaseGateScenarioAuditPayload | None:
     if candidate_id is None or guard_decision is None or guard_audit_event_id is None:
         return None
 
@@ -61,7 +48,7 @@ def build_release_gate_scenario_metadata(
     if scenario is None:
         return None
 
-    return ReleaseGateScenarioMetadata(
+    return ReleaseGateScenarioAuditPayload(
         scenario_id=scenario.scenario_id,
         source_id=scenario.source.source_id,
         candidate_id=candidate_id,
@@ -96,10 +83,8 @@ def _find_authoritative_scenario(
             and source.dataset_contract_version == dataset_contract_version
             and source.schema_snapshot_version == schema_snapshot_version
             and source.execution_policy_version == execution_policy_version
-            and (
-                connector_profile_version is None
-                or source.connector_profile_version == connector_profile_version
-            )
+            and connector_profile_version is not None
+            and source.connector_profile_version == connector_profile_version
             and " ".join(scenario.canonical_sql.split()) == normalized_sql
             and scenario.expected.decision == guard_decision
         ):

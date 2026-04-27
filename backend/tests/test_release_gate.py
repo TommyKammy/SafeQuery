@@ -15,6 +15,9 @@ from app.features.evaluation.harness import (
     list_mssql_evaluation_scenarios,
     list_postgresql_evaluation_scenarios,
 )
+from app.features.evaluation.scenario_metadata import (
+    build_release_gate_scenario_metadata,
+)
 from app.features.mlflow_export import build_mlflow_export_from_evaluation_scenario
 
 
@@ -99,7 +102,16 @@ def test_release_gate_passes_when_authoritative_records_match_harness() -> None:
 
 
 def test_release_gate_accepts_scenario_id_from_shared_audit_metadata() -> None:
-    scenario = list_postgresql_evaluation_scenarios()[0]
+    scenario = next(
+        (
+            scenario
+            for scenario in list_postgresql_evaluation_scenarios()
+            if scenario.evaluation_boundary != "guard"
+            and scenario.expected.decision == "allow"
+        ),
+        None,
+    )
+    assert scenario is not None
     event_id = uuid4()
     audit_artifact = {
         "event": {
@@ -144,6 +156,90 @@ def test_release_gate_accepts_scenario_id_from_shared_audit_metadata() -> None:
 
     assert decision.status == "pass"
     assert decision.failure_count == 0
+
+
+def test_release_gate_fails_closed_for_scenario_id_metadata_mismatch() -> None:
+    scenario = next(
+        scenario
+        for scenario in list_postgresql_evaluation_scenarios()
+        if scenario.evaluation_boundary != "guard"
+        and scenario.expected.decision == "allow"
+    )
+    event_id = uuid4()
+    audit_artifact = {
+        "scenario_id": "postgresql-safety-stale-policy-denied",
+        "event": {
+            "event_id": event_id,
+            "event_type": "execution_completed",
+            "occurred_at": datetime.now(timezone.utc),
+            "request_id": f"request-{scenario.scenario_id}",
+            "correlation_id": f"correlation-{scenario.scenario_id}",
+            "user_subject": "user:release-gate",
+            "session_id": "session-release-gate",
+            "source_id": scenario.source.source_id,
+            "source_family": scenario.source.source_family,
+            "source_flavor": scenario.source.source_flavor,
+            "dialect_profile_version": scenario.source.dialect_profile_version,
+            "dataset_contract_version": scenario.source.dataset_contract_version,
+            "schema_snapshot_version": scenario.source.schema_snapshot_version,
+            "execution_policy_version": scenario.source.execution_policy_version,
+            "connector_profile_version": scenario.source.connector_profile_version,
+            "release_gate_scenario": {
+                "scenario_id": scenario.scenario_id,
+                "source_id": scenario.source.source_id,
+                "candidate_id": "candidate-release-gate",
+                "guard_decision": "allow",
+                "guard_audit_event_id": str(uuid4()),
+                "execution_run_id": str(event_id),
+                "execution_audit_event_id": str(event_id),
+            },
+        },
+    }
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=_observed_records_from_harness(),
+        audit_artifacts=(
+            audit_artifact,
+            *(
+                artifact
+                for artifact in _audit_artifacts_from_harness()
+                if artifact["scenario_id"]
+                not in {scenario.scenario_id, "postgresql-safety-stale-policy-denied"}
+            ),
+        ),
+    )
+
+    assert decision.status == "fail"
+    assert {
+        failure.deny_code
+        for failure in decision.failures
+        if failure.scenario_id
+        in {scenario.scenario_id, "postgresql-safety-stale-policy-denied"}
+    } == {"DENY_MISSING_AUDIT_COVERAGE", "DENY_STALE_AUDIT_COVERAGE"}
+
+
+def test_release_gate_scenario_metadata_requires_connector_profile_version() -> None:
+    scenario = next(
+        scenario
+        for scenario in list_postgresql_evaluation_scenarios()
+        if scenario.source.connector_profile_version is not None
+    )
+
+    metadata = build_release_gate_scenario_metadata(
+        source_id=scenario.source.source_id,
+        source_family=scenario.source.source_family,
+        source_flavor=scenario.source.source_flavor,
+        dataset_contract_version=scenario.source.dataset_contract_version,
+        schema_snapshot_version=scenario.source.schema_snapshot_version,
+        execution_policy_version=scenario.source.execution_policy_version,
+        connector_profile_version=None,
+        canonical_sql=scenario.canonical_sql,
+        candidate_id="candidate-release-gate",
+        guard_decision=scenario.expected.decision,
+        guard_audit_event_id=uuid4(),
+    )
+
+    assert metadata is None
 
 
 def test_release_gate_fails_closed_when_evaluations_have_no_audit_artifacts() -> None:

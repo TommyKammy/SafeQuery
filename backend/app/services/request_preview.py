@@ -32,6 +32,7 @@ from app.features.guard import (
 )
 from app.features.operator_history.payloads import GuardStatus
 from app.services.candidate_lifecycle import (
+    CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY,
     CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
 )
 from app.services.source_entitlements import (
@@ -250,6 +251,7 @@ def _build_preview_lifecycle_audit_events(
     audit_context: PreviewAuditContext | None,
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
     guard_evaluation: SQLGuardEvaluation | None = None,
+    candidate_sql: str | None = None,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
         return []
@@ -262,6 +264,20 @@ def _build_preview_lifecycle_audit_events(
         "generation_completed",
         "guard_evaluated",
     ):
+        execution_policy_version = (
+            CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
+                resolved_source.source_family
+            )
+            if event_type == "guard_evaluated" and guard_evaluation is not None
+            else None
+        )
+        connector_profile_version = (
+            CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY.get(
+                resolved_source.source_family
+            )
+            if event_type == "guard_evaluated" and guard_evaluation is not None
+            else None
+        )
         event = SourceAwareAuditEvent(
             event_id=uuid4(),
             event_type=event_type,
@@ -343,6 +359,8 @@ def _build_preview_lifecycle_audit_events(
             source_flavor=resolved_source.source_flavor,
             dataset_contract_version=dataset_contract.contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
+            execution_policy_version=execution_policy_version,
+            connector_profile_version=connector_profile_version,
             candidate_state=(
                 "generated"
                 if adapter_metadata is not None and event_type == "generation_completed"
@@ -372,12 +390,11 @@ def _build_preview_lifecycle_audit_events(
                 else None
             ),
         )
-        if event_type == "guard_evaluated" and guard_evaluation is not None:
-            execution_policy_version = (
-                CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
-                    resolved_source.source_family
-                )
-            )
+        if (
+            event_type == "guard_evaluated"
+            and guard_evaluation is not None
+            and candidate_sql is not None
+        ):
             metadata = build_release_gate_scenario_metadata(
                 source_id=resolved_source.source_id,
                 source_family=resolved_source.source_family,
@@ -385,17 +402,14 @@ def _build_preview_lifecycle_audit_events(
                 dataset_contract_version=dataset_contract.contract_version,
                 schema_snapshot_version=schema_snapshot.snapshot_version,
                 execution_policy_version=execution_policy_version,
-                connector_profile_version=None,
-                canonical_sql=guard_evaluation.canonical_sql,
+                connector_profile_version=connector_profile_version,
+                canonical_sql=candidate_sql,
                 candidate_id=audit_context.query_candidate_id,
                 guard_decision=guard_evaluation.decision,
                 guard_audit_event_id=event.event_id,
             )
             if metadata is not None:
-                event.release_gate_scenario = metadata.model_dump(
-                    mode="json",
-                    exclude_none=True,
-                )
+                event.release_gate_scenario = metadata
         causation_event_id = event.event_id
         events.append(event)
 
@@ -1334,6 +1348,7 @@ def submit_preview_request(
             audit_context=audit_context,
             adapter_metadata=adapter_metadata,
             guard_evaluation=guard_evaluation,
+            candidate_sql=candidate_sql,
         ),
     )
     request_id, candidate_id = _persist_preview_submission_records(

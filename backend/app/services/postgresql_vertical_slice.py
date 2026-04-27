@@ -247,10 +247,7 @@ def _audit_base(
             guard_audit_event_id=event.event_id,
         )
         if metadata is not None:
-            event.release_gate_scenario = metadata.model_dump(
-                mode="json",
-                exclude_none=True,
-            )
+            event.release_gate_scenario = metadata
     return event
 
 

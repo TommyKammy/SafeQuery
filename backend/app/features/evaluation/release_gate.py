@@ -55,24 +55,37 @@ class ReleaseGateAuditArtifact(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _hydrate_scenario_id_from_event_metadata(cls, value: Any) -> Any:
-        if not isinstance(value, Mapping) or value.get("scenario_id") is not None:
+        if not isinstance(value, Mapping):
             return value
 
+        top_level_scenario_id = value.get("scenario_id")
         event = value.get("event")
-        release_gate_scenario = None
+        release_gate_scenario: Any = None
         if isinstance(event, SourceAwareAuditEvent):
             release_gate_scenario = event.release_gate_scenario
         elif isinstance(event, Mapping):
             release_gate_scenario = event.get("release_gate_scenario")
 
-        if not isinstance(release_gate_scenario, Mapping):
+        if isinstance(release_gate_scenario, Mapping):
+            embedded_scenario_id = release_gate_scenario.get("scenario_id")
+        else:
+            embedded_scenario_id = getattr(
+                release_gate_scenario,
+                "scenario_id",
+                None,
+            )
+
+        if not isinstance(embedded_scenario_id, str) or not embedded_scenario_id.strip():
             return value
 
-        scenario_id = release_gate_scenario.get("scenario_id")
-        if not isinstance(scenario_id, str) or not scenario_id.strip():
+        if isinstance(top_level_scenario_id, str) and top_level_scenario_id.strip():
+            if top_level_scenario_id != embedded_scenario_id:
+                return value
+            return value
+        if top_level_scenario_id is not None and not isinstance(top_level_scenario_id, str):
             return value
 
-        return {**value, "scenario_id": scenario_id}
+        return {**value, "scenario_id": embedded_scenario_id}
 
 
 class ReleaseGateDecision(BaseModel):
