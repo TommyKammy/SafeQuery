@@ -39,6 +39,7 @@ from app.services.request_preview import (
     _persist_candidate_approval_record,
     submit_preview_request,
 )
+from app.services.operator_workflow import get_operator_workflow_snapshot
 from app.services.sql_generation_adapter import (
     SQLGenerationAdapterConfigurationError,
     SQLGenerationAdapterResponse,
@@ -489,7 +490,19 @@ def test_http_preview_submission_blocks_guard_rejected_adapter_sql(
         response_payload = response.json()
         assert response_payload["candidate"]["guard_status"] == "blocked"
         assert response_payload["candidate"]["state"] == "blocked"
+        assert response_payload["candidate"]["primary_deny_code"] == (
+            "DENY_MULTI_STATEMENT"
+        )
+        assert response_payload["candidate"]["denial_reason"] == (
+            "Canonical SQL must contain exactly one SELECT statement."
+        )
         assert response_payload["evaluation"]["state"] == "blocked"
+        assert response_payload["evaluation"]["primary_deny_code"] == (
+            "DENY_MULTI_STATEMENT"
+        )
+        assert response_payload["evaluation"]["denial_reason"] == (
+            "Canonical SQL must contain exactly one SELECT statement."
+        )
 
         persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
@@ -514,9 +527,37 @@ def test_http_preview_submission_blocks_guard_rejected_adapter_sql(
         assert persisted_approval.executed_at is None
         assert persisted_guard_event.primary_deny_code == "DENY_MULTI_STATEMENT"
         assert persisted_guard_event.denial_cause == "guard_rejected"
+        assert persisted_guard_event.audit_payload["source_id"] == "sap-approved-spend"
+        assert persisted_guard_event.audit_payload["query_candidate_id"] == (
+            persisted_candidate.candidate_id
+        )
+        assert persisted_guard_event.audit_payload["guard_decision"] == "reject"
+        assert persisted_guard_event.audit_payload["denial_reason"] == (
+            "Canonical SQL must contain exactly one SELECT statement."
+        )
         assert persisted_guard_event.audit_payload["guard_version"] == (
             "postgresql-guard-v1"
         )
+        assert "DELETE FROM" not in str(persisted_guard_event.audit_payload)
+
+        workflow_payload = get_operator_workflow_snapshot(session).model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
+        candidate_item = next(
+            item
+            for item in workflow_payload["history"]
+            if item["itemType"] == "candidate"
+        )
+        assert candidate_item["guardStatus"] == "blocked"
+        assert candidate_item["primaryDenyCode"] == "DENY_MULTI_STATEMENT"
+        assert candidate_item["auditEvents"][0]["guardDecision"] == "reject"
+        assert candidate_item["auditEvents"][0]["denialReason"] == (
+            "Canonical SQL must contain exactly one SELECT statement."
+        )
+        serialized_workflow = str(workflow_payload)
+        assert "credential" not in serialized_workflow.lower()
 
         calls: list[str] = []
         app.state.execution_query_runner = lambda **_: calls.append("called")
