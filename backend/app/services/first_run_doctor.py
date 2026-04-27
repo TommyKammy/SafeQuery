@@ -22,6 +22,7 @@ from app.db.models.dataset_contract import DatasetContract, DatasetContractDatas
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
+from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
 from app.features.execution import (
     ExecutionConnectorSelectionError,
     MSSQLExecutionRuntimeUnavailable,
@@ -417,6 +418,40 @@ def _check_execution_connector(
                 "source_family": source.source_family,
                 "source_flavor": source.source_flavor,
                 "deny_code": exc.deny_code,
+            },
+        )
+
+    expected_connection_reference_by_connector = {
+        "postgresql_readonly": "env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        "mssql_readonly": "env:SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING",
+    }
+    expected_connection_reference = expected_connection_reference_by_connector.get(
+        selection.connector_id
+    )
+    actual_connection_reference = getattr(source, "connection_reference", None)
+    normalized_connection_reference = (
+        actual_connection_reference.strip()
+        if isinstance(actual_connection_reference, str)
+        else None
+    )
+    if (
+        expected_connection_reference is None
+        or normalized_connection_reference != expected_connection_reference
+    ):
+        return FirstRunDoctorCheck(
+            name="execution_connector",
+            status="fail",
+            message=(
+                "Active demo source is not bound to the backend-owned execution "
+                "connection reference."
+            ),
+            detail={
+                "source_id": selection.source_id,
+                "source_family": selection.source_family,
+                "source_flavor": selection.source_flavor,
+                "connector_id": selection.connector_id,
+                "ownership": selection.ownership,
+                "deny_code": DENY_SOURCE_BINDING_MISMATCH,
             },
         )
 
