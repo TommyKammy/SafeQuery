@@ -458,6 +458,7 @@ def _rejected_guard_evaluation(detail: str) -> SQLGuardEvaluation:
         + "\\" * 2
         + "\\".join(("fileserver", "share", "safequery.sql")),
         "guard detail referenced ~" + "/" + "safequery/query.sql",
+        "guard detail referenced path=" + "/" + "/".join(("tmp", "safequery.sql")),
         "guard detail referenced bearer token in adapter output",
     ],
 )
@@ -468,6 +469,20 @@ def test_guard_denial_reason_sanitizer_blocks_paths_and_credentials(
         _sanitized_guard_denial_reason(_rejected_guard_evaluation(detail))
         == "SQL guard rejected the generated candidate."
     )
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "Guard rejected external reference https://docs.example.test/guard/reason",
+        "Guard rejected tokenized input from the parser stage",
+        "Guard rejected message from the secretariat review queue",
+    ],
+)
+def test_guard_denial_reason_sanitizer_keeps_benign_reason_terms(
+    detail: str,
+) -> None:
+    assert _sanitized_guard_denial_reason(_rejected_guard_evaluation(detail)) == detail
 
 
 def test_guard_denial_reason_sanitizer_keeps_truncation_within_cap() -> None:

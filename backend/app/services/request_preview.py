@@ -59,18 +59,18 @@ PREVIEW_PENDING_GUARD_STATUS: GuardStatus = "pending"
 _MAX_DENIAL_REASON_LENGTH = 240
 _RAW_WORKSTATION_PATH_PATTERN = re.compile(
     r"(?i)(?:"
-    r"(?<!:)/(?:[^/\s:;,'\")]+/)+[^\s:;,'\")]*"
+    r"(?:^|(?<=[\s'\"(=]))/(?:[^/\s:;,'\")]+/)+[^\s:;,'\")]*"
     r"|[a-z]:[\\/](?:[^\\/\s:;,'\")]+[\\/])*[^\\/\s:;,'\")]+"
     r"|\\\\[^\\\s/:;,'\")]+\\[^\\\s:;,'\")]+(?:\\[^\\\s:;,'\")]+)*"
     r"|(?<!\S)~[\\/][^\s:;,'\")]+"
     r")"
 )
 _CREDENTIAL_MARKER_PATTERN = re.compile(
-    r"(?i)("
+    r"(?i)(?<![A-Za-z0-9_])("
     r"password|passwd|pwd|secret|token|credential|bearer"
     r"|api[_ -]?key|access[_ -]?key|private[_ -]?key"
     r"|client[_ -]?secret|connection[_ -]?string"
-    r")"
+    r")(?![A-Za-z0-9_])"
 )
 _GUARD_VERSION_BY_SOURCE_FAMILY = {
     "mssql": "mssql-guard-v1",
