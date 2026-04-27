@@ -7,7 +7,7 @@ sharing evidence from a pilot stack. It complements
 [pilot-safety-verification-checklist.md](./pilot-safety-verification-checklist.md),
 and [pilot-operations-runbook.md](./pilot-operations-runbook.md).
 
-The profile is intentionally local/pilot scoped. It does not define production
+The profile is intentionally local/pilot-scoped. It does not define production
 release, cloud tenancy, secret rotation, or enterprise identity deployment.
 Those remain later deployment and security tracks.
 
