@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from typing import Any, Optional
+from typing import Any, NoReturn, Optional
 from typing_extensions import Annotated
 from uuid import UUID, uuid4
 
@@ -1018,6 +1018,13 @@ def _evaluate_preview_sql_guard(
     candidate_sql: str,
     resolved_source: RegisteredSource,
 ) -> SQLGuardEvaluation:
+    def raise_malformed_guard_decision() -> NoReturn:
+        raise PreviewSubmissionContractError(
+            "SQL Guard returned malformed decision data.",
+            public_code="preview_guard_malformed",
+            public_message="SQL Guard returned malformed decision data.",
+        )
+
     guard_payload = {
         "canonical_sql": candidate_sql,
         "source": {
@@ -1027,7 +1034,25 @@ def _evaluate_preview_sql_guard(
         },
     }
     _, evaluator = _resolve_sql_guard_controls(resolved_source.source_family)
-    return evaluator(guard_payload)
+    try:
+        guard_evaluation = SQLGuardEvaluation.model_validate(evaluator(guard_payload))
+    except ValidationError:
+        raise_malformed_guard_decision()
+
+    if guard_evaluation.decision == "allow":
+        if (
+            not isinstance(guard_evaluation.canonical_sql, str)
+            or guard_evaluation.canonical_sql != candidate_sql
+        ):
+            raise_malformed_guard_decision()
+        if (
+            guard_evaluation.source is None
+            or guard_evaluation.source.source_id != resolved_source.source_id
+            or guard_evaluation.source.source_family != resolved_source.source_family
+            or guard_evaluation.source.source_flavor != resolved_source.source_flavor
+        ):
+            raise_malformed_guard_decision()
+    return guard_evaluation
 
 
 def submit_preview_request(
