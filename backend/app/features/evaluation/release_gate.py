@@ -394,10 +394,33 @@ def _audit_artifact_can_cover_scenario(
         scenario.evaluation_boundary == "generation"
         and event.event_type == "generation_failed"
         and event.release_gate_scenario is None
+        and _raw_generation_audit_identity_is_unique(scenario)
         and event.source_id == scenario.source.source_id
         and event.source_family == scenario.source.source_family
         and event.primary_deny_code == scenario.expected.primary_code
     )
+
+
+def _raw_generation_audit_identity_is_unique(scenario: ScenarioArtifact) -> bool:
+    identity = (
+        scenario.source.source_id,
+        scenario.source.source_family,
+        scenario.expected.primary_code,
+    )
+    matching_scenario_count = sum(
+        1
+        for candidate in (
+            list_mssql_evaluation_scenarios() + list_postgresql_evaluation_scenarios()
+        )
+        if candidate.evaluation_boundary == "generation"
+        and (
+            candidate.source.source_id,
+            candidate.source.source_family,
+            candidate.expected.primary_code,
+        )
+        == identity
+    )
+    return matching_scenario_count == 1
 
 
 def _failures_for_row(row: EvaluationComparisonRow) -> tuple[ReleaseGateFailure, ...]:

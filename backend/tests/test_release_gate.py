@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Union
 from uuid import uuid4
 
+import app.features.evaluation.release_gate as release_gate_module
 from app.features.evaluation import (
     EvaluationOutcomeRecord,
     reconstruct_release_gate,
@@ -384,6 +385,70 @@ def test_release_gate_accepts_raw_generation_failed_audit_event_without_scenario
 
     assert decision.status == "pass"
     assert decision.failure_count == 0
+
+
+def test_release_gate_rejects_ambiguous_raw_generation_failed_audit_event(
+    monkeypatch,
+) -> None:
+    scenario = next(
+        scenario
+        for scenario in list_postgresql_evaluation_scenarios()
+        if scenario.evaluation_boundary == "generation"
+    )
+    duplicate_scenario = scenario.model_copy(
+        update={
+            "scenario_id": f"{scenario.scenario_id}-duplicate",
+        }
+    )
+    patched_postgresql_scenarios = (
+        list_postgresql_evaluation_scenarios() + (duplicate_scenario,)
+    )
+    patched_all_scenarios = (
+        list_mssql_evaluation_scenarios() + patched_postgresql_scenarios
+    )
+    monkeypatch.setattr(
+        release_gate_module,
+        "list_postgresql_evaluation_scenarios",
+        lambda: patched_postgresql_scenarios,
+    )
+
+    observed_artifacts = tuple(
+        EvaluationOutcomeRecord(
+            scenario_id=scenario.scenario_id,
+            kind=scenario.kind,
+            source=scenario.source.model_dump(),
+            outcome={
+                "decision": scenario.expected.decision,
+                "outcome_category": scenario.expected.outcome_category,
+                "primary_code": scenario.expected.primary_code,
+            },
+        )
+        for scenario in patched_all_scenarios
+    )
+    audit_artifacts = list(_audit_artifacts_from_harness())
+    target_index = next(
+        index
+        for index, artifact in enumerate(audit_artifacts)
+        if artifact["scenario_id"] == scenario.scenario_id
+    )
+    event = dict(audit_artifacts[target_index]["event"])
+    event.pop("release_gate_scenario", None)
+    audit_artifacts[target_index] = {"event": event}
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=observed_artifacts,
+        audit_artifacts=tuple(audit_artifacts),
+    )
+
+    missing_generation_failures = [
+        failure
+        for failure in decision.failures
+        if failure.deny_code == "DENY_MISSING_AUDIT_COVERAGE"
+        and failure.scenario_id
+        in {scenario.scenario_id, duplicate_scenario.scenario_id}
+    ]
+    assert decision.status == "fail"
+    assert len(missing_generation_failures) == 2
 
 
 def test_release_gate_accepts_runtime_audit_guard_decision_that_allowed_execution() -> None:
