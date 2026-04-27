@@ -36,7 +36,7 @@ class SettingsTestCase(unittest.TestCase):
                     "Server=tcp:mssql-source,1433;"
                     "Database=business;"
                     "Uid=safequery_reader;"
-                    "Pwd=change-me;"
+                    "Pwd=safequery-test-credential-001;"
                     "Encrypt=yes;"
                     "TrustServerCertificate=no\n"
                 )
@@ -215,6 +215,46 @@ class SettingsTestCase(unittest.TestCase):
             settings.require_business_mssql_source().connection_string,
             "Driver={ODBC Driver 18 for SQL Server};Server=tcp:mssql,1433",
         )
+
+    def test_business_postgres_source_rejects_placeholder_password(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must come from a trusted "
+            "credential source",
+        ) as exc_info:
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                business_postgres_source_url=(
+                    "postgresql://source_reader:change-me@pg-source:5432/business"
+                ),
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
+
+        self.assertNotIn("source_reader:change-me", str(exc_info.exception))
+
+    def test_business_mssql_source_rejects_placeholder_password(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must come from a "
+            "trusted credential source",
+        ) as exc_info:
+            Settings(
+                app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+                business_mssql_source_connection_string=(
+                    "Driver={ODBC Driver 18 for SQL Server};"
+                    "Server=tcp:mssql-source,1433;"
+                    "Database=business;"
+                    "Uid=safequery_reader;"
+                    "Pwd=change-me;"
+                    "Encrypt=yes;"
+                    "TrustServerCertificate=no"
+                ),
+                _env_file=None,
+                _env_prefix="SAFEQUERY_",
+            )
+
+        self.assertNotIn("Pwd=change-me", str(exc_info.exception))
 
     def test_dev_auth_is_disabled_by_default_and_can_enable_for_development(self) -> None:
         default_settings = Settings(
