@@ -537,6 +537,79 @@ def test_http_preview_submission_blocks_guard_rejected_adapter_sql(
         get_settings.cache_clear()
 
 
+def test_http_preview_submission_rejects_malformed_guard_decision_without_approval(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: _RecordingHTTPPreviewAdapter(),
+    )
+    monkeypatch.setitem(
+        request_preview_service._SQL_GUARD_EVALUATOR_BY_SOURCE_FAMILY,
+        "postgresql",
+        lambda _: {"decision": "allow"},
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(session)
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "error": {
+                "code": "preview_guard_malformed",
+                "message": "SQL Guard returned malformed decision data.",
+            }
+        }
+        assert session.execute(select(PreviewCandidate)).scalars().all() == []
+        assert session.execute(select(PreviewCandidateApproval)).scalars().all() == []
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
 def test_http_preview_submission_uses_mssql_guard_profile(
     monkeypatch,
 ) -> None:
