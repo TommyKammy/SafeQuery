@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -28,10 +29,13 @@ from app.db.models.source_registry import RegisteredSource, SourceActivationPost
 from app.db.session import require_preview_submission_session
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 from app.features.auth.session import create_test_application_session
+from app.features.guard import SQLGuardEvaluation
+from app.services import request_preview as request_preview_service
 from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
     PreviewSubmissionRequest,
+    _build_preview_lifecycle_audit_events,
     _persist_candidate_approval_record,
     submit_preview_request,
 )
@@ -47,13 +51,15 @@ def _seed_authoritative_source_governance(
     include_datasets: bool = True,
     source_posture: SourceActivationPosture = SourceActivationPosture.ACTIVE,
     connection_reference: str = "vault:sap-approved-spend",
+    source_family: str = "postgresql",
+    source_flavor: str = "warehouse",
 ) -> None:
     source = RegisteredSource(
         id=uuid4(),
         source_id="sap-approved-spend",
         display_label="SAP spend cube / approved_vendor_spend",
-        source_family="postgresql",
-        source_flavor="warehouse",
+        source_family=source_family,
+        source_flavor=source_flavor,
         activation_posture=source_posture,
         connector_profile_id=None,
         dialect_profile_id=None,
@@ -105,15 +111,17 @@ def _seed_authoritative_source_governance(
 
 
 class _RecordingHTTPPreviewAdapter:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        candidate_sql: str = " SELECT vendor_id FROM finance.approved_vendor_spend LIMIT 50; ",
+    ) -> None:
         self.adapter_request = None
+        self.candidate_sql = candidate_sql
 
     def generate_sql(self, request):
         self.adapter_request = request
         return SQLGenerationAdapterResponse(
-            candidate_sql=(
-                " SELECT vendor_id FROM finance.approved_vendor_spend LIMIT 50; "
-            ),
+            candidate_sql=self.candidate_sql,
             provider="local_llm",
             adapter_version="test.local_llm.v1",
             model="safequery-test-sql",
@@ -338,7 +346,7 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
 
         assert response_payload["request"]["request_id"] == request_id
         assert response_payload["candidate"]["candidate_sql"] == candidate_sql
-        assert response_payload["candidate"]["guard_status"] == "pending"
+        assert response_payload["candidate"]["guard_status"] == "allow"
         assert response_payload["candidate"]["state"] == "preview_ready"
 
         adapter_payload = adapter.adapter_request.model_dump(mode="json")
@@ -372,15 +380,21 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
         )
 
         assert persisted_candidate.candidate_sql == candidate_sql
+        assert persisted_candidate.guard_status == "allow"
         persisted_approval = session.execute(
             select(PreviewCandidateApproval)
         ).scalar_one()
-        assert persisted_approval.approved_sql is None
-        assert persisted_approval.approval_state == "pending_guard"
+        assert persisted_approval.approved_sql == candidate_sql
+        assert persisted_approval.approval_state == "approved"
         assert persisted_approval.executed_at is None
 
         calls: list[str] = []
-        app.state.execution_query_runner = lambda **_: calls.append("called")
+
+        def query_runner(**_):
+            calls.append("called")
+            return []
+
+        app.state.execution_query_runner = query_runner
         execute_response = client.post(
             f"/candidates/{persisted_candidate.candidate_id}/execute",
             headers=app_session.headers,
@@ -388,12 +402,11 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
             json={"selected_source_id": "sap-approved-spend"},
         )
 
-        assert execute_response.status_code == 403
-        assert execute_response.json()["error"]["code"] == "execution_denied"
-        assert calls == []
+        assert execute_response.status_code == 200
+        assert calls == ["called"]
         session.refresh(persisted_approval)
-        assert persisted_approval.approval_state == "pending_guard"
-        assert persisted_approval.executed_at is None
+        assert persisted_approval.approval_state == "executed"
+        assert persisted_approval.executed_at is not None
         assert persisted_candidate.adapter_provider == "local_llm"
         assert persisted_candidate.adapter_model == "safequery-test-sql"
         assert persisted_candidate.adapter_version == "test.local_llm.v1"
@@ -414,6 +427,253 @@ def test_http_preview_submission_persists_adapter_generated_candidate(
         engine.dispose()
         app.dependency_overrides.clear()
         get_settings.cache_clear()
+
+
+def test_http_preview_submission_blocks_guard_rejected_adapter_sql(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+    adapter = _RecordingHTTPPreviewAdapter(
+        "SELECT vendor_id FROM finance.approved_vendor_spend; "
+        "DELETE FROM finance.approved_vendor_spend;"
+    )
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: adapter,
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(session)
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 200
+        response_payload = response.json()
+        assert response_payload["candidate"]["guard_status"] == "blocked"
+        assert response_payload["candidate"]["state"] == "blocked"
+        assert response_payload["evaluation"]["state"] == "blocked"
+
+        persisted_request = session.execute(select(PreviewRequest)).scalar_one()
+        persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_approval = session.execute(
+            select(PreviewCandidateApproval)
+        ).scalar_one()
+        persisted_guard_event = (
+            session.execute(
+                select(PreviewAuditEvent).where(
+                    PreviewAuditEvent.event_type == "guard_evaluated"
+                )
+            )
+            .scalars()
+            .one()
+        )
+
+        assert persisted_request.request_state == "blocked"
+        assert persisted_candidate.guard_status == "blocked"
+        assert persisted_candidate.candidate_state == "blocked"
+        assert persisted_approval.approval_state == "invalidated"
+        assert persisted_approval.approved_sql is None
+        assert persisted_approval.executed_at is None
+        assert persisted_guard_event.primary_deny_code == "DENY_MULTI_STATEMENT"
+        assert persisted_guard_event.denial_cause == "guard_rejected"
+        assert persisted_guard_event.audit_payload["guard_version"] == (
+            "postgresql-guard-v1"
+        )
+
+        calls: list[str] = []
+        app.state.execution_query_runner = lambda **_: calls.append("called")
+        execute_response = client.post(
+            f"/candidates/{persisted_candidate.candidate_id}/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "sap-approved-spend"},
+        )
+
+        assert execute_response.status_code == 403
+        assert execute_response.json()["error"]["code"] == "execution_denied"
+        assert calls == []
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_http_preview_submission_uses_mssql_guard_profile(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+    adapter = _RecordingHTTPPreviewAdapter(
+        " SELECT TOP 50 vendor_id FROM finance.approved_vendor_spend; "
+    )
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: adapter,
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(
+            session,
+            source_family="mssql",
+            source_flavor="analytics",
+        )
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 200
+        response_payload = response.json()
+        assert response_payload["candidate"]["guard_status"] == "allow"
+        assert response_payload["candidate"]["source_family"] == "mssql"
+
+        persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_guard_event = (
+            session.execute(
+                select(PreviewAuditEvent).where(
+                    PreviewAuditEvent.event_type == "guard_evaluated"
+                )
+            )
+            .scalars()
+            .one()
+        )
+
+        assert persisted_candidate.guard_status == "allow"
+        assert persisted_candidate.source_family == "mssql"
+        assert persisted_guard_event.audit_payload["guard_version"] == "mssql-guard-v1"
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_preview_lifecycle_audit_guard_version_fails_closed_when_mapping_missing(
+    monkeypatch,
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_authoritative_source_governance(
+            session,
+            source_family="mssql",
+            source_flavor="analytics",
+        )
+        resolved_source = session.execute(select(RegisteredSource)).scalar_one()
+        dataset_contract = session.execute(select(DatasetContract)).scalar_one()
+        schema_snapshot = session.execute(select(SchemaSnapshot)).scalar_one()
+
+        monkeypatch.delitem(
+            request_preview_service._GUARD_VERSION_BY_SOURCE_FAMILY,
+            "mssql",
+        )
+
+        with pytest.raises(PreviewSubmissionContractError) as exc_info:
+            _build_preview_lifecycle_audit_events(
+                resolved_source=resolved_source,
+                dataset_contract=dataset_contract,
+                schema_snapshot=schema_snapshot,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="preview-request-unmapped-guard",
+                    correlation_id="preview-correlation-unmapped-guard",
+                    user_subject="user:alice",
+                    session_id="session-unmapped-guard",
+                    query_candidate_id="preview-candidate-unmapped-guard",
+                    candidate_owner_subject="user:alice",
+                    auth_source="test-helper",
+                ),
+                guard_evaluation=SQLGuardEvaluation(
+                    decision="allow",
+                    profile="common",
+                    canonical_sql="SELECT 1",
+                    source=None,
+                    rejections=[],
+                ),
+            )
+
+        assert "Unsupported source family 'mssql' cannot be guarded." == str(
+            exc_info.value
+        )
 
 
 def test_http_preview_adapter_failure_persists_authoritative_failure(
