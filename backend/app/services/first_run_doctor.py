@@ -42,6 +42,7 @@ from app.services.source_entitlements import (
     ensure_subject_is_entitled_for_source,
 )
 from app.services.source_family_profiles import (
+    ACTIVE_SOURCE_FAMILIES,
     get_active_source_runtime_posture_requirements,
 )
 
@@ -520,6 +521,89 @@ def _check_execution_connector(
     )
 
 
+def _active_source_family_runtime_check(source_family: str) -> FirstRunDoctorCheck:
+    normalized_source_family = source_family.strip().lower()
+    runtime_posture = get_active_source_runtime_posture_requirements(
+        normalized_source_family
+    )
+    detail: dict[str, object] = {
+        "source_family": normalized_source_family,
+        "runtime_scope": "local_driver_prerequisites",
+        "live_source_connectivity": "not_required",
+    }
+    if runtime_posture is not None:
+        detail["runtime_posture"] = runtime_posture.model_dump(mode="json")
+
+    runtime_dependency = None
+    try:
+        if normalized_source_family == "mssql":
+            runtime_dependency = "pyodbc/odbc-driver-18"
+            runtime_detail = check_mssql_execution_runtime_readiness()
+            family_name = "MSSQL"
+        elif normalized_source_family == "postgresql":
+            runtime_dependency = "psycopg"
+            runtime_detail = check_postgresql_execution_runtime_readiness()
+            family_name = "PostgreSQL"
+        else:
+            return FirstRunDoctorCheck(
+                name=f"source_family_runtime:{normalized_source_family}",
+                status="fail",
+                message=(
+                    "Active source family has no first-run runtime diagnostic."
+                ),
+                detail=detail,
+            )
+    except (
+        MSSQLExecutionRuntimeUnavailable,
+        PostgreSQLExecutionRuntimeUnavailable,
+    ) as exc:
+        if normalized_source_family == "mssql":
+            family_name = "MSSQL"
+        elif normalized_source_family == "postgresql":
+            family_name = "PostgreSQL"
+        else:
+            family_name = normalized_source_family
+        detail.update(
+            {
+                "runtime_status": "unavailable",
+                "error": exc.__class__.__name__,
+            }
+        )
+        if runtime_dependency is not None:
+            detail["runtime_dependency"] = runtime_dependency
+        return FirstRunDoctorCheck(
+            name=f"source_family_runtime:{normalized_source_family}",
+            status="fail",
+            message=(
+                f"{family_name} driver runtime is unavailable for the active "
+                "source family."
+            ),
+            detail=detail,
+        )
+
+    detail.update(
+        {
+            "runtime_status": "available",
+            "runtime": runtime_detail,
+        }
+    )
+    if runtime_dependency is not None:
+        detail["runtime_dependency"] = runtime_dependency
+    return FirstRunDoctorCheck(
+        name=f"source_family_runtime:{normalized_source_family}",
+        status="pass",
+        message=f"{family_name} driver runtime is ready for the active source family.",
+        detail=detail,
+    )
+
+
+def _active_source_family_runtime_checks() -> list[FirstRunDoctorCheck]:
+    return [
+        _active_source_family_runtime_check(source_family)
+        for source_family in ACTIVE_SOURCE_FAMILIES
+    ]
+
+
 def _source_governance_checks_for_source(
     session: Session,
     source: RegisteredSource,
@@ -802,6 +886,8 @@ def run_first_run_doctor(
     except SQLAlchemyError as exc:
         logger.exception("First-run doctor could not read source governance data.")
         checks.extend(_source_governance_unavailable_checks(exc))
+
+    checks.extend(_active_source_family_runtime_checks())
 
     if backend_probe_mode == "served_route":
         checks.append(_check_backend_served_route(resolved_backend_base_url))

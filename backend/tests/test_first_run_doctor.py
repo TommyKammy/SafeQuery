@@ -91,6 +91,20 @@ def _expected_runtime_posture(source_family: str) -> dict[str, object]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _available_source_family_runtimes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        first_run_doctor_service,
+        "check_mssql_execution_runtime_readiness",
+        lambda: {"odbc_driver_18": "available", "pyodbc": "available"},
+    )
+    monkeypatch.setattr(
+        first_run_doctor_service,
+        "check_postgresql_execution_runtime_readiness",
+        lambda: {"dict_row": "available", "psycopg": "available"},
+    )
+
+
 def test_http_probe_rejects_non_http_schemes_before_urlopen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -547,6 +561,108 @@ def test_first_run_doctor_fails_closed_when_mssql_driver_runtime_is_missing(
             "runtime_dependency": "pyodbc/odbc-driver-18",
         },
     }
+
+
+def test_first_run_doctor_checks_active_mssql_runtime_without_mssql_demo_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_mssql_runtime() -> dict[str, object]:
+        raise first_run_doctor_service.MSSQLExecutionRuntimeUnavailable(
+            "ODBC Driver 18 for SQL Server must be installed before the MSSQL "
+            "execution connector can run."
+        )
+
+    monkeypatch.setattr(
+        first_run_doctor_service,
+        "check_mssql_execution_runtime_readiness",
+        unavailable_mssql_runtime,
+    )
+
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
+
+    payload = result.model_dump(mode="json")
+    mssql_runtime_checks = [
+        check
+        for check in payload["checks"]
+        if check["name"] == "source_family_runtime:mssql"
+    ]
+    assert result.status == "fail"
+    assert mssql_runtime_checks == [
+        {
+            "name": "source_family_runtime:mssql",
+            "status": "fail",
+            "message": (
+                "MSSQL driver runtime is unavailable for the active source family."
+            ),
+            "detail": {
+                "source_family": "mssql",
+                "runtime_scope": "local_driver_prerequisites",
+                "live_source_connectivity": "not_required",
+                "runtime_posture": _expected_runtime_posture("mssql"),
+                "runtime_status": "unavailable",
+                "error": "MSSQLExecutionRuntimeUnavailable",
+                "runtime_dependency": "pyodbc/odbc-driver-18",
+            },
+        }
+    ]
+
+
+def test_first_run_doctor_checks_active_postgresql_runtime_without_source_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_postgresql_runtime() -> dict[str, object]:
+        raise first_run_doctor_service.PostgreSQLExecutionRuntimeUnavailable(
+            "psycopg must be installed and importable before the PostgreSQL "
+            "execution connector can run."
+        )
+
+    monkeypatch.setattr(
+        first_run_doctor_service,
+        "check_postgresql_execution_runtime_readiness",
+        unavailable_postgresql_runtime,
+        raising=False,
+    )
+
+    with _session_scope() as session:
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
+
+    payload = result.model_dump(mode="json")
+    postgresql_runtime_checks = [
+        check
+        for check in payload["checks"]
+        if check["name"] == "source_family_runtime:postgresql"
+    ]
+    assert result.status == "fail"
+    assert postgresql_runtime_checks == [
+        {
+            "name": "source_family_runtime:postgresql",
+            "status": "fail",
+            "message": (
+                "PostgreSQL driver runtime is unavailable for the active source "
+                "family."
+            ),
+            "detail": {
+                "source_family": "postgresql",
+                "runtime_scope": "local_driver_prerequisites",
+                "live_source_connectivity": "not_required",
+                "runtime_posture": _expected_runtime_posture("postgresql"),
+                "runtime_status": "unavailable",
+                "error": "PostgreSQLExecutionRuntimeUnavailable",
+                "runtime_dependency": "psycopg",
+            },
+        }
+    ]
 
 
 def test_first_run_doctor_fails_closed_when_source_seed_is_missing() -> None:
