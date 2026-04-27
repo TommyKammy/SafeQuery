@@ -390,6 +390,14 @@ fail-closed for:
 - malformed evaluation artifacts
 - safety scenario regressions
 
+When reconstruction fails, inspect the release gate v2 evaluation diff artifact
+before comparing raw scenario inputs. The artifact is intentionally compact and
+safe for CI/local comparison: it lists only scenario id, source id/family,
+scenario category, expected and actual decisions, audit evidence status, changed
+fields, deny codes, and the failure detail. A missing or stale audit evidence
+status means operators should repair the authoritative audit/evaluation record
+linkage, not infer success from nearby logs or raw connection details.
+
 Runtime controls must be verified before pilot entry:
 
 - source kill switch denies before runner dispatch

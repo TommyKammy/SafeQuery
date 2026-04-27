@@ -308,6 +308,20 @@ def test_release_gate_reports_missing_audit_coverage_by_source_and_scenario() ->
     assert decision.failures[0].source_family == "postgresql"
     assert decision.failures[0].scenario_id == "postgresql-safety-stale-policy-denied"
     assert decision.failures[0].scenario_category == "safety"
+    assert decision.diff_artifact.model_dump(mode="json")["scenarios"] == [
+        {
+            "scenario_id": "postgresql-safety-stale-policy-denied",
+            "source_id": "business-postgres-source",
+            "source_family": "postgresql",
+            "scenario_category": "safety",
+            "expected_decision": "reject",
+            "actual_decision": "reject",
+            "audit_evidence_status": "missing",
+            "changed_fields": [],
+            "deny_codes": ["DENY_MISSING_AUDIT_COVERAGE"],
+            "detail": "Missing authoritative source-aware audit artifact for required scenario.",
+        }
+    ]
 
 
 def test_release_gate_reports_stale_audit_coverage_by_source_and_scenario() -> None:
@@ -598,6 +612,58 @@ def test_release_gate_fails_closed_for_safety_regression() -> None:
     assert decision.failures[0].source_id == "business-mssql-source"
     assert decision.failures[0].source_family == "mssql"
     assert decision.failures[0].scenario_category == "safety"
+
+
+def test_release_gate_emits_deterministic_diff_artifact_for_changed_scenarios() -> None:
+    mutated_records = list(_observed_records_from_harness())
+    target_index = next(
+        index
+        for index, record in enumerate(mutated_records)
+        if record.scenario_id == "mssql-safety-guard-denies-waitfor-delay"
+    )
+    target = mutated_records[target_index]
+    mutated_records[target_index] = target.model_copy(
+        update={
+            "outcome": target.outcome.model_copy(
+                update={
+                    "decision": "allow",
+                    "outcome_category": "bounded_success",
+                    "primary_code": None,
+                }
+            )
+        }
+    )
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=tuple(mutated_records),
+        audit_artifacts=_audit_artifacts_from_harness(),
+    )
+    artifact = decision.diff_artifact.model_dump(mode="json")
+
+    assert artifact == {
+        "artifact_version": "release_gate_v2_evaluation_diff",
+        "status": "fail",
+        "failure_count": 1,
+        "scenarios": [
+            {
+                "scenario_id": "mssql-safety-guard-denies-waitfor-delay",
+                "source_id": "business-mssql-source",
+                "source_family": "mssql",
+                "scenario_category": "safety",
+                "expected_decision": "reject",
+                "actual_decision": "allow",
+                "audit_evidence_status": "matched",
+                "changed_fields": ["decision", "outcome_category", "primary_code"],
+                "deny_codes": ["DENY_SAFETY_SCENARIO_REGRESSION"],
+                "detail": (
+                    "Observed decision does not match the authoritative scenario "
+                    "expectation: expected decision='reject', observed decision='allow', "
+                    "expected deny code='DENY_RESOURCE_ABUSE', "
+                    "observed deny code=None."
+                ),
+            }
+        ],
+    }
 
 
 def test_release_gate_reports_outcome_category_regression_detail() -> None:
