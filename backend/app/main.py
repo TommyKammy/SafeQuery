@@ -33,6 +33,7 @@ from app.features.auth.context import (
     AuthenticatedSubject,
     require_authenticated_subject,
 )
+from app.features.auth.operator_access import ensure_operator_evidence_read_authority
 from app.features.auth.session import (
     ApplicationSessionContext,
     require_application_session,
@@ -519,6 +520,7 @@ def create_app() -> FastAPI:
         session: Session = Depends(require_preview_submission_session),
     ) -> SupportBundle:
         authenticated_subject.normalized_subject_id()
+        ensure_operator_evidence_read_authority(authenticated_subject)
         database = check_database_health(str(settings.app_postgres_url))
         sql_generation = check_sql_generation_runtime_health(settings.sql_generation)
         return build_support_bundle(
@@ -834,6 +836,7 @@ def create_app() -> FastAPI:
         session: Session = Depends(require_preview_submission_session),
     ) -> OperatorWorkflowSnapshot:
         authenticated_subject.normalized_subject_id()
+        ensure_operator_evidence_read_authority(authenticated_subject)
         return get_operator_workflow_snapshot(session)
 
     return app

@@ -76,6 +76,18 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
         )
         return TestClient(app)
 
+    def _client_with_subject(self, subject: AuthenticatedSubject) -> TestClient:
+        get_settings.cache_clear()
+        main_module = importlib.import_module("app.main")
+        app = main_module.create_app()
+        app.dependency_overrides[main_module.require_authenticated_subject] = (
+            lambda: subject
+        )
+        app.dependency_overrides[require_preview_submission_session] = (
+            lambda: self.session
+        )
+        return TestClient(app)
+
     def _seed_restricted_source(self, source_id: str) -> None:
         source = RegisteredSource(
             id=uuid4(),
@@ -451,6 +463,75 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
                 }
             },
         )
+
+    def test_authenticated_unentitled_subject_cannot_read_operator_workflow(
+        self,
+    ) -> None:
+        response = self._client_with_subject(
+            AuthenticatedSubject(
+                subject_id="user:authenticated-without-operator-authority",
+                governance_bindings=frozenset({"group:unrelated-analysts"}),
+            )
+        ).get("/operator/workflow")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "operator_read_forbidden",
+                    "message": "Operator evidence requires reviewer or support authority.",
+                }
+            },
+        )
+        self.assertNotIn("sources", response.text)
+        self.assertNotIn(DEMO_SOURCE_ID, response.text)
+
+    def test_authenticated_unentitled_subject_cannot_read_support_bundle(
+        self,
+    ) -> None:
+        response = self._client_with_subject(
+            AuthenticatedSubject(
+                subject_id="user:authenticated-without-support-authority",
+                governance_bindings=frozenset({"group:unrelated-analysts"}),
+            )
+        ).get("/support/bundle")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "operator_read_forbidden",
+                    "message": "Operator evidence requires reviewer or support authority.",
+                }
+            },
+        )
+        self.assertNotIn("activeSources", response.text)
+        self.assertNotIn("audit", response.text)
+        self.assertNotIn(DEMO_SOURCE_ID, response.text)
+
+    def test_reviewer_subject_can_read_operator_workflow(self) -> None:
+        response = self._client_with_subject(
+            AuthenticatedSubject(
+                subject_id="user:source-reviewer",
+                governance_bindings=frozenset({"group:security-reviewers"}),
+            )
+        ).get("/operator/workflow")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["sources"][0]["sourceId"], DEMO_SOURCE_ID)
+
+    def test_support_subject_can_read_support_bundle(self) -> None:
+        response = self._client_with_subject(
+            AuthenticatedSubject(
+                subject_id="user:support-engineer",
+                governance_bindings=frozenset({"entitlement:safequery-support"}),
+            )
+        ).get("/support/bundle")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["activeSources"][0]["sourceId"], DEMO_SOURCE_ID)
 
 
 if __name__ == "__main__":
