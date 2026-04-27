@@ -73,7 +73,11 @@ def _audit_artifacts_from_harness() -> tuple[dict[str, object], ...]:
         event_id = uuid4()
         guard_audit_event_id = event_id if event_type == "guard_evaluated" else uuid4()
         candidate_id = f"candidate-{scenario.scenario_id}"
-        guard_decision = "reject" if scenario.evaluation_boundary == "guard" else "allow"
+        guard_decision = (
+            scenario.expected.decision
+            if scenario.evaluation_boundary == "guard"
+            else "allow"
+        )
         release_gate_scenario = {
             "scenario_id": scenario.scenario_id,
             "source_id": scenario.source.source_id,
@@ -401,10 +405,12 @@ def test_release_gate_rejects_ambiguous_raw_generation_failed_audit_event(
         }
     )
     patched_postgresql_scenarios = (
-        list_postgresql_evaluation_scenarios() + (duplicate_scenario,)
+        *list_postgresql_evaluation_scenarios(),
+        duplicate_scenario,
     )
     patched_all_scenarios = (
-        list_mssql_evaluation_scenarios() + patched_postgresql_scenarios
+        *list_mssql_evaluation_scenarios(),
+        *patched_postgresql_scenarios,
     )
     monkeypatch.setattr(
         release_gate_module,
