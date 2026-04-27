@@ -15,7 +15,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
+from app.db.models.preview import (
+    PreviewAuditEvent,
+    PreviewCandidate,
+    PreviewCandidateApproval,
+    PreviewRequest,
+)
 from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
 from app.services.demo_source_seed import seed_demo_source_governance
@@ -121,6 +126,140 @@ def _add_workflow_records_with_sensitive_payload(session: Session) -> None:
     session.commit()
 
 
+def _add_governance_review_workflow_records(session: Session) -> None:
+    source = session.query(RegisteredSource).one()
+    preview_request = PreviewRequest(
+        id=uuid4(),
+        request_id="request-governance-bundle",
+        registered_source_id=source.id,
+        source_id=source.source_id,
+        source_family=source.source_family,
+        source_flavor=source.source_flavor,
+        dataset_contract_id=source.dataset_contract_id,
+        dataset_contract_version=1,
+        schema_snapshot_id=source.schema_snapshot_id,
+        schema_snapshot_version=1,
+        authenticated_subject_id="user:demo-local-operator",
+        auth_source="test-helper",
+        session_id="session-governance-bundle",
+        governance_bindings="group:safequery-demo-local-operators",
+        entitlement_decision="allow",
+        request_text="Show approved spend",
+        request_state="executed",
+    )
+    session.add(preview_request)
+    session.flush()
+
+    preview_candidate = PreviewCandidate(
+        id=uuid4(),
+        candidate_id="candidate-governance-bundle",
+        preview_request_id=preview_request.id,
+        request_id=preview_request.request_id,
+        registered_source_id=preview_request.registered_source_id,
+        source_id=preview_request.source_id,
+        source_family=preview_request.source_family,
+        source_flavor=preview_request.source_flavor,
+        dataset_contract_id=preview_request.dataset_contract_id,
+        dataset_contract_version=preview_request.dataset_contract_version,
+        schema_snapshot_id=preview_request.schema_snapshot_id,
+        schema_snapshot_version=preview_request.schema_snapshot_version,
+        authenticated_subject_id=preview_request.authenticated_subject_id,
+        candidate_sql="select * from raw_private_rows",
+        adapter_provider="fixture-adapter",
+        adapter_model="fixture-model",
+        adapter_version="fixture-version",
+        adapter_run_id="adapter-run-316",
+        prompt_version="prompt-v1",
+        prompt_fingerprint="prompt-fingerprint-316",
+        guard_status="passed",
+        candidate_state="executed",
+    )
+    session.add(preview_candidate)
+    session.flush()
+
+    session.add(
+        PreviewCandidateApproval(
+            id=uuid4(),
+            approval_id="approval-governance-bundle",
+            preview_candidate_id=preview_candidate.id,
+            candidate_id=preview_candidate.candidate_id,
+            request_id=preview_request.request_id,
+            registered_source_id=preview_request.registered_source_id,
+            source_id=preview_request.source_id,
+            source_family=preview_request.source_family,
+            source_flavor=preview_request.source_flavor,
+            dataset_contract_version=preview_request.dataset_contract_version,
+            schema_snapshot_version=preview_request.schema_snapshot_version,
+            execution_policy_version=3,
+            approved_sql="select * from raw_private_rows",
+            owner_subject_id=preview_request.authenticated_subject_id,
+            session_id=preview_request.session_id,
+            approved_at=datetime(2026, 1, 2, 3, 4, 10, tzinfo=timezone.utc),
+            approval_expires_at=datetime(2026, 1, 2, 3, 9, 10, tzinfo=timezone.utc),
+            executed_at=datetime(2026, 1, 2, 3, 5, 3, tzinfo=timezone.utc),
+            approval_state="executed",
+        )
+    )
+
+    lifecycle_events = [
+        ("query_submitted", 1, None, None),
+        ("generation_completed", 3, preview_candidate.candidate_id, "preview_ready"),
+        ("guard_evaluated", 4, preview_candidate.candidate_id, "preview_ready"),
+        ("execution_completed", 7, preview_candidate.candidate_id, "executed"),
+    ]
+    for event_type, lifecycle_order, candidate_id, candidate_state in lifecycle_events:
+        session.add(
+            PreviewAuditEvent(
+                event_id=uuid4(),
+                lifecycle_order=lifecycle_order,
+                preview_request_id=preview_request.id,
+                preview_candidate_id=(
+                    preview_candidate.id if candidate_id is not None else None
+                ),
+                request_id=preview_request.request_id,
+                candidate_id=candidate_id,
+                event_type=event_type,
+                occurred_at=datetime(
+                    2026,
+                    1,
+                    2,
+                    3,
+                    4 + lifecycle_order,
+                    5,
+                    tzinfo=timezone.utc,
+                ),
+                correlation_id="correlation-governance-bundle",
+                authenticated_subject_id=preview_request.authenticated_subject_id,
+                session_id=preview_request.session_id,
+                auth_source=preview_request.auth_source,
+                governance_bindings=preview_request.governance_bindings,
+                entitlement_decision=preview_request.entitlement_decision,
+                adapter_provider=preview_candidate.adapter_provider,
+                adapter_model=preview_candidate.adapter_model,
+                adapter_version=preview_candidate.adapter_version,
+                adapter_run_id=preview_candidate.adapter_run_id,
+                prompt_version=preview_candidate.prompt_version,
+                prompt_fingerprint=preview_candidate.prompt_fingerprint,
+                source_id=preview_request.source_id,
+                source_family=preview_request.source_family,
+                source_flavor=preview_request.source_flavor,
+                dataset_contract_version=preview_request.dataset_contract_version,
+                schema_snapshot_version=preview_request.schema_snapshot_version,
+                candidate_state=candidate_state,
+                audit_payload={
+                    "execution_row_count": 12,
+                    "result_truncated": False,
+                    "raw_rows": [{"customer_secret": "sk-live-should-not-leak"}],
+                    "debug_path": "/".join(
+                        ["", "Users", "example", ".safequery", "private.log"]
+                    ),
+                    "connection": "postgresql://reader:secret@db:5432/business",
+                },
+            )
+        )
+    session.commit()
+
+
 def _assert_secret_safe(serialized: str) -> None:
     forbidden_fragments = (
         "postgresql://",
@@ -171,6 +310,18 @@ def test_support_bundle_service_includes_bounded_diagnostics_without_secrets(
         )
 
     payload = bundle.model_dump(mode="json", by_alias=True)
+    governance_review = payload.pop("governanceReview")
+    assert governance_review["authority"] == "safequery_control_plane"
+    assert governance_review["limitations"] == [
+        "Bundle is read-only review evidence and does not authorize execution.",
+        "Subordinate adapter, LLM, search, analyst, MLflow, UI, and external evidence is labeled as non-authoritative.",
+        "Raw SQL, result rows, credentials, connection references, tokens, and workstation-local paths are excluded.",
+    ]
+    assert governance_review["evidence"][0]["sourceId"] == "demo-business-postgres"
+    assert governance_review["evidence"][0]["authority"] == "safequery_control_plane"
+    assert governance_review["evidence"][0]["candidate"]["adapterEvidence"][
+        "authority"
+    ] == "subordinate_adapter"
     assert payload == {
         "bundleVersion": 1,
         "generatedAt": "2026-01-02T03:04:05Z",
@@ -291,6 +442,118 @@ def test_support_bundle_service_includes_bounded_diagnostics_without_secrets(
         },
     }
     _assert_secret_safe(json.dumps(payload, sort_keys=True))
+
+
+def test_support_bundle_includes_source_aware_governance_review_evidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session)
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    payload = bundle.model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert payload["governanceReview"]["authority"] == "safequery_control_plane"
+    assert payload["governanceReview"]["limitations"] == [
+        "Bundle is read-only review evidence and does not authorize execution.",
+        "Subordinate adapter, LLM, search, analyst, MLflow, UI, and external evidence is labeled as non-authoritative.",
+        "Raw SQL, result rows, credentials, connection references, tokens, and workstation-local paths are excluded.",
+    ]
+    assert payload["governanceReview"]["evidence"] == [
+        {
+            "authority": "safequery_control_plane",
+            "recordType": "workflow_lifecycle",
+            "requestId": "request-governance-bundle",
+            "candidateId": "candidate-governance-bundle",
+            "sourceId": "demo-business-postgres",
+            "sourceFamily": "postgresql",
+            "sourceFlavor": "warehouse",
+            "datasetContractVersion": 1,
+            "schemaSnapshotVersion": 1,
+            "lifecycle": [
+                {
+                    "eventType": "query_submitted",
+                    "occurredAt": "2026-01-02T03:05:05Z",
+                    "lifecycleOrder": 1,
+                    "authority": "safequery_control_plane",
+                },
+                {
+                    "eventType": "generation_completed",
+                    "occurredAt": "2026-01-02T03:07:05Z",
+                    "lifecycleOrder": 3,
+                    "candidateState": "preview_ready",
+                    "authority": "safequery_control_plane",
+                },
+                {
+                    "eventType": "guard_evaluated",
+                    "occurredAt": "2026-01-02T03:08:05Z",
+                    "lifecycleOrder": 4,
+                    "candidateState": "preview_ready",
+                    "authority": "safequery_control_plane",
+                },
+                {
+                    "eventType": "execution_completed",
+                    "occurredAt": "2026-01-02T03:11:05Z",
+                    "lifecycleOrder": 7,
+                    "candidateState": "executed",
+                    "authority": "safequery_control_plane",
+                },
+            ],
+            "actor": {
+                "authority": "safequery_control_plane",
+                "authenticatedSubjectId": "user:demo-local-operator",
+                "authSource": "test-helper",
+                "governanceBindings": ["group:safequery-demo-local-operators"],
+                "entitlementDecision": "allow",
+            },
+            "candidate": {
+                "authority": "safequery_control_plane",
+                "candidateState": "executed",
+                "guardStatus": "passed",
+                "adapterEvidence": {
+                    "authority": "subordinate_adapter",
+                    "adapterProvider": "fixture-adapter",
+                    "adapterModel": "fixture-model",
+                    "adapterVersion": "fixture-version",
+                    "adapterRunId": "adapter-run-316",
+                    "promptVersion": "prompt-v1",
+                    "promptFingerprint": "prompt-fingerprint-316",
+                },
+            },
+            "review": {
+                "authority": "safequery_control_plane",
+                "approvalId": "approval-governance-bundle",
+                "approvalState": "executed",
+                "ownerSubjectId": "user:demo-local-operator",
+                "approvedAt": "2026-01-02T03:04:10Z",
+                "approvalExpiresAt": "2026-01-02T03:09:10Z",
+                "executedAt": "2026-01-02T03:05:03Z",
+                "executionPolicyVersion": 3,
+            },
+            "executeResult": {
+                "authority": "safequery_control_plane",
+                "eventType": "execution_completed",
+                "occurredAt": "2026-01-02T03:11:05Z",
+                "rowCount": 12,
+                "resultTruncated": False,
+            },
+        }
+    ]
+    serialized = json.dumps(payload, sort_keys=True)
+    _assert_secret_safe(serialized)
+    assert "raw_private_rows" not in serialized
 
 
 def test_support_bundle_endpoint_returns_secret_safe_json(monkeypatch) -> None:
