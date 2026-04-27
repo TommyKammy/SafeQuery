@@ -47,51 +47,53 @@ This reading order is intended to help new contributors understand SafeQuery fro
     Use this to understand the minimum deny scenarios the pilot must continue to block.
 19. [design/audit-event-model.md](./design/audit-event-model.md)
     Read this before implementing persistence, replay, or operational diagnostics.
+20. [design/audit-governance-export-bundle.md](./design/audit-governance-export-bundle.md)
+    Read this before generating or reviewing source-aware governance export bundles.
 
 ### 3. UX Foundation
 
-20. [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md)
+21. [design/operator-workflow-information-architecture.md](./design/operator-workflow-information-architecture.md)
     Read the operator shell contract before changing navigation, composition, preview, or result surfaces in the current baseline.
-21. [../DESIGN.md](../DESIGN.md)
+22. [../DESIGN.md](../DESIGN.md)
     Read the visual design contract after the workflow contract so shell hierarchy, typography, spacing, and interaction posture stay aligned.
-22. [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md)
+23. [design/query-lifecycle-state-machine.md](./design/query-lifecycle-state-machine.md)
     Read the lifecycle state model before implementing UI states or backend transitions that must share the same authoritative vocabulary.
 
 ### 4. Source-Aware and Evaluation Baseline
 
-23. [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md)
+24. [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md)
     Review why MLflow is used for tracing, evaluation, and model-lifecycle support without becoming the trusted control plane in the current baseline.
-24. [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md)
+25. [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md)
     Review how the current source-aware baseline adds governed search and analyst-style capabilities without moving trust boundaries out of the application.
-25. [design/evaluation-harness.md](./design/evaluation-harness.md)
+26. [design/evaluation-harness.md](./design/evaluation-harness.md)
     Use this to understand how NL2SQL quality should be measured safely in the current source-aware baseline.
-26. [pilot-safety-verification-checklist.md](./pilot-safety-verification-checklist.md)
+27. [pilot-safety-verification-checklist.md](./pilot-safety-verification-checklist.md)
     Use this as the 2-source core path pilot-readiness checklist after the source-aware implementation slices are complete.
-27. [pilot-operations-runbook.md](./pilot-operations-runbook.md)
+28. [pilot-operations-runbook.md](./pilot-operations-runbook.md)
     Use this to classify normal, degraded, maintenance, incident, and recovery posture during limited pilot operation without treating UI, LLM, adapter, MLflow, Search, Analyst, or external evidence as authoritative.
 
 ### 5. Approved Follow-on Direction
 
-28. [adr/ADR-0011-target-source-registry-and-single-source-execution-model.md](./adr/ADR-0011-target-source-registry-and-single-source-execution-model.md)
+29. [adr/ADR-0011-target-source-registry-and-single-source-execution-model.md](./adr/ADR-0011-target-source-registry-and-single-source-execution-model.md)
     Read first in this section to understand how SafeQuery expands beyond one hard-coded business source while keeping request, candidate, and execution paths single-source.
-29. [adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md](./adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md)
+30. [adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md](./adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md)
     Review how source families, flavors, connector profiles, and guard profiles are separated so future onboarding does not redesign the control plane.
-30. [design/target-source-registry.md](./design/target-source-registry.md)
+31. [design/target-source-registry.md](./design/target-source-registry.md)
     Use this to understand the concrete registry model, source lifecycle expectations, and application PostgreSQL separation guardrails.
-31. [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md)
+32. [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md)
     Review the family and flavor rollout matrix before planning connector, guard, or evaluation work for additional sources.
-32. [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md)
+33. [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md)
     Read this to understand why the product shell is workflow-first and why the Epic A shell remains a developer state demo.
-33. [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md)
+34. [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md)
     Review how SafeQuery may borrow OSS ergonomics without turning the product into a generic chat shell or moving trust boundaries.
-34. [implementation-roadmap.md](./implementation-roadmap.md)
+35. [implementation-roadmap.md](./implementation-roadmap.md)
     Finish this section with the current implementation sequence so roadmap work stays aligned with the reviewed docs direction.
 
 ### 6. Local Setup and Threat Review
 
-35. [local-development.md](./local-development.md)
+36. [local-development.md](./local-development.md)
     Use this once the document set is clear so local startup follows the reviewed topology and role split.
-36. [security/threat-model.md](./security/threat-model.md)
+37. [security/threat-model.md](./security/threat-model.md)
     Finish with the threat model and residual risks for the current source-aware and UX-foundation baseline before pilot readiness review.
 
 ## Source Hierarchy
