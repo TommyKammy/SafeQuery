@@ -21,6 +21,11 @@ from app.db.models.source_registry import RegisteredSource
 from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.auth.context import AuthenticatedSubject
 from app.features.auth.governance_bindings import normalize_governance_binding
+from app.features.guard import (
+    SQLGuardEvaluation,
+    evaluate_mssql_sql_guard,
+    evaluate_postgresql_sql_guard,
+)
 from app.features.operator_history.payloads import GuardStatus
 from app.services.candidate_lifecycle import (
     CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
@@ -50,6 +55,10 @@ from app.services.sql_generation_adapter import (
 
 NonEmptyTrimmedString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 PREVIEW_PENDING_GUARD_STATUS: GuardStatus = "pending"
+_GUARD_VERSION_BY_SOURCE_FAMILY = {
+    "mssql": "mssql-guard-v1",
+    "postgresql": "postgresql-guard-v1",
+}
 
 
 class PreviewSubmissionRequest(BaseModel):
@@ -165,6 +174,7 @@ def _build_preview_lifecycle_audit_events(
     schema_snapshot: SchemaSnapshot,
     audit_context: PreviewAuditContext | None,
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
+    guard_evaluation: SQLGuardEvaluation | None = None,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
         return []
@@ -203,7 +213,12 @@ def _build_preview_lifecycle_audit_events(
                 audit_context.entitlement_source_bindings or None
             ),
             guard_version=(
-                audit_context.guard_version if event_type == "guard_evaluated" else None
+                _GUARD_VERSION_BY_SOURCE_FAMILY[resolved_source.source_family]
+                if event_type == "guard_evaluated"
+                and guard_evaluation is not None
+                else audit_context.guard_version
+                if event_type == "guard_evaluated"
+                else None
             ),
             application_version=audit_context.application_version,
             adapter_provider=(
@@ -250,7 +265,28 @@ def _build_preview_lifecycle_audit_events(
             candidate_state=(
                 "generated"
                 if adapter_metadata is not None and event_type == "generation_completed"
-                else "preview_ready" if event_type == "guard_evaluated" else None
+                else (
+                    "preview_ready"
+                    if guard_evaluation is None or guard_evaluation.decision == "allow"
+                    else "blocked"
+                )
+                if event_type == "guard_evaluated"
+                else None
+            ),
+            primary_deny_code=(
+                guard_evaluation.rejections[0].code
+                if event_type == "guard_evaluated"
+                and guard_evaluation is not None
+                and guard_evaluation.decision != "allow"
+                and guard_evaluation.rejections
+                else None
+            ),
+            denial_cause=(
+                "guard_rejected"
+                if event_type == "guard_evaluated"
+                and guard_evaluation is not None
+                and guard_evaluation.decision != "allow"
+                else None
             ),
         )
         causation_event_id = event.event_id
@@ -663,6 +699,7 @@ def _persist_preview_submission_records(
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
     request_state: str = "previewed",
     candidate_state: str = "preview_ready",
+    guard_status: GuardStatus = PREVIEW_PENDING_GUARD_STATUS,
 ) -> tuple[str, str]:
     request_id = (
         audit_context.request_id
@@ -789,7 +826,7 @@ def _persist_preview_submission_records(
             preview_candidate.prompt_fingerprint = (
                 adapter_metadata.prompt_fingerprint if adapter_metadata is not None else None
             )
-            preview_candidate.guard_status = PREVIEW_PENDING_GUARD_STATUS
+            preview_candidate.guard_status = guard_status
             preview_candidate.candidate_state = candidate_state
             session.flush()
             _persist_candidate_approval_record(
@@ -962,6 +999,29 @@ def _persist_preview_denial_records(
         ) from exc
 
 
+def _evaluate_preview_sql_guard(
+    *,
+    candidate_sql: str,
+    resolved_source: RegisteredSource,
+) -> SQLGuardEvaluation:
+    guard_payload = {
+        "canonical_sql": candidate_sql,
+        "source": {
+            "source_id": resolved_source.source_id,
+            "source_family": resolved_source.source_family,
+            "source_flavor": resolved_source.source_flavor,
+        },
+    }
+    if resolved_source.source_family == "mssql":
+        return evaluate_mssql_sql_guard(guard_payload)
+    if resolved_source.source_family == "postgresql":
+        return evaluate_postgresql_sql_guard(guard_payload)
+
+    raise PreviewSubmissionContractError(
+        f"Unsupported source family '{resolved_source.source_family}' cannot be guarded."
+    )
+
+
 def submit_preview_request(
     payload: PreviewSubmissionRequest,
     authenticated_subject: AuthenticatedSubject,
@@ -1068,6 +1128,10 @@ def submit_preview_request(
 
     candidate_sql: str | None = None
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None
+    guard_evaluation: SQLGuardEvaluation | None = None
+    guard_status: GuardStatus = PREVIEW_PENDING_GUARD_STATUS
+    candidate_state = "preview_ready"
+    request_state = "previewed"
     if sql_generation_adapter is not None:
         if audit_context is None:
             raise PreviewSubmissionContractError(
@@ -1091,6 +1155,16 @@ def submit_preview_request(
                 adapter_response=adapter_response,
                 adapter_run_id=audit_context.correlation_id,
             )
+            guard_evaluation = _evaluate_preview_sql_guard(
+                candidate_sql=candidate_sql,
+                resolved_source=resolved_source,
+            )
+            if guard_evaluation.decision == "allow":
+                guard_status = "allow"
+            else:
+                guard_status = "blocked"
+                candidate_state = "blocked"
+                request_state = "blocked"
         except (
             GenerationContextPreparationError,
             SQLGenerationAdapterConfigurationError,
@@ -1133,6 +1207,7 @@ def submit_preview_request(
             schema_snapshot=schema_snapshot,
             audit_context=audit_context,
             adapter_metadata=adapter_metadata,
+            guard_evaluation=guard_evaluation,
         ),
     )
     request_id, candidate_id = _persist_preview_submission_records(
@@ -1146,6 +1221,9 @@ def submit_preview_request(
         audit_events=audit.events,
         candidate_sql=candidate_sql,
         adapter_metadata=adapter_metadata,
+        request_state=request_state,
+        candidate_state=candidate_state,
+        guard_status=guard_status,
     )
 
     return PreviewSubmissionResponse(
@@ -1158,17 +1236,23 @@ def submit_preview_request(
         candidate=CandidateRecord(
             candidate_id=candidate_id,
             candidate_sql=candidate_sql,
-            guard_status=PREVIEW_PENDING_GUARD_STATUS,
+            guard_status=guard_status,
             source_id=resolved_source.source_id,
             source_family=resolved_source.source_family,
             source_flavor=resolved_source.source_flavor,
             dataset_contract_version=dataset_contract.contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
-            state="preview_ready",
+            state=candidate_state,
         ),
         audit=audit,
         evaluation=EvaluationRecord(
             source_id=resolved_source.source_id,
-            state="pending",
+            state=(
+                "pending"
+                if guard_evaluation is None
+                else "allowed"
+                if guard_evaluation.decision == "allow"
+                else "blocked"
+            ),
         ),
     )
