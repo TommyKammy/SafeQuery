@@ -23,6 +23,7 @@ from app.db.models.preview import (
 )
 from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
+from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 from app.services.demo_source_seed import seed_demo_source_governance
 from app.services.support_bundle import build_support_bundle
 
@@ -45,6 +46,10 @@ def _client(session: Session) -> TestClient:
     get_settings.cache_clear()
     main_module = importlib.import_module("app.main")
     app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: AuthenticatedSubject(
+        subject_id="user:support-reviewer",
+        governance_bindings=frozenset({"group:security-reviewers"}),
+    )
     app.dependency_overrides[require_preview_submission_session] = lambda: session
     return TestClient(app)
 

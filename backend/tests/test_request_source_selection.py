@@ -48,7 +48,9 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         self.app = main_module.create_app()
         self.app.dependency_overrides[require_authenticated_subject] = lambda: AuthenticatedSubject(
             subject_id="user:alice",
-            governance_bindings=frozenset({"group:finance-analysts"}),
+            governance_bindings=frozenset(
+                {"group:finance-analysts", "group:security-reviewers"}
+            ),
         )
         self.app.dependency_overrides[require_preview_submission_session] = (
             lambda: self.session

@@ -21,6 +21,7 @@ _SAFE_API_ERROR_CODES = frozenset(
         "entitlement_denied",
         "execution_denied",
         "execution_unavailable",
+        "operator_read_forbidden",
         "preview_generation_failed",
         "preview_source_malformed",
         "preview_source_unavailable",
