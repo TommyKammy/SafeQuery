@@ -8,6 +8,7 @@ cd "$repo_root"
 checklist="docs/pilot-safety-verification-checklist.md"
 runbook="docs/pilot-operations-runbook.md"
 deployment_profile="docs/pilot-deployment-profile.md"
+governance_export_contract="docs/design/audit-governance-export-bundle.md"
 
 if [[ ! -f "$checklist" ]]; then
   echo "missing pilot-safety checklist: $checklist" >&2
@@ -21,6 +22,11 @@ fi
 
 if [[ ! -f "$deployment_profile" ]]; then
   echo "missing pilot deployment profile: $deployment_profile" >&2
+  exit 1
+fi
+
+if [[ ! -f "$governance_export_contract" ]]; then
+  echo "missing governance review export contract: $governance_export_contract" >&2
   exit 1
 fi
 
@@ -195,6 +201,28 @@ deployment_required_patterns=(
 for pattern in "${deployment_required_patterns[@]}"; do
   if ! grep -Eq "$pattern" "$deployment_profile"; then
     echo "$deployment_profile missing required deployment profile pattern: $pattern" >&2
+    exit 1
+  fi
+done
+
+governance_export_required_patterns=(
+  "^# Dedicated Governance Review Export Contract$"
+  "separate from the support bundle"
+  "reviewer-only"
+  "source filter"
+  "time window"
+  "redaction"
+  "no raw credentials"
+  "no connection strings"
+  "no workstation-local absolute paths"
+  "does not authorize execution"
+  "fail closed"
+  "separate implementation follow-up"
+)
+
+for pattern in "${governance_export_required_patterns[@]}"; do
+  if ! grep -Eq "$pattern" "$governance_export_contract"; then
+    echo "$governance_export_contract missing required governance export pattern: $pattern" >&2
     exit 1
   fi
 done

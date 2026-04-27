@@ -417,6 +417,12 @@ for normal, degraded, maintenance, or recovery triage and the operator does not
 need to share raw logs, direct database credentials, query result rows, or local
 machine paths.
 
+Do not use the support bundle as the dedicated governance review export. When a
+reviewer needs source- and time-bounded governance evidence, follow
+`docs/design/audit-governance-export-bundle.md` instead. The dedicated export
+requires reviewer-only authority, explicit source/time filters, redaction, and
+fail-closed handling for missing provenance or mixed-snapshot evidence.
+
 Generate the bundle from the backend environment that is already configured for
 SafeQuery:
 

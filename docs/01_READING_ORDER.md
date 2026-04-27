@@ -48,7 +48,8 @@ This reading order is intended to help new contributors understand SafeQuery fro
 19. [design/audit-event-model.md](./design/audit-event-model.md)
     Read this before implementing persistence, replay, or operational diagnostics.
 20. [design/audit-governance-export-bundle.md](./design/audit-governance-export-bundle.md)
-    Read this before generating or reviewing source-aware governance export bundles.
+    Read this before designing, generating, or reviewing dedicated governance
+    review exports separate from support bundles.
 
 ### 3. UX Foundation
 
