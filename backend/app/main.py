@@ -513,8 +513,12 @@ def create_app() -> FastAPI:
 
     @app.get("/support/bundle", response_model=SupportBundle)
     def read_support_bundle(
+        authenticated_subject: AuthenticatedSubject = Depends(
+            require_authenticated_subject
+        ),
         session: Session = Depends(require_preview_submission_session),
     ) -> SupportBundle:
+        authenticated_subject.normalized_subject_id()
         database = check_database_health(str(settings.app_postgres_url))
         sql_generation = check_sql_generation_runtime_health(settings.sql_generation)
         return build_support_bundle(
@@ -824,8 +828,12 @@ def create_app() -> FastAPI:
 
     @app.get("/operator/workflow", response_model=OperatorWorkflowSnapshot)
     def read_operator_workflow(
+        authenticated_subject: AuthenticatedSubject = Depends(
+            require_authenticated_subject
+        ),
         session: Session = Depends(require_preview_submission_session),
     ) -> OperatorWorkflowSnapshot:
+        authenticated_subject.normalized_subject_id()
         return get_operator_workflow_snapshot(session)
 
     return app
