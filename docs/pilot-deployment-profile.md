@@ -160,6 +160,12 @@ include application version, environment label, source ids, source posture,
 health summaries, migration posture, workflow state summaries, lifecycle
 metrics, and audit completeness counts.
 
+Dedicated governance review exports are separate reviewer-scoped artifacts, not
+support bundles with a broader audience. Use
+`docs/design/audit-governance-export-bundle.md` for the required source/time
+filters, reviewer-only authority, redaction rules, and fail-closed behavior.
+Support-bundle posture must not substitute for that contract.
+
 They must not include:
 
 - raw operator prompts, raw SQL, or raw result rows

@@ -447,6 +447,8 @@ Manual sign-off should record:
 - inspected positive and negative scenario ids
 - release gate status and failure list, if any
 - any skipped check with the explicit prerequisite that prevented it
+- dedicated governance review export filters and redaction status when a
+  reviewer-scoped export is part of the evidence package
 
 Do not sign off pilot readiness by inferring success from naming conventions,
 client-supplied source hints, optional extension traces, or operator-facing

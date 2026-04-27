@@ -57,7 +57,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 - [design/sql-guard-deny-catalog.md](./design/sql-guard-deny-catalog.md): machine-readable deny code catalog for SQL Guard
 - [design/sql-guard-deny-corpus.md](./design/sql-guard-deny-corpus.md): representative deny scenarios required for guard testing
 - [design/audit-event-model.md](./design/audit-event-model.md): audit event taxonomy and required fields
-- [design/audit-governance-export-bundle.md](./design/audit-governance-export-bundle.md): reviewer expectations and limitations for source-aware governance export bundles
+- [design/audit-governance-export-bundle.md](./design/audit-governance-export-bundle.md): dedicated reviewer-scoped governance export contract separate from support bundles
 
 ### UX Foundation
 
