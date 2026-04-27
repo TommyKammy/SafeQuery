@@ -47,6 +47,7 @@ def _observed_records_from_harness() -> tuple[EvaluationOutcomeRecord, ...]:
             source=scenario.source.model_dump(),
             outcome={
                 "decision": scenario.expected.decision,
+                "outcome_category": scenario.expected.outcome_category,
                 "primary_code": scenario.expected.primary_code,
             },
         )
@@ -57,8 +58,12 @@ def _observed_records_from_harness() -> tuple[EvaluationOutcomeRecord, ...]:
 def _audit_artifacts_from_harness() -> tuple[dict[str, object], ...]:
     artifacts: list[dict[str, object]] = []
     for scenario in _all_scenarios():
-        if scenario.evaluation_boundary == "guard":
+        if scenario.evaluation_boundary == "generation":
+            event_type = "generation_failed"
+        elif scenario.evaluation_boundary == "guard":
             event_type = "guard_evaluated"
+        elif scenario.evaluation_boundary == "runtime":
+            event_type = "execution_failed"
         elif scenario.expected.decision == "allow":
             event_type = "execution_completed"
         else:
@@ -103,7 +108,11 @@ def _audit_artifacts_from_harness() -> tuple[dict[str, object], ...]:
                     "execution_policy_version": scenario.source.execution_policy_version,
                     "connector_profile_version": scenario.source.connector_profile_version,
                     "primary_deny_code": scenario.expected.primary_code,
-                    "release_gate_scenario": release_gate_scenario,
+                    "release_gate_scenario": (
+                        None
+                        if event_type == "generation_failed"
+                        else release_gate_scenario
+                    ),
                 },
             }
         )
@@ -445,7 +454,11 @@ def test_release_gate_fails_closed_for_safety_regression() -> None:
     mutated_records[target_index] = target.model_copy(
         update={
             "outcome": target.outcome.model_copy(
-                update={"decision": "allow", "primary_code": None}
+                update={
+                    "decision": "allow",
+                    "outcome_category": "bounded_success",
+                    "primary_code": None,
+                }
             )
         }
     )

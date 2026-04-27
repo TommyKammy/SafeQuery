@@ -4,7 +4,11 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, PositiveInt, model_validator
 
-from app.features.evaluation.harness import EvaluationScenarioKind, EvaluationSourceProfile
+from app.features.evaluation.harness import (
+    EvaluationOutcomeCategory,
+    EvaluationScenarioKind,
+    EvaluationSourceProfile,
+)
 
 
 ComparisonStatus = Literal["pass", "fail", "regression"]
@@ -18,6 +22,7 @@ class EvaluationObservedOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: Literal["allow", "reject"]
+    outcome_category: EvaluationOutcomeCategory
     primary_code: Optional[str] = None
 
     @model_validator(mode="after")
@@ -172,6 +177,8 @@ def _collect_regressions(
             regressions.append(field_name)
     if baseline.outcome.decision != candidate.outcome.decision:
         regressions.append("decision")
+    if baseline.outcome.outcome_category != candidate.outcome.outcome_category:
+        regressions.append("outcome_category")
     if baseline.outcome.primary_code != candidate.outcome.primary_code:
         regressions.append("primary_code")
 

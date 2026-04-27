@@ -174,6 +174,7 @@ def _record_from_scenario(scenario: ScenarioArtifact) -> EvaluationOutcomeRecord
         source=EvaluationOutcomeSnapshot.model_validate(scenario.source.model_dump()),
         outcome=EvaluationObservedOutcome(
             decision=scenario.expected.decision,
+            outcome_category=scenario.expected.outcome_category,
             primary_code=scenario.expected.primary_code,
         ),
     )
@@ -283,8 +284,12 @@ def _audit_failures_for_scenario(
 
 
 def _expected_audit_event_type_for(scenario: ScenarioArtifact) -> str:
+    if scenario.evaluation_boundary == "generation":
+        return "generation_failed"
     if scenario.evaluation_boundary == "guard":
         return "guard_evaluated"
+    if scenario.evaluation_boundary == "runtime":
+        return "execution_failed"
     if scenario.expected.decision == "allow":
         return "execution_completed"
     return "execution_denied"
@@ -299,9 +304,14 @@ def _audit_mismatches_for_scenario(
 ) -> tuple[str, ...]:
     mismatches: list[str] = []
     release_gate_scenario = event.release_gate_scenario
-    if release_gate_scenario is None:
-        mismatches.append("release_gate_scenario")
+    if expected_event_type == "generation_failed":
+        release_gate_scenario_required = False
     else:
+        release_gate_scenario_required = True
+
+    if release_gate_scenario is None and release_gate_scenario_required:
+        mismatches.append("release_gate_scenario")
+    elif release_gate_scenario is not None:
         scenario_expected_values = {
             "release_gate_scenario.scenario_id": scenario.scenario_id,
             "release_gate_scenario.source_id": scenario.source.source_id,
