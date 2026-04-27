@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Annotated, Literal, Optional
+from urllib.parse import unquote, urlsplit
 
 from pydantic import (
     AnyHttpUrl,
@@ -37,6 +38,32 @@ class ProductionIdentityBridgeSettings(BaseModel):
 
 
 SQLGenerationProvider = Literal["disabled", "local_llm", "vanna"]
+
+_PLACEHOLDER_CREDENTIAL_VALUES = frozenset(
+    {
+        "change-me",
+        "changeme",
+        "todo",
+        "placeholder",
+        "example",
+    }
+)
+
+
+def _is_placeholder_credential(value: str) -> bool:
+    return value.strip().lower() in _PLACEHOLDER_CREDENTIAL_VALUES
+
+
+def _mssql_connection_string_parts(connection_string: str) -> dict[str, str]:
+    parts: dict[str, str] = {}
+    for segment in connection_string.split(";"):
+        key, separator, value = segment.partition("=")
+        if not separator:
+            continue
+        normalized_key = key.strip().lower()
+        if normalized_key:
+            parts[normalized_key] = value.strip()
+    return parts
 
 
 class SQLGenerationSettings(BaseModel):
@@ -100,6 +127,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     @field_validator("cors_origins", mode="before")
@@ -148,13 +176,7 @@ class Settings(BaseSettings):
             )
 
         normalized_lower = normalized.lower()
-        if normalized_lower in {
-            "change-me",
-            "changeme",
-            "todo",
-            "placeholder",
-            "example",
-        }:
+        if _is_placeholder_credential(normalized_lower):
             raise ValueError(
                 "SAFEQUERY_SQL_GENERATION_VANNA_API_KEY must come from a trusted "
                 "credential source, not a placeholder value."
@@ -179,16 +201,66 @@ class Settings(BaseSettings):
             )
 
         normalized_lower = normalized.lower()
-        if normalized_lower in {
-            "change-me",
-            "changeme",
-            "todo",
-            "placeholder",
-            "example",
-        }:
+        if _is_placeholder_credential(normalized_lower):
             raise ValueError(
                 "SAFEQUERY_PRODUCTION_IDENTITY_BRIDGE_SHARED_SECRET must come from "
                 "a trusted credential source, not a placeholder value."
+            )
+
+        return value
+
+    @field_validator("business_postgres_source_url")
+    @classmethod
+    def _reject_placeholder_business_postgres_source_url(
+        cls,
+        value: Optional[PostgresDsn],
+    ) -> Optional[PostgresDsn]:
+        if value is None:
+            return value
+
+        parsed = urlsplit(str(value))
+        password = unquote(parsed.password or "").strip()
+        if password and _is_placeholder_credential(password):
+            raise ValueError(
+                "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must come from a trusted "
+                "credential source, not a placeholder value."
+            )
+
+        return value
+
+    @field_validator("business_mssql_source_connection_string")
+    @classmethod
+    def _reject_placeholder_business_mssql_source_connection_string(
+        cls,
+        value: Optional[str],
+    ) -> Optional[str]:
+        if value is None:
+            return value
+
+        normalized = value.strip()
+        if not normalized:
+            return value
+
+        parts = _mssql_connection_string_parts(normalized)
+        if "pwd" in parts:
+            password = parts["pwd"]
+        elif "password" in parts:
+            password = parts["password"]
+        else:
+            password = None
+        if password is None:
+            return value
+
+        if not password.strip():
+            raise ValueError(
+                "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must include a "
+                "non-empty password from a trusted credential source."
+            )
+
+        if _is_placeholder_credential(password):
+            raise ValueError(
+                "SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must come from a "
+                "trusted credential source, not a placeholder value."
             )
 
         return value
