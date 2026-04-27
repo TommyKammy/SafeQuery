@@ -126,7 +126,11 @@ def _add_workflow_records_with_sensitive_payload(session: Session) -> None:
     session.commit()
 
 
-def _add_governance_review_workflow_records(session: Session) -> None:
+def _add_governance_review_workflow_records(
+    session: Session,
+    *,
+    execution_row_count: object = 12,
+) -> None:
     source = session.query(RegisteredSource).one()
     preview_request = PreviewRequest(
         id=uuid4(),
@@ -247,7 +251,7 @@ def _add_governance_review_workflow_records(session: Session) -> None:
                 schema_snapshot_version=preview_request.schema_snapshot_version,
                 candidate_state=candidate_state,
                 audit_payload={
-                    "execution_row_count": 12,
+                    "execution_row_count": execution_row_count,
                     "result_truncated": False,
                     "raw_rows": [{"customer_secret": "sk-live-should-not-leak"}],
                     "debug_path": "/".join(
@@ -554,6 +558,32 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
     serialized = json.dumps(payload, sort_keys=True)
     _assert_secret_safe(serialized)
     assert "raw_private_rows" not in serialized
+
+
+def test_governance_review_execute_result_rejects_boolean_row_count(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session, execution_row_count=True)
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    payload = bundle.model_dump(mode="json", by_alias=True, exclude_none=True)
+    execute_result = payload["governanceReview"]["evidence"][0]["executeResult"]
+    assert "rowCount" not in execute_result
+    assert execute_result["resultTruncated"] is False
 
 
 def test_support_bundle_endpoint_returns_secret_safe_json(monkeypatch) -> None:

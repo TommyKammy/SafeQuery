@@ -400,6 +400,8 @@ def _audit_event_sort_key(event: PreviewAuditEvent) -> tuple[datetime, int, str]
 
 def _payload_non_negative_int(payload: Mapping[str, object], key: str) -> int | None:
     value = payload.get(key)
+    if isinstance(value, bool):
+        return None
     return value if isinstance(value, int) and value >= 0 else None
 
 
