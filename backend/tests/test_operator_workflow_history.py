@@ -28,6 +28,10 @@ from app.services.request_preview import (
     persist_execution_audit_events,
     submit_preview_request,
 )
+from app.services.source_governance import (
+    SourceGovernanceResolutionError,
+    resolve_authoritative_source_governance,
+)
 
 
 @contextmanager
@@ -90,6 +94,87 @@ def _seed_authoritative_source_governance(
 
     source.dataset_contract_id = contract.id
     source.schema_snapshot_id = snapshot.id
+    session.commit()
+
+
+def _seed_source_with_governance_state(
+    session: Session,
+    *,
+    source_id: str,
+    owner_binding: str | None,
+    security_review_binding: str | None = None,
+    contract_version: int = 1,
+    linked_contract_version: int | None = None,
+    drift_contract_snapshot: bool = False,
+) -> None:
+    source = RegisteredSource(
+        id=uuid4(),
+        source_id=source_id,
+        display_label=source_id.replace("-", " ").title(),
+        source_family="postgresql",
+        source_flavor="warehouse",
+        activation_posture=SourceActivationPosture.ACTIVE,
+        connector_profile_id=None,
+        dialect_profile_id=None,
+        dataset_contract_id=None,
+        schema_snapshot_id=None,
+        execution_policy_id=None,
+        connection_reference=f"vault:{source_id}",
+    )
+    session.add(source)
+    session.flush()
+
+    active_snapshot = SchemaSnapshot(
+        id=uuid4(),
+        registered_source_id=source.id,
+        snapshot_version=1,
+        review_status=SchemaSnapshotReviewStatus.APPROVED,
+        reviewed_at=datetime.now(timezone.utc),
+    )
+    session.add(active_snapshot)
+    session.flush()
+
+    contract_snapshot = active_snapshot
+    if drift_contract_snapshot:
+        contract_snapshot = SchemaSnapshot(
+            id=uuid4(),
+            registered_source_id=source.id,
+            snapshot_version=2,
+            review_status=SchemaSnapshotReviewStatus.APPROVED,
+            reviewed_at=datetime.now(timezone.utc),
+        )
+        session.add(contract_snapshot)
+        session.flush()
+
+    contract = DatasetContract(
+        id=uuid4(),
+        registered_source_id=source.id,
+        schema_snapshot_id=contract_snapshot.id,
+        contract_version=linked_contract_version or contract_version,
+        display_name=f"{source_id} contract",
+        owner_binding=owner_binding,
+        security_review_binding=security_review_binding,
+        exception_policy_binding=None,
+    )
+    session.add(contract)
+    session.flush()
+
+    if linked_contract_version is not None:
+        latest_contract = DatasetContract(
+            id=uuid4(),
+            registered_source_id=source.id,
+            schema_snapshot_id=active_snapshot.id,
+            contract_version=contract_version,
+            display_name=f"{source_id} latest contract",
+            owner_binding=owner_binding,
+            security_review_binding=security_review_binding,
+            exception_policy_binding=None,
+        )
+        session.add(latest_contract)
+        session.flush()
+
+    source.dataset_contract_id = contract.id
+    source.schema_snapshot_id = active_snapshot.id
     session.commit()
 
 
@@ -508,3 +593,82 @@ def test_operator_workflow_history_includes_audit_safe_unavailable_preview_denia
     assert "cookie" not in serialized_history
     assert "token" not in serialized_history
     assert "secret" not in serialized_history
+
+
+def test_operator_workflow_sources_surface_sanitized_governance_binding_states() -> None:
+    with _session_scope() as session:
+        _seed_source_with_governance_state(
+            session,
+            source_id="valid-source",
+            owner_binding="group:finance-analysts",
+        )
+        _seed_source_with_governance_state(
+            session,
+            source_id="missing-source",
+            owner_binding=None,
+        )
+        _seed_source_with_governance_state(
+            session,
+            source_id="ambiguous-source",
+            owner_binding="group:finance-analysts",
+            security_review_binding="group:finance-analysts",
+        )
+        _seed_source_with_governance_state(
+            session,
+            source_id="stale-source",
+            owner_binding="group:finance-analysts",
+            contract_version=2,
+            linked_contract_version=1,
+        )
+        _seed_source_with_governance_state(
+            session,
+            source_id="drifted-source",
+            owner_binding="group:finance-analysts",
+            drift_contract_snapshot=True,
+        )
+
+        snapshot = get_operator_workflow_snapshot(session)
+
+    payload = snapshot.model_dump(mode="json", by_alias=True)
+    states_by_source = {
+        source["sourceId"]: {
+            binding["role"]: binding["state"]
+            for binding in source["governanceBindings"]
+        }
+        for source in payload["sources"]
+    }
+    assert states_by_source["valid-source"]["owner"] == "valid"
+    assert states_by_source["missing-source"]["owner"] == "missing"
+    assert states_by_source["ambiguous-source"]["owner"] == "ambiguous"
+    assert states_by_source["stale-source"]["owner"] == "stale"
+    assert states_by_source["drifted-source"]["owner"] == "drifted"
+
+    owner_binding = next(
+        binding
+        for source in payload["sources"]
+        if source["sourceId"] == "stale-source"
+        for binding in source["governanceBindings"]
+        if binding["role"] == "owner"
+    )
+    assert owner_binding["affectsEntitlement"] is True
+    serialized = str(payload).lower()
+    assert "group:finance-analysts" not in serialized
+    assert "token" not in serialized
+    assert "secret" not in serialized
+
+
+def test_source_governance_resolution_fails_closed_on_stale_contract_linkage() -> None:
+    with _session_scope() as session:
+        _seed_source_with_governance_state(
+            session,
+            source_id="stale-source",
+            owner_binding="group:finance-analysts",
+            contract_version=2,
+            linked_contract_version=1,
+        )
+
+        with pytest.raises(SourceGovernanceResolutionError, match="stale"):
+            resolve_authoritative_source_governance(
+                session,
+                source_id="stale-source",
+            )

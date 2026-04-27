@@ -1,9 +1,20 @@
 export type SourceActivationPosture = "active" | "paused" | "blocked" | "retired";
+export type GovernanceBindingState = "valid" | "missing" | "ambiguous" | "stale" | "drifted";
+export type GovernanceBindingRole = "owner" | "security_review" | "exception_policy";
+
+export type GovernanceBindingStatus = {
+  affectsEntitlement: boolean;
+  recovery: string;
+  role: GovernanceBindingRole;
+  state: GovernanceBindingState;
+  summary: string;
+};
 
 export type SourceOption = {
   activationPosture: SourceActivationPosture;
   description: string;
   displayLabel: string;
+  governanceBindings: GovernanceBindingStatus[];
   sourceFamily?: string;
   sourceFlavor?: string | null;
   sourceId: string;
@@ -91,6 +102,20 @@ function isObject(value: unknown): value is RawObject {
 
 function isActivationPosture(value: unknown): value is SourceActivationPosture {
   return value === "active" || value === "paused" || value === "blocked" || value === "retired";
+}
+
+function isGovernanceBindingState(value: unknown): value is GovernanceBindingState {
+  return (
+    value === "valid" ||
+    value === "missing" ||
+    value === "ambiguous" ||
+    value === "stale" ||
+    value === "drifted"
+  );
+}
+
+function isGovernanceBindingRole(value: unknown): value is GovernanceBindingRole {
+  return value === "owner" || value === "security_review" || value === "exception_policy";
 }
 
 function readOptionalString(value: unknown): string | undefined {
@@ -217,6 +242,32 @@ function parseRetrievedCitation(value: unknown): OperatorWorkflowRetrievedCitati
   };
 }
 
+function parseGovernanceBindingStatus(value: unknown): GovernanceBindingStatus | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const summary = readOptionalString(value.summary);
+  const recovery = readOptionalString(value.recovery);
+  if (
+    !isGovernanceBindingRole(value.role) ||
+    !isGovernanceBindingState(value.state) ||
+    typeof value.affectsEntitlement !== "boolean" ||
+    !summary ||
+    !recovery
+  ) {
+    return null;
+  }
+
+  return {
+    affectsEntitlement: value.affectsEntitlement,
+    recovery,
+    role: value.role,
+    state: value.state,
+    summary
+  };
+}
+
 function parseSourceOption(value: unknown): SourceOption | null {
   if (!isObject(value)) {
     return null;
@@ -225,8 +276,17 @@ function parseSourceOption(value: unknown): SourceOption | null {
   const sourceId = readOptionalString(value.sourceId);
   const displayLabel = readOptionalString(value.displayLabel);
   const description = readOptionalString(value.description);
+  const governanceBindings = Array.isArray(value.governanceBindings)
+    ? parseArray(value.governanceBindings, parseGovernanceBindingStatus)
+    : null;
 
-  if (!sourceId || !displayLabel || !description || !isActivationPosture(value.activationPosture)) {
+  if (
+    !sourceId ||
+    !displayLabel ||
+    !description ||
+    !isActivationPosture(value.activationPosture) ||
+    governanceBindings === null
+  ) {
     return null;
   }
 
@@ -234,6 +294,7 @@ function parseSourceOption(value: unknown): SourceOption | null {
     activationPosture: value.activationPosture,
     description,
     displayLabel,
+    governanceBindings,
     sourceFamily: readOptionalString(value.sourceFamily),
     sourceFlavor: readOptionalString(value.sourceFlavor) ?? null,
     sourceId

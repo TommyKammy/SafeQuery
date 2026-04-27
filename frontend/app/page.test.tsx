@@ -21,12 +21,14 @@ function workflowPayload(sourceLabel = "SAP spend cube / approved_vendor_spend")
         activationPosture: "active",
         description: "Approved finance spend cube for governed preview and single-source execution.",
         displayLabel: sourceLabel,
+        governanceBindings: [],
         sourceId: "sap-approved-spend"
       },
       {
         activationPosture: "paused",
         description: "Historical archive is visible for posture review but not executable for preview.",
         displayLabel: "Legacy finance archive",
+        governanceBindings: [],
         sourceId: "legacy-finance-archive"
       }
     ]
@@ -99,6 +101,7 @@ describe("HomePage", () => {
                     activationPosture: "active",
                     description: "Live source returned by the backend contract.",
                     displayLabel: "ERP approved spend / live contract",
+                    governanceBindings: [],
                     sourceId: "erp-approved-spend"
                   }
                 ]
@@ -116,6 +119,74 @@ describe("HomePage", () => {
       screen.getByRole("option", { name: "ERP approved spend / live contract" })
     ).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /SAP spend cube/i })).not.toBeInTheDocument();
+  });
+
+  it("renders stale and drifted governance binding status without raw identity payloads", async () => {
+    const rawBinding = "group:finance-analysts";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [],
+                sources: [
+                  {
+                    activationPosture: "active",
+                    description: "Live source with stale governance status.",
+                    displayLabel: "ERP approved spend / live contract",
+                    governanceBindings: [
+                      {
+                        affectsEntitlement: true,
+                        recovery:
+                          "Promote or rebind the latest reviewed governance contract before retrying.",
+                        role: "owner",
+                        state: "stale",
+                        summary: "Owner binding is attached to a stale contract version."
+                      },
+                      {
+                        affectsEntitlement: false,
+                        recovery: "Repair source-to-contract and source-to-schema links before retrying.",
+                        role: "security_review",
+                        state: "drifted",
+                        summary:
+                          "Security review binding no longer matches the active source linkage."
+                      }
+                    ],
+                    rawBinding,
+                    sourceId: "erp-approved-spend"
+                  }
+                ]
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          source_id: "erp-approved-spend",
+          state: "query"
+        }
+      })
+    );
+
+    const status = screen.getByLabelText(/governance binding status/i);
+    expect(status).toHaveTextContent(/governance binding review required/i);
+    expect(status).toHaveTextContent(/owner: stale/i);
+    expect(status).toHaveTextContent(/security review: drifted/i);
+    expect(status).toHaveTextContent(/promote or rebind the latest reviewed governance contract/i);
+    expect(
+      screen.getByText(/resolve entitlement-affecting governance binding status before preview/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(rawBinding)).not.toBeInTheDocument();
   });
 
   it("renders source-aware history rows from the live operator workflow payload", async () => {
@@ -224,6 +295,43 @@ describe("HomePage", () => {
     ).toBeInTheDocument();
   });
 
+  it("fails closed when source governance bindings are omitted", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [],
+                sources: [
+                  {
+                    activationPosture: "active",
+                    description: "Source payload without explicit governance binding status.",
+                    displayLabel: "Missing governance source",
+                    sourceId: "missing-governance-source"
+                  }
+                ]
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByLabelText(/operator history/i)).toHaveTextContent("malformed");
+    expect(
+      screen.getByText(/backend workflow payload was malformed, so the source selector remains blocked/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Missing governance source" })).not.toBeInTheDocument();
+  });
+
   it("renders first-run setup guidance when no sources are configured", async () => {
     vi.stubGlobal(
       "fetch",
@@ -274,6 +382,7 @@ describe("HomePage", () => {
                     activationPosture: "active",
                     description: "Demo source returned by the backend contract.",
                     displayLabel: "Demo business source",
+                    governanceBindings: [],
                     sourceId: "demo-business-source"
                   }
                 ]
@@ -576,12 +685,14 @@ describe("HomePage", () => {
                     activationPosture: "active",
                     description: "Draft marketing source returned by the backend contract.",
                     displayLabel: "Marketing campaigns / campaign_spend",
+                    governanceBindings: [],
                     sourceId: "marketing-campaign-spend"
                   },
                   {
                     activationPosture: "active",
                     description: "Candidate source returned by the backend contract.",
                     displayLabel: "SAP spend cube / approved_vendor_spend",
+                    governanceBindings: [],
                     sourceId: "sap-approved-spend"
                   }
                 ]
@@ -1421,6 +1532,7 @@ describe("HomePage", () => {
                     activationPosture: "active",
                     description: "Registry fallback source label should not override selected run context.",
                     displayLabel: "Registry fallback source label",
+                    governanceBindings: [],
                     sourceId: "sap-approved-spend"
                   }
                 ]

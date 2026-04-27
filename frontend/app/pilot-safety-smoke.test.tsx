@@ -92,6 +92,7 @@ function pilotWorkflowPayload() {
         activationPosture: "active",
         description: "Pilot source returned by the backend workflow contract.",
         displayLabel: "Demo business PostgreSQL / approved_vendor_spend",
+        governanceBindings: [],
         sourceFamily: "postgresql",
         sourceFlavor: "warehouse",
         sourceId: "demo-business-postgres"

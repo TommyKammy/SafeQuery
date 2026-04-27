@@ -4,11 +4,28 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.db.models.dataset_contract import DatasetContract
 from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
+from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource
+from app.features.auth.governance_bindings import normalize_governance_binding
+
+
+GovernanceBindingState = Literal[
+    "valid",
+    "missing",
+    "ambiguous",
+    "stale",
+    "drifted",
+]
+GovernanceBindingRole = Literal[
+    "owner",
+    "security_review",
+    "exception_policy",
+]
 
 
 class OperatorWorkflowSourceOption(BaseModel):
@@ -20,6 +37,20 @@ class OperatorWorkflowSourceOption(BaseModel):
     activation_posture: str = Field(serialization_alias="activationPosture")
     source_family: str = Field(serialization_alias="sourceFamily")
     source_flavor: Optional[str] = Field(default=None, serialization_alias="sourceFlavor")
+    governance_bindings: list["OperatorWorkflowGovernanceBindingStatus"] = Field(
+        default_factory=list,
+        serialization_alias="governanceBindings",
+    )
+
+
+class OperatorWorkflowGovernanceBindingStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: GovernanceBindingRole
+    state: GovernanceBindingState
+    affects_entitlement: bool = Field(serialization_alias="affectsEntitlement")
+    summary: str
+    recovery: str
 
 
 class OperatorWorkflowHistoryItem(BaseModel):
@@ -147,6 +178,104 @@ def _source_description(source: RegisteredSource) -> str:
         f"{source.source_family}{flavor} source with "
         f"{source.activation_posture.value} activation posture."
     )
+
+
+def _governance_binding_status(
+    *,
+    role: GovernanceBindingRole,
+    raw_binding: str | None,
+    state: GovernanceBindingState,
+    affects_entitlement: bool,
+) -> OperatorWorkflowGovernanceBindingStatus:
+    role_label = role.replace("_", " ")
+    summaries = {
+        "valid": f"{role_label.title()} binding is current and normalized.",
+        "missing": f"{role_label.title()} binding is missing or malformed.",
+        "ambiguous": f"{role_label.title()} binding overlaps another governance role.",
+        "stale": f"{role_label.title()} binding is attached to a stale contract version.",
+        "drifted": f"{role_label.title()} binding no longer matches the active source linkage.",
+    }
+    recoveries = {
+        "valid": "No operator recovery is required for this binding.",
+        "missing": "Reconcile the authoritative dataset contract before granting access.",
+        "ambiguous": "Split or re-review role mappings before treating the binding as current.",
+        "stale": "Promote or rebind the latest reviewed governance contract before retrying.",
+        "drifted": "Repair source-to-contract and source-to-schema links before retrying.",
+    }
+    normalized = normalize_governance_binding(raw_binding)
+    effective_state = "missing" if normalized is None and state == "valid" else state
+    return OperatorWorkflowGovernanceBindingStatus(
+        role=role,
+        state=effective_state,
+        affects_entitlement=affects_entitlement,
+        summary=summaries[effective_state],
+        recovery=recoveries[effective_state],
+    )
+
+
+def _source_governance_bindings(
+    *,
+    source: RegisteredSource,
+    contract: DatasetContract | None,
+    schema_snapshot: SchemaSnapshot | None,
+    latest_contract_version: int | None,
+) -> list[OperatorWorkflowGovernanceBindingStatus]:
+    roles: list[tuple[GovernanceBindingRole, str | None, bool]] = [
+        ("owner", contract.owner_binding if contract is not None else None, True),
+        (
+            "security_review",
+            contract.security_review_binding if contract is not None else None,
+            False,
+        ),
+        (
+            "exception_policy",
+            contract.exception_policy_binding if contract is not None else None,
+            False,
+        ),
+    ]
+    normalized_counts: dict[str, int] = {}
+    for _, raw_binding, _ in roles:
+        normalized = normalize_governance_binding(raw_binding)
+        if normalized is not None:
+            normalized_counts[normalized] = normalized_counts.get(normalized, 0) + 1
+
+    drifted = (
+        contract is None
+        or schema_snapshot is None
+        or source.dataset_contract_id != contract.id
+        or source.schema_snapshot_id != schema_snapshot.id
+        or contract.registered_source_id != source.id
+        or schema_snapshot.registered_source_id != source.id
+        or contract.schema_snapshot_id != schema_snapshot.id
+    )
+    stale = (
+        not drifted
+        and latest_contract_version is not None
+        and contract is not None
+        and contract.contract_version < latest_contract_version
+    )
+
+    statuses: list[OperatorWorkflowGovernanceBindingStatus] = []
+    for role, raw_binding, affects_entitlement in roles:
+        normalized = normalize_governance_binding(raw_binding)
+        state: GovernanceBindingState = "valid"
+        if drifted:
+            state = "drifted"
+        elif stale:
+            state = "stale"
+        elif normalized is None:
+            state = "missing"
+        elif normalized_counts.get(normalized, 0) > 1:
+            state = "ambiguous"
+        statuses.append(
+            _governance_binding_status(
+                role=role,
+                raw_binding=raw_binding,
+                state=state,
+                affects_entitlement=affects_entitlement,
+            )
+        )
+    return statuses
 
 
 def _as_utc_datetime(value: datetime) -> datetime:
@@ -514,10 +643,29 @@ def _build_operator_history(
 
 
 def get_operator_workflow_snapshot(session: Session) -> OperatorWorkflowSnapshot:
-    sources = (
-        session.execute(select(RegisteredSource).order_by(RegisteredSource.source_id))
-        .scalars()
+    source_rows = (
+        session.execute(
+            select(RegisteredSource, DatasetContract, SchemaSnapshot)
+            .outerjoin(
+                DatasetContract,
+                DatasetContract.id == RegisteredSource.dataset_contract_id,
+            )
+            .outerjoin(
+                SchemaSnapshot,
+                SchemaSnapshot.id == RegisteredSource.schema_snapshot_id,
+            )
+            .order_by(RegisteredSource.source_id)
+        )
         .all()
+    )
+    sources = [row[0] for row in source_rows]
+    latest_contract_versions = dict(
+        session.execute(
+            select(
+                DatasetContract.registered_source_id,
+                func.max(DatasetContract.contract_version),
+            ).group_by(DatasetContract.registered_source_id)
+        ).all()
     )
 
     source_options = [
@@ -528,8 +676,14 @@ def get_operator_workflow_snapshot(session: Session) -> OperatorWorkflowSnapshot
             activation_posture=source.activation_posture.value,
             source_family=source.source_family,
             source_flavor=source.source_flavor,
+            governance_bindings=_source_governance_bindings(
+                source=source,
+                contract=dataset_contract,
+                schema_snapshot=schema_snapshot,
+                latest_contract_version=latest_contract_versions.get(source.id),
+            ),
         )
-        for source in sources
+        for source, dataset_contract, schema_snapshot in source_rows
     ]
 
     return OperatorWorkflowSnapshot(
