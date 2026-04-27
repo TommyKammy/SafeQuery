@@ -289,6 +289,14 @@ function getFirstRunGuidance(snapshot: OperatorWorkflowSnapshot): FirstRunGuidan
     };
   }
 
+  if (snapshot.status === "operator_read_forbidden") {
+    return {
+      body:
+        "Confirm the signed-in operator has reviewer, support, or admin authority before reading the operator workflow.",
+      title: "Operator workflow authority required"
+    };
+  }
+
   if (snapshot.status === "live" && snapshot.sources.length === 0) {
     return {
       body:
@@ -331,13 +339,18 @@ function getOperatorRecoveryGuidance(
     snapshot.status === "unauthenticated" ||
     snapshot.status === "session_invalid" ||
     snapshot.status === "csrf_failed" ||
+    snapshot.status === "operator_read_forbidden" ||
     snapshot.status === "entitlement_denied"
   ) {
     return {
       action:
-        "Revise the session, request freshness, or entitlement binding before retrying.",
+        snapshot.status === "operator_read_forbidden"
+          ? "Use a signed-in operator with reviewer, support, or admin authority before retrying."
+          : "Revise the session, request freshness, or entitlement binding before retrying.",
       anchor:
-        "Use SafeQuery auth and entitlement records as the prerequisite; do not infer access from UI text or external evidence.",
+        snapshot.status === "operator_read_forbidden"
+          ? "Use SafeQuery authority records as the prerequisite; do not infer reviewer or support authority from UI text or external evidence."
+          : "Use SafeQuery auth and entitlement records as the prerequisite; do not infer access from UI text or external evidence.",
       title: "Workflow access blocked"
     };
   }
@@ -942,6 +955,10 @@ function getWorkflowDataStatusCopy(status: OperatorWorkflowSnapshot["status"]): 
 
   if (status === "entitlement_denied") {
     return "The signed-in operator is not entitled to this source or workflow context.";
+  }
+
+  if (status === "operator_read_forbidden") {
+    return "Reviewer or support authority is required before reading the operator workflow.";
   }
 
   if (status === "malformed") {

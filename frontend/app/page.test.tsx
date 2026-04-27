@@ -484,6 +484,44 @@ describe("HomePage", () => {
     expect(screen.queryByRole("option", { name: /sap spend cube/i })).not.toBeInTheDocument();
   });
 
+  it("renders operator read forbidden guidance without implying backend outage", async () => {
+    const secretDetail = "support-token-should-not-render";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: false,
+            json: () =>
+              Promise.resolve({
+                error: {
+                  code: "operator_read_forbidden",
+                  message: "Reviewer or support authority is required to read the operator workflow.",
+                  raw: secretDetail
+                }
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByRole("heading", { name: /operator workflow authority required/i })).toBeInTheDocument();
+    expect(screen.getByText(/reviewer or support authority is required before reading/i)).toBeInTheDocument();
+    expect(screen.getByText(/use a signed-in operator with reviewer, support, or admin authority/i)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /backend workflow unavailable/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/backend workflow payload is unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(secretDetail)).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /sap spend cube/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/no live history rows/i)).toBeInTheDocument();
+  });
+
   it("renders normalized auth and entitlement workflow failures without leaking sensitive details", async () => {
     const secretDetail = "idp-token-should-not-render";
     const failureCases = [
@@ -506,6 +544,11 @@ describe("HomePage", () => {
         code: "entitlement_denied",
         message: "The signed-in operator is not entitled to use that source.",
         statusCopy: /this source or workflow context/i
+      },
+      {
+        code: "operator_read_forbidden",
+        message: "Reviewer or support authority is required to read the operator workflow.",
+        statusCopy: /before reading the operator workflow/i
       }
     ] as const;
 
@@ -537,7 +580,7 @@ describe("HomePage", () => {
       render(await HomePage({}));
 
       expect(screen.getByLabelText(/operator history/i)).toHaveTextContent(failureCase.code);
-      expect(screen.getByText(failureCase.statusCopy)).toBeInTheDocument();
+      expect(screen.getAllByText(failureCase.statusCopy).length).toBeGreaterThan(0);
       expect(screen.getByText(failureCase.message)).toBeInTheDocument();
       expect(screen.queryByText(secretDetail)).not.toBeInTheDocument();
     }

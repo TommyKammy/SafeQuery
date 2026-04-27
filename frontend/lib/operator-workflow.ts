@@ -91,6 +91,7 @@ export type OperatorWorkflowSnapshot = {
     | "unauthenticated"
     | "session_invalid"
     | "csrf_failed"
+    | "operator_read_forbidden"
     | "entitlement_denied";
 };
 
@@ -382,6 +383,7 @@ function unavailableSnapshotForApiError(payload: unknown): OperatorWorkflowSnaps
     error?.code === "unauthenticated" ||
     error?.code === "session_invalid" ||
     error?.code === "csrf_failed" ||
+    error?.code === "operator_read_forbidden" ||
     error?.code === "entitlement_denied"
   ) {
     return {
