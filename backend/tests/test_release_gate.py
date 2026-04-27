@@ -72,11 +72,12 @@ def _audit_artifacts_from_harness() -> tuple[dict[str, object], ...]:
         event_id = uuid4()
         guard_audit_event_id = event_id if event_type == "guard_evaluated" else uuid4()
         candidate_id = f"candidate-{scenario.scenario_id}"
+        guard_decision = "reject" if scenario.evaluation_boundary == "guard" else "allow"
         release_gate_scenario = {
             "scenario_id": scenario.scenario_id,
             "source_id": scenario.source.source_id,
             "candidate_id": candidate_id,
-            "guard_decision": scenario.expected.decision,
+            "guard_decision": guard_decision,
             "guard_audit_event_id": guard_audit_event_id,
         }
         if event_type in {"execution_completed", "execution_denied"}:
@@ -360,6 +361,58 @@ def test_release_gate_fails_closed_when_audit_event_lacks_scenario_metadata() ->
     assert "release_gate_scenario" in decision.failures[0].detail
 
 
+def test_release_gate_accepts_raw_generation_failed_audit_event_without_scenario_id() -> None:
+    scenario = next(
+        scenario
+        for scenario in list_postgresql_evaluation_scenarios()
+        if scenario.evaluation_boundary == "generation"
+    )
+    audit_artifacts = list(_audit_artifacts_from_harness())
+    target_index = next(
+        index
+        for index, artifact in enumerate(audit_artifacts)
+        if artifact["scenario_id"] == scenario.scenario_id
+    )
+    event = dict(audit_artifacts[target_index]["event"])
+    event.pop("release_gate_scenario", None)
+    audit_artifacts[target_index] = {"event": event}
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=_observed_records_from_harness(),
+        audit_artifacts=tuple(audit_artifacts),
+    )
+
+    assert decision.status == "pass"
+    assert decision.failure_count == 0
+
+
+def test_release_gate_accepts_runtime_audit_guard_decision_that_allowed_execution() -> None:
+    scenario = next(
+        scenario
+        for scenario in list_mssql_evaluation_scenarios()
+        if scenario.evaluation_boundary == "runtime"
+    )
+    audit_artifacts = list(_audit_artifacts_from_harness())
+    target_artifact = next(
+        artifact
+        for artifact in audit_artifacts
+        if artifact["scenario_id"] == scenario.scenario_id
+    )
+    event = target_artifact["event"]
+    assert isinstance(event, dict)
+    release_gate_scenario = event["release_gate_scenario"]
+    assert isinstance(release_gate_scenario, dict)
+    assert release_gate_scenario["guard_decision"] == "allow"
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=_observed_records_from_harness(),
+        audit_artifacts=tuple(audit_artifacts),
+    )
+
+    assert decision.status == "pass"
+    assert decision.failure_count == 0
+
+
 def test_release_gate_fails_closed_when_execute_audit_linkage_is_missing() -> None:
     audit_artifacts = list(_audit_artifacts_from_harness())
     target_index = next(
@@ -474,6 +527,34 @@ def test_release_gate_fails_closed_for_safety_regression() -> None:
     assert decision.failures[0].source_id == "business-mssql-source"
     assert decision.failures[0].source_family == "mssql"
     assert decision.failures[0].scenario_category == "safety"
+
+
+def test_release_gate_reports_outcome_category_regression_detail() -> None:
+    mutated_records = list(_observed_records_from_harness())
+    target_index = next(
+        index
+        for index, record in enumerate(mutated_records)
+        if record.scenario_id == "mssql-safety-guard-denies-write-operation"
+    )
+    target = mutated_records[target_index]
+    mutated_records[target_index] = target.model_copy(
+        update={
+            "outcome": target.outcome.model_copy(
+                update={"outcome_category": "runtime_timeout"}
+            )
+        }
+    )
+
+    decision = reconstruct_release_gate(
+        observed_artifacts=tuple(mutated_records),
+        audit_artifacts=_audit_artifacts_from_harness(),
+    )
+
+    assert decision.status == "fail"
+    assert decision.failure_count == 1
+    assert decision.failures[0].deny_code == "DENY_SAFETY_SCENARIO_REGRESSION"
+    assert "outcome category" in decision.failures[0].detail
+    assert "source profile" not in decision.failures[0].detail
 
 
 def test_release_gate_fails_closed_for_missing_evaluation_coverage() -> None:
