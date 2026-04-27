@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -46,6 +48,36 @@ from app.services.sql_generation_adapter import (
     SQLGenerationAdapterConfigurationError,
     SQLGenerationAdapterResponse,
 )
+
+
+def _load_preview_to_execute_golden_fixture(name: str) -> dict[str, object]:
+    fixture_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "preview_to_execute_golden_workflows.json"
+    )
+    fixture_set = json.loads(fixture_path.read_text())
+    serialized_fixture_set = json.dumps(fixture_set, sort_keys=True)
+    assert "credential" not in serialized_fixture_set.lower()
+    assert "connection_string" not in serialized_fixture_set.lower()
+    assert "postgresql://" not in serialized_fixture_set.lower()
+    assert "mssql://" not in serialized_fixture_set.lower()
+    assert "/Users/" not in serialized_fixture_set
+    assert "C:\\" not in serialized_fixture_set
+    assert "%USERPROFILE%" not in serialized_fixture_set
+    assert fixture_set["authoritative_release_gate_inputs"] == [
+        "scenario_id",
+        "source_id",
+        "candidate_id",
+        "guard_decision",
+        "guard_audit_event_id",
+        "execution_run_id",
+        "execution_audit_event_id",
+    ]
+    fixtures = {
+        fixture["name"]: fixture for fixture in fixture_set["fixtures"]
+    }
+    return fixtures[name]
 
 
 def _seed_authoritative_source_governance(
@@ -438,11 +470,13 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
 def test_http_preview_to_execute_emits_release_gate_scenario_metadata(
     monkeypatch,
 ) -> None:
+    fixture = _load_preview_to_execute_golden_fixture(
+        "http_preview_generation_guard_allow_approved_candidate_execute_audit"
+    )
     scenario = next(
         scenario
         for scenario in list_postgresql_evaluation_scenarios()
-        if scenario.scenario_id
-        == "postgresql-positive-approved-vendor-spend-top-vendors"
+        if scenario.scenario_id == fixture["scenario_id"]
     )
     monkeypatch.setenv(
         "SAFEQUERY_APP_POSTGRES_URL",
@@ -507,7 +541,24 @@ def test_http_preview_to_execute_emits_release_gate_scenario_metadata(
         )
 
         assert preview_response.status_code == 200
+        preview_payload = preview_response.json()
+        assert preview_payload["candidate"]["source_id"] == fixture["source_id"]
+        assert preview_payload["candidate"]["source_family"] == fixture["source_family"]
+        assert preview_payload["candidate"]["source_flavor"] == fixture["source_flavor"]
+        assert preview_payload["candidate"]["dataset_contract_version"] == (
+            fixture["dataset_contract_version"]
+        )
+        assert preview_payload["candidate"]["schema_snapshot_version"] == (
+            fixture["schema_snapshot_version"]
+        )
+        assert preview_payload["candidate"]["guard_status"] == (
+            fixture["guard_decision"]
+        )
+        assert preview_payload["candidate"]["state"] == fixture["candidate_state"]
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_approval = session.execute(
+            select(PreviewCandidateApproval)
+        ).scalar_one()
         persisted_guard_event = (
             session.execute(
                 select(PreviewAuditEvent).where(
@@ -516,6 +567,27 @@ def test_http_preview_to_execute_emits_release_gate_scenario_metadata(
             )
             .scalars()
             .one()
+        )
+        persisted_preview_events = (
+            session.execute(
+                select(PreviewAuditEvent).order_by(PreviewAuditEvent.lifecycle_order)
+            )
+            .scalars()
+            .all()
+        )
+
+        assert [event.event_type for event in persisted_preview_events] == (
+            fixture["expected_preview_events"]
+        )
+        assert persisted_approval.candidate_id == persisted_candidate.candidate_id
+        assert persisted_approval.source_id == fixture["source_id"]
+        assert persisted_approval.approval_state == (
+            fixture["approval_state_after_preview"]
+        )
+        assert persisted_guard_event.candidate_id == persisted_candidate.candidate_id
+        assert persisted_guard_event.source_id == fixture["source_id"]
+        assert persisted_guard_event.audit_payload["guard_decision"] == (
+            fixture["guard_decision"]
         )
 
         app.state.execution_query_runner = lambda **_: [
@@ -529,6 +601,7 @@ def test_http_preview_to_execute_emits_release_gate_scenario_metadata(
         )
 
         assert execute_response.status_code == 200
+        execute_payload = execute_response.json()
         persisted_execution_event = (
             session.execute(
                 select(PreviewAuditEvent).where(
@@ -537,6 +610,15 @@ def test_http_preview_to_execute_emits_release_gate_scenario_metadata(
             )
             .scalars()
             .one()
+        )
+        persisted_execution_events = (
+            session.execute(
+                select(PreviewAuditEvent)
+                .where(PreviewAuditEvent.event_type.like("execution_%"))
+                .order_by(PreviewAuditEvent.lifecycle_order)
+            )
+            .scalars()
+            .all()
         )
 
         # These release-gate inputs let Epic T fixtures correlate generated SQL,
@@ -557,6 +639,23 @@ def test_http_preview_to_execute_emits_release_gate_scenario_metadata(
             "execution_run_id": str(persisted_execution_event.event_id),
             "execution_audit_event_id": str(persisted_execution_event.event_id),
         }
+        assert [event.event_type for event in persisted_execution_events] == (
+            fixture["expected_execution_events"]
+        )
+        assert execute_payload["candidate_id"] == persisted_candidate.candidate_id
+        assert execute_payload["source_id"] == fixture["source_id"]
+        assert execute_payload["metadata"]["candidate_id"] == (
+            persisted_candidate.candidate_id
+        )
+        assert execute_payload["metadata"]["source_id"] == fixture["source_id"]
+        assert execute_payload["metadata"]["execution_run_id"] == str(
+            persisted_execution_event.event_id
+        )
+        session.refresh(persisted_approval)
+        assert persisted_approval.approval_state == (
+            fixture["approval_state_after_execute"]
+        )
+        assert persisted_approval.executed_at is not None
         serialized_metadata = str(
             [
                 persisted_guard_event.audit_payload["release_gate_scenario"],
@@ -639,6 +738,14 @@ def test_guard_denial_reason_sanitizer_keeps_truncation_within_cap() -> None:
 def test_http_preview_guard_denied_candidate_remains_non_executable(
     monkeypatch,
 ) -> None:
+    fixture = _load_preview_to_execute_golden_fixture(
+        "http_preview_generation_guard_denied_no_executable_candidate"
+    )
+    scenario = next(
+        scenario
+        for scenario in list_postgresql_evaluation_scenarios()
+        if scenario.scenario_id == fixture["scenario_id"]
+    )
     monkeypatch.setenv(
         "SAFEQUERY_APP_POSTGRES_URL",
         "postgresql://safequery:safequery@db:5432/safequery",
@@ -662,10 +769,7 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
         subject_id="user:alice",
         governance_bindings=frozenset({"group:finance-analysts"}),
     )
-    adapter = _RecordingHTTPPreviewAdapter(
-        "SELECT vendor_id FROM finance.approved_vendor_spend; "
-        "DELETE FROM finance.approved_vendor_spend;"
-    )
+    adapter = _RecordingHTTPPreviewAdapter(scenario.canonical_sql)
 
     main_module = importlib.import_module("app.main")
     monkeypatch.setattr(
@@ -679,7 +783,14 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
     client = TestClient(app)
 
     try:
-        _seed_authoritative_source_governance(session)
+        _seed_authoritative_source_governance(
+            session,
+            source_id=scenario.source.source_id,
+            source_family=scenario.source.source_family,
+            source_flavor=scenario.source.source_flavor,
+            dataset_contract_version=scenario.source.dataset_contract_version,
+            schema_snapshot_version=scenario.source.schema_snapshot_version,
+        )
         app_session = create_test_application_session(subject)
 
         response = client.post(
@@ -687,27 +798,30 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
             headers=app_session.headers,
             cookies=app_session.cookies,
             json={
-                "question": "Show approved vendors by quarterly spend",
-                "source_id": "sap-approved-spend",
+                "question": scenario.prompt,
+                "source_id": scenario.source.source_id,
             },
         )
 
         assert response.status_code == 200
         response_payload = response.json()
-        assert response_payload["candidate"]["guard_status"] == "blocked"
-        assert response_payload["candidate"]["state"] == "blocked"
-        assert response_payload["candidate"]["primary_deny_code"] == (
-            "DENY_MULTI_STATEMENT"
+        assert response_payload["candidate"]["source_id"] == fixture["source_id"]
+        assert response_payload["candidate"]["source_family"] == fixture["source_family"]
+        assert response_payload["candidate"]["source_flavor"] == fixture["source_flavor"]
+        assert response_payload["candidate"]["dataset_contract_version"] == (
+            fixture["dataset_contract_version"]
         )
-        assert response_payload["candidate"]["denial_reason"] == (
-            "Canonical SQL must contain exactly one SELECT statement."
+        assert response_payload["candidate"]["schema_snapshot_version"] == (
+            fixture["schema_snapshot_version"]
+        )
+        assert response_payload["candidate"]["guard_status"] == "blocked"
+        assert response_payload["candidate"]["state"] == fixture["candidate_state"]
+        assert response_payload["candidate"]["primary_deny_code"] == (
+            fixture["primary_deny_code"]
         )
         assert response_payload["evaluation"]["state"] == "blocked"
         assert response_payload["evaluation"]["primary_deny_code"] == (
-            "DENY_MULTI_STATEMENT"
-        )
-        assert response_payload["evaluation"]["denial_reason"] == (
-            "Canonical SQL must contain exactly one SELECT statement."
+            fixture["primary_deny_code"]
         )
 
         persisted_request = session.execute(select(PreviewRequest)).scalar_one()
@@ -724,27 +838,46 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
             .scalars()
             .one()
         )
+        persisted_preview_events = (
+            session.execute(
+                select(PreviewAuditEvent).order_by(PreviewAuditEvent.lifecycle_order)
+            )
+            .scalars()
+            .all()
+        )
 
+        assert [event.event_type for event in persisted_preview_events] == (
+            fixture["expected_preview_events"]
+        )
+        assert persisted_request.source_id == fixture["source_id"]
         assert persisted_request.request_state == "blocked"
         assert persisted_candidate.guard_status == "blocked"
-        assert persisted_candidate.candidate_state == "blocked"
-        assert persisted_approval.approval_state == "invalidated"
+        assert persisted_candidate.candidate_state == fixture["candidate_state"]
+        assert persisted_candidate.source_id == fixture["source_id"]
+        assert persisted_approval.approval_state == (
+            fixture["approval_state_after_preview"]
+        )
         assert persisted_approval.approved_sql is None
         assert persisted_approval.executed_at is None
-        assert persisted_guard_event.primary_deny_code == "DENY_MULTI_STATEMENT"
+        assert persisted_guard_event.primary_deny_code == fixture["primary_deny_code"]
         assert persisted_guard_event.denial_cause == "guard_rejected"
-        assert persisted_guard_event.audit_payload["source_id"] == "sap-approved-spend"
+        assert persisted_guard_event.audit_payload["source_id"] == fixture["source_id"]
         assert persisted_guard_event.audit_payload["query_candidate_id"] == (
             persisted_candidate.candidate_id
         )
-        assert persisted_guard_event.audit_payload["guard_decision"] == "reject"
-        assert persisted_guard_event.audit_payload["denial_reason"] == (
-            "Canonical SQL must contain exactly one SELECT statement."
+        assert persisted_guard_event.audit_payload["guard_decision"] == (
+            fixture["guard_decision"]
         )
         assert persisted_guard_event.audit_payload["guard_version"] == (
             "postgresql-guard-v1"
         )
-        assert "DELETE FROM" not in str(persisted_guard_event.audit_payload)
+        assert persisted_guard_event.audit_payload["release_gate_scenario"] == {
+            "scenario_id": fixture["scenario_id"],
+            "source_id": fixture["source_id"],
+            "candidate_id": persisted_candidate.candidate_id,
+            "guard_decision": fixture["guard_decision"],
+            "guard_audit_event_id": str(persisted_guard_event.event_id),
+        }
 
         workflow_payload = get_operator_workflow_snapshot(session).model_dump(
             mode="json",
@@ -757,11 +890,8 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
             if item["itemType"] == "candidate"
         )
         assert candidate_item["guardStatus"] == "blocked"
-        assert candidate_item["primaryDenyCode"] == "DENY_MULTI_STATEMENT"
+        assert candidate_item["primaryDenyCode"] == fixture["primary_deny_code"]
         assert candidate_item["auditEvents"][0]["guardDecision"] == "reject"
-        assert candidate_item["auditEvents"][0]["denialReason"] == (
-            "Canonical SQL must contain exactly one SELECT statement."
-        )
         serialized_workflow = str(workflow_payload)
         assert "credential" not in serialized_workflow.lower()
 
@@ -771,7 +901,7 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
             f"/candidates/{persisted_candidate.candidate_id}/execute",
             headers=app_session.headers,
             cookies=app_session.cookies,
-            json={"selected_source_id": "sap-approved-spend"},
+            json={"selected_source_id": fixture["source_id"]},
         )
 
         assert execute_response.status_code == 403
@@ -785,7 +915,30 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
         assert denial_event["event_type"] == "execution_denied"
         assert denial_event["primary_deny_code"] == "DENY_CANDIDATE_NOT_APPROVED"
         assert denial_event["denial_cause"] == "candidate_not_approved"
-        assert "DELETE FROM" not in str(execute_payload)
+        assert calls == []
+        persisted_execution_events = (
+            session.execute(
+                select(PreviewAuditEvent)
+                .where(PreviewAuditEvent.event_type.like("execution_%"))
+                .order_by(PreviewAuditEvent.lifecycle_order)
+            )
+            .scalars()
+            .all()
+        )
+        assert [event.event_type for event in persisted_execution_events] == (
+            fixture["expected_execution_events"]
+        )
+        assert all(
+            event.candidate_id == persisted_candidate.candidate_id
+            for event in persisted_execution_events
+        )
+        assert all(
+            event.source_id == fixture["source_id"]
+            for event in persisted_execution_events
+        )
+        assert "execution_run_id" not in str(
+            persisted_guard_event.audit_payload["release_gate_scenario"]
+        )
         assert calls == []
     finally:
         session.close()

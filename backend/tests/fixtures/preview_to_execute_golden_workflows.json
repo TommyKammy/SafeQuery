@@ -1,0 +1,76 @@
+{
+  "fixture_set": "preview_to_execute_golden_workflows.v1",
+  "authoritative_release_gate_inputs": [
+    "scenario_id",
+    "source_id",
+    "candidate_id",
+    "guard_decision",
+    "guard_audit_event_id",
+    "execution_run_id",
+    "execution_audit_event_id"
+  ],
+  "fixtures": [
+    {
+      "name": "http_preview_generation_guard_allow_approved_candidate_execute_audit",
+      "scenario_id": "postgresql-positive-approved-vendor-spend-top-vendors",
+      "source_id": "business-postgres-source",
+      "source_family": "postgresql",
+      "source_flavor": "warehouse",
+      "dataset_contract_version": 4,
+      "schema_snapshot_version": 9,
+      "guard_decision": "allow",
+      "candidate_state": "preview_ready",
+      "approval_state_after_preview": "approved",
+      "approval_state_after_execute": "executed",
+      "execute_available": true,
+      "expected_preview_events": [
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated"
+      ],
+      "expected_execution_events": [
+        "execution_requested",
+        "execution_started",
+        "execution_completed"
+      ],
+      "authoritative_fields": [
+        "source_id",
+        "candidate_id",
+        "guard_decision",
+        "guard_audit_event_id",
+        "execution_run_id",
+        "execution_audit_event_id"
+      ]
+    },
+    {
+      "name": "http_preview_generation_guard_denied_no_executable_candidate",
+      "scenario_id": "postgresql-safety-guard-denies-system-catalog-access",
+      "source_id": "business-postgres-source",
+      "source_family": "postgresql",
+      "source_flavor": "warehouse",
+      "dataset_contract_version": 4,
+      "schema_snapshot_version": 9,
+      "guard_decision": "reject",
+      "primary_deny_code": "DENY_SYSTEM_CATALOG_ACCESS",
+      "candidate_state": "blocked",
+      "approval_state_after_preview": "invalidated",
+      "execute_available": false,
+      "expected_preview_events": [
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated"
+      ],
+      "expected_execution_events": [
+        "execution_denied"
+      ],
+      "authoritative_fields": [
+        "source_id",
+        "candidate_id",
+        "guard_decision",
+        "guard_audit_event_id"
+      ]
+    }
+  ]
+}
