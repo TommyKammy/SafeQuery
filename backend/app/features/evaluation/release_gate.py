@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Iterable as TypingIterable, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.evaluation.comparison import (
@@ -51,6 +51,41 @@ class ReleaseGateAuditArtifact(BaseModel):
 
     scenario_id: str
     event: SourceAwareAuditEvent
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hydrate_scenario_id_from_event_metadata(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+
+        top_level_scenario_id = value.get("scenario_id")
+        event = value.get("event")
+        release_gate_scenario: Any = None
+        if isinstance(event, SourceAwareAuditEvent):
+            release_gate_scenario = event.release_gate_scenario
+        elif isinstance(event, Mapping):
+            release_gate_scenario = event.get("release_gate_scenario")
+
+        if isinstance(release_gate_scenario, Mapping):
+            embedded_scenario_id = release_gate_scenario.get("scenario_id")
+        else:
+            embedded_scenario_id = getattr(
+                release_gate_scenario,
+                "scenario_id",
+                None,
+            )
+
+        if not isinstance(embedded_scenario_id, str) or not embedded_scenario_id.strip():
+            return value
+
+        if isinstance(top_level_scenario_id, str) and top_level_scenario_id.strip():
+            if top_level_scenario_id != embedded_scenario_id:
+                return value
+            return value
+        if top_level_scenario_id is not None and not isinstance(top_level_scenario_id, str):
+            return value
+
+        return {**value, "scenario_id": embedded_scenario_id}
 
 
 class ReleaseGateDecision(BaseModel):

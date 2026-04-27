@@ -14,6 +14,9 @@ from app.features.audit.event_model import (
     SourceFamily,
 )
 from app.features.auth.context import AuthenticatedSubject
+from app.features.evaluation.scenario_metadata import (
+    build_release_gate_scenario_metadata,
+)
 from app.features.execution import execute_candidate_sql, select_execution_connector
 from app.features.execution.runtime import (
     CancellationProbe,
@@ -146,12 +149,14 @@ def _audit_base(
     event_type: AuditEventType,
     causation_event_id: UUID | None,
     primary_deny_code: str | None = None,
+    canonical_sql: str | None = None,
+    guard_decision: str | None = None,
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
 ) -> SourceAwareAuditEvent:
-    return SourceAwareAuditEvent(
+    event = SourceAwareAuditEvent(
         event_id=uuid4(),
         event_type=event_type,
         occurred_at=audit_context.occurred_at,
@@ -189,6 +194,7 @@ def _audit_base(
         guard_version=(
             audit_context.guard_version if event_type == "guard_evaluated" else None
         ),
+        guard_decision=guard_decision if event_type == "guard_evaluated" else None,
         adapter_provider=(
             adapter_metadata.adapter_provider if adapter_metadata is not None else None
         ),
@@ -222,6 +228,27 @@ def _audit_base(
         execution_row_count=execution_row_count,
         result_truncated=result_truncated,
     )
+    if (
+        event_type == "guard_evaluated"
+        and canonical_sql is not None
+        and guard_decision in {"allow", "reject"}
+    ):
+        metadata = build_release_gate_scenario_metadata(
+            source_id=candidate_source.source_id,
+            source_family=candidate_source.source_family,
+            source_flavor=candidate_source.source_flavor,
+            dataset_contract_version=candidate_source.dataset_contract_version,
+            schema_snapshot_version=candidate_source.schema_snapshot_version,
+            execution_policy_version=candidate_source.execution_policy_version,
+            connector_profile_version=candidate_source.connector_profile_version,
+            canonical_sql=canonical_sql,
+            candidate_id=audit_context.query_candidate_id,
+            guard_decision=guard_decision,
+            guard_audit_event_id=event.event_id,
+        )
+        if metadata is not None:
+            event.release_gate_scenario = metadata
+    return event
 
 
 def _append_audit_event(
@@ -231,6 +258,8 @@ def _append_audit_event(
     candidate_source: SourceBoundCandidateMetadata,
     event_type: AuditEventType,
     primary_deny_code: str | None = None,
+    canonical_sql: str | None = None,
+    guard_decision: str | None = None,
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
@@ -243,6 +272,8 @@ def _append_audit_event(
             event_type=event_type,
             causation_event_id=events[-1].event_id if events else None,
             primary_deny_code=primary_deny_code,
+            canonical_sql=canonical_sql,
+            guard_decision=guard_decision,
             candidate_state=candidate_state,
             execution_row_count=execution_row_count,
             result_truncated=result_truncated,
@@ -266,6 +297,7 @@ def _build_execution_audit_context(
         session_id=audit_context.session_id,
         query_candidate_id=audit_context.query_candidate_id,
         candidate_owner_subject=audit_context.candidate_owner_subject,
+        guard_audit_event_id=previous_event_id,
         execution_policy_version=POSTGRESQL_EXECUTION_POLICY_VERSION,
         connector_profile_version=POSTGRESQL_CONNECTOR_PROFILE_VERSION,
     )
@@ -417,6 +449,8 @@ def run_postgresql_core_vertical_slice(
             candidate_source=candidate_source,
             event_type="guard_evaluated",
             primary_deny_code=primary_deny_code,
+            canonical_sql=canonical_sql,
+            guard_decision="reject",
             candidate_state="denied",
             adapter_metadata=adapter_metadata,
         )
@@ -443,6 +477,8 @@ def run_postgresql_core_vertical_slice(
         audit_context=candidate_audit_context,
         candidate_source=candidate_source,
         event_type="guard_evaluated",
+        canonical_sql=canonical_sql,
+        guard_decision="allow",
         candidate_state="preview_ready",
         adapter_metadata=adapter_metadata,
     )

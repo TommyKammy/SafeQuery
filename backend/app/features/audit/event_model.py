@@ -96,6 +96,18 @@ class ExecutedEvidenceAuditPayload(BaseModel):
     can_authorize_execution: Literal[False] = False
 
 
+class ReleaseGateScenarioAuditPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_id: NonEmptyTrimmedString
+    source_id: SourceIdentifier
+    candidate_id: NonEmptyTrimmedString
+    guard_decision: Literal["allow", "reject"]
+    guard_audit_event_id: UUID
+    execution_run_id: Optional[UUID] = None
+    execution_audit_event_id: Optional[UUID] = None
+
+
 class SourceAwareAuditEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -127,6 +139,7 @@ class SourceAwareAuditEvent(BaseModel):
     retrieved_asset_ids: Optional[list[NonEmptyTrimmedString]] = None
     retrieved_citations: Optional[list[RetrievalCitationAuditPayload]] = None
     executed_evidence: Optional[list[ExecutedEvidenceAuditPayload]] = None
+    release_gate_scenario: Optional[ReleaseGateScenarioAuditPayload] = None
     analyst_mode_version: Optional[NonEmptyTrimmedString] = None
 
     source_id: SourceIdentifier

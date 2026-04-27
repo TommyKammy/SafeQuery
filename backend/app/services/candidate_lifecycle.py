@@ -38,6 +38,11 @@ CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY = {
     "postgresql": 3,
 }
 
+CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY = {
+    "mssql": 1,
+    "postgresql": 1,
+}
+
 
 class SourceBoundCandidateMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -394,6 +399,13 @@ def _raise_authoritative_approval_error(
             execution_policy_version=(
                 approval.execution_policy_version if approval is not None else None
             ),
+            connector_profile_version=(
+                CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY.get(
+                    approval.source_family
+                )
+                if approval is not None
+                else None
+            ),
         ),
     )
     _raise_revalidation_error(
@@ -423,6 +435,11 @@ def _candidate_lifecycle_from_approval(
             dataset_contract_version=approval.dataset_contract_version,
             schema_snapshot_version=approval.schema_snapshot_version,
             execution_policy_version=approval.execution_policy_version,
+            connector_profile_version=(
+                CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY.get(
+                    approval.source_family
+                )
+            ),
         ),
     )
 

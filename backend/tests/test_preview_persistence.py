@@ -29,6 +29,7 @@ from app.db.models.source_registry import RegisteredSource, SourceActivationPost
 from app.db.session import require_preview_submission_session
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 from app.features.auth.session import create_test_application_session
+from app.features.evaluation.harness import list_postgresql_evaluation_scenarios
 from app.features.guard import SQLGuardEvaluation, SQLGuardRejection
 from app.services import request_preview as request_preview_service
 from app.services.request_preview import (
@@ -50,15 +51,18 @@ from app.services.sql_generation_adapter import (
 def _seed_authoritative_source_governance(
     session: Session,
     *,
+    source_id: str = "sap-approved-spend",
     include_datasets: bool = True,
     source_posture: SourceActivationPosture = SourceActivationPosture.ACTIVE,
     connection_reference: str = "vault:sap-approved-spend",
     source_family: str = "postgresql",
     source_flavor: str = "warehouse",
+    dataset_contract_version: int = 1,
+    schema_snapshot_version: int = 1,
 ) -> None:
     source = RegisteredSource(
         id=uuid4(),
-        source_id="sap-approved-spend",
+        source_id=source_id,
         display_label="SAP spend cube / approved_vendor_spend",
         source_family=source_family,
         source_flavor=source_flavor,
@@ -76,7 +80,7 @@ def _seed_authoritative_source_governance(
     snapshot = SchemaSnapshot(
         id=uuid4(),
         registered_source_id=source.id,
-        snapshot_version=1,
+        snapshot_version=schema_snapshot_version,
         review_status=SchemaSnapshotReviewStatus.APPROVED,
         reviewed_at=datetime.now(timezone.utc),
     )
@@ -87,7 +91,7 @@ def _seed_authoritative_source_governance(
         id=uuid4(),
         registered_source_id=source.id,
         schema_snapshot_id=snapshot.id,
-        contract_version=1,
+        contract_version=dataset_contract_version,
         display_name="SAP spend cube contract",
         owner_binding="group:finance-analysts",
         security_review_binding=None,
@@ -424,6 +428,143 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
             "prompt_version": "sql_generation_adapter_request.v1",
             "prompt_fingerprint": persisted_candidate.prompt_fingerprint,
         }.items() <= persisted_generation_event.audit_payload.items()
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_http_preview_to_execute_emits_release_gate_scenario_metadata(
+    monkeypatch,
+) -> None:
+    scenario = next(
+        scenario
+        for scenario in list_postgresql_evaluation_scenarios()
+        if scenario.scenario_id
+        == "postgresql-positive-approved-vendor-spend-top-vendors"
+    )
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    monkeypatch.setenv(
+        "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        "postgresql://safequery_exec:secret@business-postgres-source:5432/business",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+    adapter = _RecordingHTTPPreviewAdapter(scenario.canonical_sql)
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: adapter,
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(
+            session,
+            source_id=scenario.source.source_id,
+            source_family=scenario.source.source_family,
+            source_flavor=scenario.source.source_flavor,
+            dataset_contract_version=scenario.source.dataset_contract_version,
+            schema_snapshot_version=scenario.source.schema_snapshot_version,
+            connection_reference="env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        )
+        app_session = create_test_application_session(subject)
+
+        preview_response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": scenario.prompt,
+                "source_id": scenario.source.source_id,
+            },
+        )
+
+        assert preview_response.status_code == 200
+        persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_guard_event = (
+            session.execute(
+                select(PreviewAuditEvent).where(
+                    PreviewAuditEvent.event_type == "guard_evaluated"
+                )
+            )
+            .scalars()
+            .one()
+        )
+
+        app.state.execution_query_runner = lambda **_: [
+            {"vendor_name": "Acme", "approved_amount": 1000}
+        ]
+        execute_response = client.post(
+            f"/candidates/{persisted_candidate.candidate_id}/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": scenario.source.source_id},
+        )
+
+        assert execute_response.status_code == 200
+        persisted_execution_event = (
+            session.execute(
+                select(PreviewAuditEvent).where(
+                    PreviewAuditEvent.event_type == "execution_completed"
+                )
+            )
+            .scalars()
+            .one()
+        )
+
+        # These release-gate inputs let Epic T fixtures correlate generated SQL,
+        # the guard decision, execution run, and authoritative audit evidence.
+        expected_guard_metadata = {
+            "scenario_id": scenario.scenario_id,
+            "source_id": scenario.source.source_id,
+            "candidate_id": persisted_candidate.candidate_id,
+            "guard_decision": "allow",
+            "guard_audit_event_id": str(persisted_guard_event.event_id),
+        }
+        assert (
+            persisted_guard_event.audit_payload["release_gate_scenario"]
+            == expected_guard_metadata
+        )
+        assert persisted_execution_event.audit_payload["release_gate_scenario"] == {
+            **expected_guard_metadata,
+            "execution_run_id": str(persisted_execution_event.event_id),
+            "execution_audit_event_id": str(persisted_execution_event.event_id),
+        }
+        serialized_metadata = str(
+            [
+                persisted_guard_event.audit_payload["release_gate_scenario"],
+                persisted_execution_event.audit_payload["release_gate_scenario"],
+            ]
+        )
+        assert "safequery_exec:secret" not in serialized_metadata
+        assert "business-postgres-source:5432" not in serialized_metadata
     finally:
         session.close()
         engine.dispose()

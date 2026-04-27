@@ -285,3 +285,22 @@ def test_executed_evidence_rejects_retrieval_citation_shape() -> None:
 
     with pytest.raises(ValidationError):
         SourceAwareAuditEvent(**payload)
+
+
+def test_release_gate_scenario_audit_payload_rejects_extra_metadata() -> None:
+    payload = _source_aware_payload()
+    payload.update(
+        {
+            "release_gate_scenario": {
+                "scenario_id": "postgresql-positive-approved-vendor-spend-top-vendors",
+                "source_id": "sap-approved-spend",
+                "candidate_id": "candidate-123",
+                "guard_decision": "allow",
+                "guard_audit_event_id": uuid4(),
+                "connection_string": "postgresql://user:secret@example.test/db",
+            },
+        }
+    )
+
+    with pytest.raises(ValidationError):
+        SourceAwareAuditEvent(**payload)
