@@ -183,8 +183,11 @@ docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend pyth
 The doctor should fail closed when required backend-owned prerequisites are
 missing, including application database connectivity, migrations, source
 registry records, dataset contract linkage, approved schema snapshots,
-entitlement seed data, execution connector binding, backend reachability, and
-frontend reachability.
+entitlement seed data, execution connector binding, execution driver runtime
+availability, backend reachability, and frontend reachability. A driver
+`runtime_status: unavailable` result points to a missing PostgreSQL `psycopg`
+or MSSQL `pyodbc` / ODBC Driver 18 prerequisite and should be remediated before
+interpreting source connectivity denied or unavailable results.
 
 The doctor is not a secret scanner. Operators must still manually inspect
 changed docs, validation plans, audit exports, support bundles, and public

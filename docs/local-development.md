@@ -256,7 +256,11 @@ the backend-owned execution connector binding, `SAFEQUERY_BACKEND_BASE_URL`
 reachability. Missing registry data, contract links, schema snapshots,
 entitlements, execution connector readiness, migrations, unreachable backend
 health, or an unreachable/unexpected frontend surface are failures, not empty UI
-states.
+states. The execution connector readiness detail includes driver runtime
+availability for the selected active source family. Treat
+`runtime_status: unavailable` as a missing backend runtime dependency such as
+`psycopg`, `pyodbc`, or ODBC Driver 18; do not confuse it with source
+connectivity denied or unavailable after the driver can load.
 
 The same payload is available from the running backend:
 
@@ -315,7 +319,8 @@ fallbacks:
 
 - `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL`
 - `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used.`
-- `pyodbc must be installed before the MSSQL execution connector can run.`
+- `psycopg must be installed and importable before the PostgreSQL execution connector can run.`
+- `pyodbc must be installed and importable before the MSSQL execution connector can run.`
 - `ODBC Driver 18 for SQL Server must be installed before the MSSQL execution connector can run.`
 
 On successful startup, inspect backend logs for the source-role telemetry fields

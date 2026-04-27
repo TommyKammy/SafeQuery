@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Iterator
 
 import pytest
@@ -158,6 +159,8 @@ def test_first_run_doctor_passes_after_demo_seed() -> None:
         "source_flavor": "warehouse",
         "connector_id": "postgresql_readonly",
         "ownership": "backend",
+        "runtime_status": "available",
+        "runtime": {"psycopg": "available"},
     }
     assert sections["backend"]["status"] == "pass"
     assert sections["frontend"]["status"] == "pass"
@@ -388,6 +391,95 @@ def test_first_run_doctor_fails_closed_when_demo_source_connector_binding_drifts
         "source_family": "postgresql",
         "source_flavor": "demo",
         "deny_code": "DENY_UNSUPPORTED_SOURCE_BINDING",
+    }
+
+
+def test_first_run_doctor_fails_closed_when_postgresql_driver_runtime_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_postgresql_runtime() -> dict[str, object]:
+        raise first_run_doctor_service.PostgreSQLExecutionRuntimeUnavailable(
+            "psycopg must be installed and importable before the PostgreSQL "
+            "execution connector can run."
+        )
+
+    monkeypatch.setattr(
+        first_run_doctor_service,
+        "check_postgresql_execution_runtime_readiness",
+        unavailable_postgresql_runtime,
+        raising=False,
+    )
+
+    with _session_scope() as session:
+        seed_demo_source_governance(session)
+
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["execution_connector"]["status"] == "fail"
+    assert sections["execution_connector"]["message"] == (
+        "PostgreSQL driver runtime is unavailable for the backend-owned "
+        "execution connector."
+    )
+    assert sections["execution_connector"]["detail"] == {
+        "source_id": "demo-business-postgres",
+        "source_family": "postgresql",
+        "source_flavor": "warehouse",
+        "connector_id": "postgresql_readonly",
+        "ownership": "backend",
+        "runtime_status": "unavailable",
+        "error": "PostgreSQLExecutionRuntimeUnavailable",
+        "runtime_dependency": "psycopg",
+    }
+
+
+def test_first_run_doctor_fails_closed_when_mssql_driver_runtime_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_mssql_runtime() -> dict[str, object]:
+        raise first_run_doctor_service.MSSQLExecutionRuntimeUnavailable(
+            "ODBC Driver 18 for SQL Server must be installed before the MSSQL "
+            "execution connector can run."
+        )
+
+    monkeypatch.setattr(
+        first_run_doctor_service,
+        "check_mssql_execution_runtime_readiness",
+        unavailable_mssql_runtime,
+    )
+
+    check = first_run_doctor_service._check_execution_connector(
+        SimpleNamespace(
+            source_id="business-mssql-source",
+            source_family="mssql",
+            source_flavor="sqlserver",
+        ),
+        SimpleNamespace(contract_version=3),
+        SimpleNamespace(snapshot_version=7),
+    )
+
+    assert check.model_dump(mode="json") == {
+        "name": "execution_connector",
+        "status": "fail",
+        "message": (
+            "MSSQL driver runtime is unavailable for the backend-owned "
+            "execution connector."
+        ),
+        "detail": {
+            "source_id": "business-mssql-source",
+            "source_family": "mssql",
+            "source_flavor": "sqlserver",
+            "connector_id": "mssql_readonly",
+            "ownership": "backend",
+            "runtime_status": "unavailable",
+            "error": "MSSQLExecutionRuntimeUnavailable",
+            "runtime_dependency": "pyodbc/odbc-driver-18",
+        },
     }
 
 

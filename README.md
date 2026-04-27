@@ -183,7 +183,12 @@ docker-compose --env-file .env -f infra/docker-compose.yml run --rm backend pyth
 The doctor returns machine-readable JSON and fails closed when migrations,
 demo source registry records, linked dataset contracts, approved schema
 snapshots, dev/local entitlement seed data, or the backend-owned execution
-connector binding are missing. The CLI doctor also probes
+connector binding are missing. The execution connector check also reports
+driver runtime availability for active source families: `psycopg` for
+PostgreSQL and `pyodbc` plus ODBC Driver 18 for SQL Server. A
+`runtime_status: unavailable` result means the backend image or host runtime is
+missing a driver prerequisite; it is distinct from a later source connectivity
+denial or unavailable external source. The CLI doctor also probes
 `SAFEQUERY_BACKEND_BASE_URL` `/health` and `SAFEQUERY_FRONTEND_BASE_URL`;
 unreachable or unhealthy surfaces are reported as failures instead of
 first-run-ready passes.
@@ -250,7 +255,8 @@ The fail-closed startup guards are intentional:
 
 - `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must not reuse SAFEQUERY_APP_POSTGRES_URL`
 - `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING must be configured before the business MSSQL execution source can be used.`
-- `pyodbc must be installed before the MSSQL execution connector can run.`
+- `psycopg must be installed and importable before the PostgreSQL execution connector can run.`
+- `pyodbc must be installed and importable before the MSSQL execution connector can run.`
 - `ODBC Driver 18 for SQL Server must be installed before the MSSQL execution connector can run.`
 
 The compose topology mirrors those roles explicitly:

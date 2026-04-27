@@ -24,6 +24,10 @@ from app.db.models.source_registry import RegisteredSource, SourceActivationPost
 from app.features.auth.context import AuthenticatedSubject
 from app.features.execution import (
     ExecutionConnectorSelectionError,
+    MSSQLExecutionRuntimeUnavailable,
+    PostgreSQLExecutionRuntimeUnavailable,
+    check_mssql_execution_runtime_readiness,
+    check_postgresql_execution_runtime_readiness,
     select_execution_connector,
 )
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
@@ -413,17 +417,58 @@ def _check_execution_connector(
             },
         )
 
-    return FirstRunDoctorCheck(
-        name="execution_connector",
-        status="pass",
-        message="Backend-owned execution connector is ready for the active demo source.",
-        detail={
+    runtime_dependency = None
+    try:
+        if selection.connector_id == "mssql_readonly":
+            runtime_dependency = "pyodbc/odbc-driver-18"
+            runtime_detail = check_mssql_execution_runtime_readiness()
+        elif selection.connector_id == "postgresql_readonly":
+            runtime_dependency = "psycopg"
+            runtime_detail = check_postgresql_execution_runtime_readiness()
+        else:
+            runtime_detail = {}
+    except (
+        MSSQLExecutionRuntimeUnavailable,
+        PostgreSQLExecutionRuntimeUnavailable,
+    ) as exc:
+        family_name = "MSSQL" if selection.source_family == "mssql" else "PostgreSQL"
+        detail: dict[str, object] = {
             "source_id": selection.source_id,
             "source_family": selection.source_family,
             "source_flavor": selection.source_flavor,
             "connector_id": selection.connector_id,
             "ownership": selection.ownership,
-        },
+            "runtime_status": "unavailable",
+            "error": exc.__class__.__name__,
+        }
+        if runtime_dependency is not None:
+            detail["runtime_dependency"] = runtime_dependency
+        return FirstRunDoctorCheck(
+            name="execution_connector",
+            status="fail",
+            message=(
+                f"{family_name} driver runtime is unavailable for the "
+                "backend-owned execution connector."
+            ),
+            detail=detail,
+        )
+
+    detail = {
+        "source_id": selection.source_id,
+        "source_family": selection.source_family,
+        "source_flavor": selection.source_flavor,
+        "connector_id": selection.connector_id,
+        "ownership": selection.ownership,
+    }
+    if runtime_detail:
+        detail["runtime_status"] = "available"
+        detail["runtime"] = runtime_detail
+
+    return FirstRunDoctorCheck(
+        name="execution_connector",
+        status="pass",
+        message="Backend-owned execution connector is ready for the active demo source.",
+        detail=detail,
     )
 
 

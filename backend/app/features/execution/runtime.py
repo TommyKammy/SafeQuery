@@ -221,6 +221,10 @@ class MSSQLExecutionRuntimeUnavailable(RuntimeError):
     """Raised when required backend-owned MSSQL runtime dependencies are absent."""
 
 
+class PostgreSQLExecutionRuntimeUnavailable(RuntimeError):
+    """Raised when required backend-owned PostgreSQL runtime dependencies are absent."""
+
+
 def check_mssql_execution_runtime_readiness() -> dict[str, object]:
     try:
         pyodbc = importlib.import_module("pyodbc")
@@ -254,6 +258,24 @@ def check_mssql_execution_runtime_readiness() -> dict[str, object]:
         "pyodbc": "available",
         "odbc_driver": MSSQL_ODBC_DRIVER_NAME,
     }
+
+
+def check_postgresql_execution_runtime_readiness() -> dict[str, object]:
+    try:
+        psycopg = importlib.import_module("psycopg")
+    except (ModuleNotFoundError, ImportError) as exc:
+        raise PostgreSQLExecutionRuntimeUnavailable(
+            "psycopg must be installed and importable before the PostgreSQL "
+            "execution connector can run."
+        ) from exc
+
+    if not callable(getattr(psycopg, "connect", None)):
+        raise PostgreSQLExecutionRuntimeUnavailable(
+            "psycopg connection support is unavailable; the PostgreSQL execution "
+            "connector cannot open backend-owned source connections."
+        )
+
+    return {"psycopg": "available"}
 
 
 def _source_flavor_matches(
@@ -506,13 +528,9 @@ def _default_postgresql_query_runner(
     canonical_sql: str,
     runtime_controls: ExecutionRuntimeControls,
 ) -> list[dict[str, Any]]:
-    try:
-        import psycopg  # type: ignore[import-not-found]
-        from psycopg.rows import dict_row  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "psycopg must be installed before the PostgreSQL execution connector can run."
-        ) from exc
+    check_postgresql_execution_runtime_readiness()
+    import psycopg  # type: ignore[import-not-found]
+    from psycopg.rows import dict_row  # type: ignore[import-not-found]
 
     timeout_milliseconds = runtime_controls.timeout_seconds * 1000
     with psycopg.connect(
