@@ -116,6 +116,9 @@ def test_active_source_runtime_posture_is_explicit_for_timeout_retry_and_pooling
         )
         assert posture.pool_boundary == "per_registered_source"
         assert posture.pool_sharing == "no_cross_source_or_application_postgres_reuse"
+        assert posture.pool_owner == "backend"
+        assert posture.retry_attempts == 1
+        assert posture.retry_backoff == "none_inside_authoritative_execution_boundary"
 
 
 def test_mysql_family_requirements_are_planned_and_backend_selected() -> None:
