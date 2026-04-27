@@ -276,10 +276,9 @@ function parseSourceOption(value: unknown): SourceOption | null {
   const sourceId = readOptionalString(value.sourceId);
   const displayLabel = readOptionalString(value.displayLabel);
   const description = readOptionalString(value.description);
-  const governanceBindings = parseArray(
-    value.governanceBindings,
-    parseGovernanceBindingStatus
-  );
+  const governanceBindings = Array.isArray(value.governanceBindings)
+    ? parseArray(value.governanceBindings, parseGovernanceBindingStatus)
+    : null;
 
   if (
     !sourceId ||
