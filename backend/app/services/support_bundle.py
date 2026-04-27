@@ -30,12 +30,49 @@ from app.services.operator_workflow import (
 
 _APP_VERSION = "0.1.0"
 _WINDOWS_USER_PROFILE_SEGMENT = "Users"
-_FORBIDDEN_VALUE_PATTERNS = (
-    re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\\s\"']+"),
-    re.compile(r"(?i)\b(driver|server|database|uid|pwd)\s*="),
-    re.compile(r"(?i)\b(sk|pk|ghp|github_pat)-[a-z0-9][a-z0-9_-]{8,}"),
-    re.compile(r"(?i)(^|[\\/])Users[\\/][^\\/\"]+"),
-    re.compile(rf"(?i)[a-z]:\\{_WINDOWS_USER_PROFILE_SEGMENT}\\[^\\\"]+"),
+_FORBIDDEN_EXPORT_VALUE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "connection-string-like values",
+        re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"']+"),
+    ),
+    (
+        "connection-string-like values",
+        re.compile(r"(?i)\b(driver|server|database|uid|pwd)\s*="),
+    ),
+    (
+        "token-like values",
+        re.compile(
+            r"(?i)\b(?:sk|pk|ghp|github_pat)[_-][a-z0-9][a-z0-9_-]{8,}"
+        ),
+    ),
+    (
+        "token-like values",
+        re.compile(
+            r"(?i)\b(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token)\s*[:=]"
+        ),
+    ),
+    (
+        "raw credential names",
+        re.compile(
+            r"(?i)(^|[^a-z0-9])"
+            r"(?:password|passwd|pwd|credential|client[_-]?secret|"
+            r"api[_-]?key|private[_-]?key)\b"
+        ),
+    ),
+    (
+        "workstation-local paths",
+        re.compile(r"(?i)(^|[\\/])Users[\\/][^\\/\"]+"),
+    ),
+    (
+        "workstation-local paths",
+        re.compile(rf"(?i)[a-z]:\\{_WINDOWS_USER_PROFILE_SEGMENT}\\[^\\\"]+"),
+    ),
+)
+_IDENTITY_EXPORT_FIELD_NAMES = frozenset(
+    {
+        "authenticatedSubjectId",
+        "ownerSubjectId",
+    }
 )
 
 
@@ -388,6 +425,7 @@ def _redaction_policy() -> SupportBundleRedaction:
             "tokens",
             "raw_result_rows",
             "candidate_sql",
+            "raw_identity_payloads",
             "workstation_local_paths",
             "source_connection_references",
         ]
@@ -591,29 +629,43 @@ def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
     )
 
 
-def _iter_strings(value: object) -> list[str]:
+def _iter_string_values(
+    value: object,
+    path: tuple[str, ...] = (),
+) -> list[tuple[tuple[str, ...], str]]:
     if isinstance(value, str):
-        return [value]
+        return [(path, value)]
     if isinstance(value, dict):
-        strings: list[str] = []
-        for item in value.values():
-            strings.extend(_iter_strings(item))
+        strings: list[tuple[tuple[str, ...], str]] = []
+        for key, item in value.items():
+            strings.extend(_iter_string_values(item, (*path, str(key))))
         return strings
     if isinstance(value, list):
         strings = []
-        for item in value:
-            strings.extend(_iter_strings(item))
+        for index, item in enumerate(value):
+            strings.extend(_iter_string_values(item, (*path, str(index))))
         return strings
     return []
 
 
+def _is_raw_identity_payload(path: tuple[str, ...], value: str) -> bool:
+    if not path or path[-1] not in _IDENTITY_EXPORT_FIELD_NAMES:
+        return False
+    normalized = value.lstrip()
+    return normalized.startswith("{") or normalized.startswith("[")
+
+
 def _assert_bundle_is_shareable(bundle: SupportBundle) -> None:
     payload = bundle.model_dump(mode="json", by_alias=True, exclude_none=True)
-    for value in _iter_strings(payload):
-        for pattern in _FORBIDDEN_VALUE_PATTERNS:
+    for path, value in _iter_string_values(payload):
+        if _is_raw_identity_payload(path, value):
+            raise ValueError(
+                "Support bundle contains non-shareable raw identity payloads."
+            )
+        for category, pattern in _FORBIDDEN_EXPORT_VALUE_PATTERNS:
             if pattern.search(value):
                 raise ValueError(
-                    "Support bundle contains a non-shareable diagnostic value."
+                    f"Support bundle contains non-shareable {category}."
                 )
 
 
