@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Any, Optional
 from typing_extensions import Annotated
 from uuid import UUID, uuid4
 
@@ -59,6 +59,20 @@ _GUARD_VERSION_BY_SOURCE_FAMILY = {
     "mssql": "mssql-guard-v1",
     "postgresql": "postgresql-guard-v1",
 }
+_SQL_GUARD_EVALUATOR_BY_SOURCE_FAMILY = {
+    "mssql": evaluate_mssql_sql_guard,
+    "postgresql": evaluate_postgresql_sql_guard,
+}
+
+
+def _resolve_sql_guard_controls(source_family: str) -> tuple[str, Any]:
+    guard_version = _GUARD_VERSION_BY_SOURCE_FAMILY.get(source_family)
+    evaluator = _SQL_GUARD_EVALUATOR_BY_SOURCE_FAMILY.get(source_family)
+    if guard_version is None or evaluator is None:
+        raise PreviewSubmissionContractError(
+            f"Unsupported source family '{source_family}' cannot be guarded."
+        )
+    return guard_version, evaluator
 
 
 class PreviewSubmissionRequest(BaseModel):
@@ -213,7 +227,7 @@ def _build_preview_lifecycle_audit_events(
                 audit_context.entitlement_source_bindings or None
             ),
             guard_version=(
-                _GUARD_VERSION_BY_SOURCE_FAMILY[resolved_source.source_family]
+                _resolve_sql_guard_controls(resolved_source.source_family)[0]
                 if event_type == "guard_evaluated"
                 and guard_evaluation is not None
                 else audit_context.guard_version
@@ -1012,14 +1026,8 @@ def _evaluate_preview_sql_guard(
             "source_flavor": resolved_source.source_flavor,
         },
     }
-    if resolved_source.source_family == "mssql":
-        return evaluate_mssql_sql_guard(guard_payload)
-    if resolved_source.source_family == "postgresql":
-        return evaluate_postgresql_sql_guard(guard_payload)
-
-    raise PreviewSubmissionContractError(
-        f"Unsupported source family '{resolved_source.source_family}' cannot be guarded."
-    )
+    _, evaluator = _resolve_sql_guard_controls(resolved_source.source_family)
+    return evaluator(guard_payload)
 
 
 def submit_preview_request(

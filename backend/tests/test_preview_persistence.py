@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -28,10 +29,13 @@ from app.db.models.source_registry import RegisteredSource, SourceActivationPost
 from app.db.session import require_preview_submission_session
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 from app.features.auth.session import create_test_application_session
+from app.features.guard import SQLGuardEvaluation
+from app.services import request_preview as request_preview_service
 from app.services.request_preview import (
     PreviewAuditContext,
     PreviewSubmissionContractError,
     PreviewSubmissionRequest,
+    _build_preview_lifecycle_audit_events,
     _persist_candidate_approval_record,
     submit_preview_request,
 )
@@ -616,6 +620,60 @@ def test_http_preview_submission_uses_mssql_guard_profile(
         engine.dispose()
         app.dependency_overrides.clear()
         get_settings.cache_clear()
+
+
+def test_preview_lifecycle_audit_guard_version_fails_closed_when_mapping_missing(
+    monkeypatch,
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_authoritative_source_governance(
+            session,
+            source_family="mssql",
+            source_flavor="analytics",
+        )
+        resolved_source = session.execute(select(RegisteredSource)).scalar_one()
+        dataset_contract = session.execute(select(DatasetContract)).scalar_one()
+        schema_snapshot = session.execute(select(SchemaSnapshot)).scalar_one()
+
+        monkeypatch.delitem(
+            request_preview_service._GUARD_VERSION_BY_SOURCE_FAMILY,
+            "mssql",
+        )
+
+        with pytest.raises(PreviewSubmissionContractError) as exc_info:
+            _build_preview_lifecycle_audit_events(
+                resolved_source=resolved_source,
+                dataset_contract=dataset_contract,
+                schema_snapshot=schema_snapshot,
+                audit_context=PreviewAuditContext(
+                    occurred_at=datetime.now(timezone.utc),
+                    request_id="preview-request-unmapped-guard",
+                    correlation_id="preview-correlation-unmapped-guard",
+                    user_subject="user:alice",
+                    session_id="session-unmapped-guard",
+                    query_candidate_id="preview-candidate-unmapped-guard",
+                    candidate_owner_subject="user:alice",
+                    auth_source="test-helper",
+                ),
+                guard_evaluation=SQLGuardEvaluation(
+                    decision="allow",
+                    profile="common",
+                    canonical_sql="SELECT 1",
+                    source=None,
+                    rejections=[],
+                ),
+            )
+
+        assert "Unsupported source family 'mssql' cannot be guarded." == str(
+            exc_info.value
+        )
 
 
 def test_http_preview_adapter_failure_persists_authoritative_failure(
