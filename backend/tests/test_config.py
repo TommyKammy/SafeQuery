@@ -233,6 +233,32 @@ class SettingsTestCase(unittest.TestCase):
 
         self.assertNotIn("source_reader:change-me", str(exc_info.exception))
 
+    def test_business_postgres_source_rejects_blank_or_absent_password(self) -> None:
+        for source_url in (
+            "postgresql://source_reader:@pg-source:5432/business",
+            "postgresql://source_reader@pg-source:5432/business",
+        ):
+            with self.subTest(source_url=source_url):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must include a "
+                    "non-empty password",
+                ) as exc_info:
+                    Settings(
+                        app_postgres_url=(
+                            "postgresql://safequery:safequery@db:5432/safequery"
+                        ),
+                        business_postgres_source_url=source_url,
+                        _env_file=None,
+                        _env_prefix="SAFEQUERY_",
+                    )
+
+                error_text = str(exc_info.exception)
+                self.assertIn("SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL", error_text)
+                self.assertNotIn(source_url, error_text)
+                self.assertNotIn("source_reader:", error_text)
+                self.assertNotIn("pg-source", error_text)
+
     def test_business_mssql_source_rejects_placeholder_password(self) -> None:
         with self.assertRaisesRegex(
             ValidationError,

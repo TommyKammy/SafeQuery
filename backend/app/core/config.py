@@ -218,13 +218,25 @@ class Settings(BaseSettings):
         if value is None:
             return value
 
-        parsed = urlsplit(str(value))
-        password = unquote(parsed.password or "").strip()
-        if password and _is_placeholder_credential(password):
-            raise ValueError(
-                "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must come from a trusted "
-                "credential source, not a placeholder value."
-            )
+        source_hosts = value.hosts()
+        passwords = [host.get("password") for host in source_hosts]
+        if not passwords:
+            parsed = urlsplit(str(value))
+            passwords = [parsed.password]
+
+        for password_value in passwords:
+            password = unquote(password_value or "").strip()
+            if not password:
+                raise ValueError(
+                    "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must include a "
+                    "non-empty password from a trusted credential source."
+                )
+
+            if _is_placeholder_credential(password):
+                raise ValueError(
+                    "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL must come from a trusted "
+                    "credential source, not a placeholder value."
+                )
 
         return value
 
