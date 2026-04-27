@@ -448,6 +448,17 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
             },
         )
 
+    def test_enabled_development_dev_auth_allows_operator_workflow_http_request(
+        self,
+    ) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+
+        response = self._client().get("/operator/workflow")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["sources"][0]["sourceId"], DEMO_SOURCE_ID)
+
     def test_production_default_dev_auth_blocks_support_bundle_http_request(self) -> None:
         os.environ["SAFEQUERY_ENVIRONMENT"] = "production"
 
@@ -463,6 +474,27 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
                 }
             },
         )
+
+    def test_enabled_development_dev_auth_does_not_allow_support_bundle_http_request(
+        self,
+    ) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+
+        response = self._client().get("/support/bundle")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "operator_read_forbidden",
+                    "message": "Operator evidence requires reviewer or support authority.",
+                }
+            },
+        )
+        self.assertNotIn("activeSources", response.text)
+        self.assertNotIn(DEMO_SOURCE_ID, response.text)
 
     def test_authenticated_unentitled_subject_cannot_read_operator_workflow(
         self,
