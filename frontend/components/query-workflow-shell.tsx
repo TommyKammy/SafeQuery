@@ -944,6 +944,7 @@ function historyItemToState(item: OperatorHistoryItem): CanonicalWorkflowState {
       lifecycleState === "blocked" ||
       lifecycleState === "preview_denied" ||
       lifecycleState === "preview_generation_failed" ||
+      lifecycleState === "preview_malformed" ||
       lifecycleState === "preview_unavailable" ||
       lifecycleState === "invalidated" ||
       guardStatus === "blocked" ||
@@ -1160,6 +1161,7 @@ function isRevisableRequestLifecycleState(lifecycleState: string): boolean {
     normalizedLifecycleState === "blocked" ||
     normalizedLifecycleState === "preview_denied" ||
     normalizedLifecycleState === "preview_generation_failed" ||
+    normalizedLifecycleState === "preview_malformed" ||
     normalizedLifecycleState === "preview_unavailable"
   );
 }

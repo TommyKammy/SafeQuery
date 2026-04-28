@@ -1538,6 +1538,106 @@ def test_preview_revision_from_completed_run_creates_new_authoritative_attempt()
     assert revised_candidate.revised_from_source_id == "sap-approved-spend"
 
 
+def test_preview_revision_from_malformed_request_creates_new_authoritative_attempt() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+
+    with Session(engine) as session:
+        _seed_authoritative_source_governance(session)
+
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+            ),
+            subject,
+            session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                request_id="preview-request-original",
+                correlation_id="preview-correlation-original",
+                user_subject="user:alice",
+                session_id="session-original",
+                query_candidate_id="preview-candidate-original",
+                candidate_owner_subject="user:alice",
+                auth_source="test-helper",
+            ),
+        )
+        original_request = session.scalar(
+            select(PreviewRequest).where(
+                PreviewRequest.request_id == "preview-request-original"
+            )
+        )
+        assert original_request is not None
+        original_request_db_id = original_request.id
+        original_request.request_state = "preview_malformed"
+        session.flush()
+
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by yearly spend",
+                source_id="sap-approved-spend",
+                revise_from={
+                    "item_type": "request",
+                    "request_id": "preview-request-original",
+                    "lifecycle_state": "preview_malformed",
+                },
+            ),
+            subject,
+            session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 6, 0, tzinfo=timezone.utc),
+                request_id="preview-request-revised",
+                correlation_id="preview-correlation-revised",
+                user_subject="user:alice",
+                session_id="session-revised",
+                query_candidate_id="preview-candidate-revised",
+                candidate_owner_subject="user:alice",
+                auth_source="test-helper",
+            ),
+        )
+
+        persisted_requests = (
+            session.execute(select(PreviewRequest).order_by(PreviewRequest.request_id))
+            .scalars()
+            .all()
+        )
+        revised_request = next(
+            request
+            for request in persisted_requests
+            if request.request_id == "preview-request-revised"
+        )
+        original_request_after_revision = next(
+            request
+            for request in persisted_requests
+            if request.request_id == "preview-request-original"
+        )
+
+    assert response.request.revision_context is not None
+    assert response.request.revision_context.item_type == "request"
+    assert response.request.revision_context.request_id == "preview-request-original"
+    assert response.request.revision_context.lifecycle_state == "preview_malformed"
+    assert len(persisted_requests) == 2
+    assert original_request_after_revision.id == original_request_db_id
+    assert original_request_after_revision.request_text == (
+        "Show approved vendors by quarterly spend"
+    )
+    assert original_request_after_revision.request_state == "preview_malformed"
+    assert revised_request.request_text == "Show approved vendors by yearly spend"
+    assert revised_request.revised_from_request_id == "preview-request-original"
+    assert revised_request.revised_from_candidate_id is None
+    assert revised_request.revised_from_run_id is None
+    assert revised_request.revised_from_source_id == "sap-approved-spend"
+
+
 def test_preview_revision_rejects_inconsistent_lineage_contract_fields() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",

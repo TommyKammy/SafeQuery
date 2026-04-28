@@ -634,6 +634,7 @@ def _resolve_revision_record(
             "blocked",
             "preview_denied",
             "preview_generation_failed",
+            "preview_malformed",
             "preview_unavailable",
         }:
             raise PreviewSubmissionContractError(
