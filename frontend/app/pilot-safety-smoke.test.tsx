@@ -332,7 +332,11 @@ describe("pilot safety UI smoke", () => {
                 question: "Pilot source preview with revised filter",
                 request_id: "request-revised-001",
                 revision_context: {
+                  item_type: "run",
+                  request_id: "request-pilot-001",
+                  candidate_id: "candidate-pilot-001",
                   run_id: "run-pilot-001",
+                  lifecycle_state: "completed",
                   source_id: "demo-business-postgres"
                 },
                 source_id: "demo-business-postgres",
