@@ -25,7 +25,10 @@ from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
 from app.services.demo_source_seed import seed_demo_source_governance
-from app.services.support_bundle import build_support_bundle
+from app.services.support_bundle import (
+    build_bounded_result_summary_export,
+    build_support_bundle,
+)
 
 
 @contextmanager
@@ -739,4 +742,208 @@ def test_support_bundle_endpoint_returns_secret_safe_json(monkeypatch) -> None:
         "workstation_local_paths",
         "source_connection_references",
     ]
+    _assert_secret_safe(response.text)
+
+
+def test_bounded_result_summary_export_includes_execution_context_without_raw_rows(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session, execution_row_count=225)
+        export = build_bounded_result_summary_export(
+            session,
+            candidate_id="candidate-governance-bundle",
+            generated_at=datetime(2026, 1, 2, 3, 12, 5, tzinfo=timezone.utc),
+        )
+
+    payload = export.model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert payload == {
+        "exportVersion": 1,
+        "exportType": "bounded_result_summary",
+        "generatedAt": "2026-01-02T03:12:05Z",
+        "authority": "safequery_control_plane",
+        "request": {
+            "requestId": "request-governance-bundle",
+            "requestState": "executed",
+        },
+        "candidate": {
+            "candidateId": "candidate-governance-bundle",
+            "candidateState": "executed",
+            "guardStatus": "passed",
+        },
+        "run": {
+            "executionRunId": payload["run"]["executionRunId"],
+            "eventType": "execution_completed",
+            "occurredAt": "2026-01-02T03:11:05Z",
+        },
+        "source": {
+            "sourceId": "demo-business-postgres",
+            "sourceFamily": "postgresql",
+            "sourceFlavor": "warehouse",
+            "datasetContractVersion": 1,
+            "schemaSnapshotVersion": 1,
+        },
+        "audit": {
+            "auditEventId": payload["audit"]["auditEventId"],
+            "correlationId": "correlation-governance-bundle",
+            "lifecycleOrder": 7,
+        },
+        "result": {
+            "summaryKind": "aggregate_only",
+            "rowCount": 225,
+            "resultTruncated": False,
+            "boundedRows": [],
+            "boundedRowCount": 0,
+            "boundedRowLimit": 20,
+        },
+        "limitations": [
+            "Export is a bounded operator handoff summary, not an authoritative audit bundle.",
+            "Raw SQL, connection details, credentials, tokens, raw result rows, and workstation-local paths are excluded.",
+            "Rows are included only when they were already persisted as bounded operator-display rows.",
+        ],
+        "redaction": {
+            "excluded": [
+                "connection_strings",
+                "raw_credentials",
+                "tokens",
+                "raw_result_rows",
+                "candidate_sql",
+                "raw_identity_payloads",
+                "workstation_local_paths",
+                "source_connection_references",
+            ]
+        },
+    }
+    serialized = json.dumps(payload, sort_keys=True)
+    _assert_secret_safe(serialized)
+    assert "raw_private_rows" not in serialized
+
+
+def test_bounded_result_summary_export_includes_only_bounded_operator_display_rows(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session, execution_row_count=2)
+        execution_event = (
+            session.query(PreviewAuditEvent)
+            .filter_by(
+                candidate_id="candidate-governance-bundle",
+                event_type="execution_completed",
+            )
+            .one()
+        )
+        execution_event.audit_payload = {
+            **execution_event.audit_payload,
+            "operator_display_rows": [
+                {"vendorName": "Acme", "approvedSpend": 100},
+                {"vendorName": "Beta", "approvedSpend": 200},
+            ],
+        }
+        session.commit()
+
+        export = build_bounded_result_summary_export(
+            session,
+            candidate_id="candidate-governance-bundle",
+            generated_at=datetime(2026, 1, 2, 3, 12, 5, tzinfo=timezone.utc),
+        )
+
+    payload = export.model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert payload["result"] == {
+        "summaryKind": "bounded_rows",
+        "rowCount": 2,
+        "resultTruncated": False,
+        "boundedRows": [
+            {"vendorName": "Acme", "approvedSpend": 100},
+            {"vendorName": "Beta", "approvedSpend": 200},
+        ],
+        "boundedRowCount": 2,
+        "boundedRowLimit": 20,
+    }
+    _assert_secret_safe(json.dumps(payload, sort_keys=True))
+
+
+def test_bounded_result_summary_export_rejects_unbounded_operator_display_rows(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session, execution_row_count=25)
+        execution_event = (
+            session.query(PreviewAuditEvent)
+            .filter_by(
+                candidate_id="candidate-governance-bundle",
+                event_type="execution_completed",
+            )
+            .one()
+        )
+        execution_event.audit_payload = {
+            **execution_event.audit_payload,
+            "operator_display_rows": [
+                {"vendorName": f"Vendor {index}"} for index in range(21)
+            ],
+        }
+        session.commit()
+
+        try:
+            build_bounded_result_summary_export(
+                session,
+                candidate_id="candidate-governance-bundle",
+                generated_at=datetime(2026, 1, 2, 3, 12, 5, tzinfo=timezone.utc),
+            )
+        except ValueError as exc:
+            message = str(exc)
+        else:
+            raise AssertionError("Expected unbounded operator display rows to fail.")
+
+    assert "too many operator display rows" in message
+
+
+def test_bounded_result_summary_endpoint_returns_secret_safe_json(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_ENVIRONMENT", "development")
+    monkeypatch.setenv("SAFEQUERY_DEV_AUTH_ENABLED", "true")
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session, execution_row_count=3)
+        response = _client(session).get(
+            "/candidates/candidate-governance-bundle/bounded-result-summary"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["exportType"] == "bounded_result_summary"
+    assert payload["candidate"]["candidateId"] == "candidate-governance-bundle"
+    assert payload["result"] == {
+        "summaryKind": "aggregate_only",
+        "rowCount": 3,
+        "resultTruncated": False,
+        "boundedRows": [],
+        "boundedRowCount": 0,
+        "boundedRowLimit": 20,
+    }
     _assert_secret_safe(response.text)
