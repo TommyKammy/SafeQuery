@@ -74,11 +74,18 @@ If an optional track is enabled, its governance, audit, and evaluation requireme
 
 ## Later Family Expansion
 
-After the two-source core path is stable:
+After the two-source core path is stable, use
+`docs/design/source-family-activation-selection.md` as the current Epic V
+handoff for active implementation planning. That selection recommends Aurora
+PostgreSQL as the first planning candidate while keeping it non-executable
+until a later activation gate approves the full evidence package.
+
+For the families and flavors not selected by that handoff, the remaining
+directional sequence is:
 
 1. onboard `mysql`
 2. evaluate `mariadb` as a sibling or delta profile
-3. add Aurora as source flavors on top of PostgreSQL or MySQL families
+3. add Aurora MySQL as a source flavor after the MySQL family is approved
 4. define `oracle` as long-range planned metadata only, then onboard it last
    after Oracle-specific connector, dialect, guard, audit, entitlement,
    candidate lifecycle, operator-history, and release-gate reconstruction
