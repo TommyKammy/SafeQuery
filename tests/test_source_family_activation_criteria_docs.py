@@ -7,9 +7,13 @@ ACTIVATION_DOC = REPO_ROOT / "docs" / "design" / "target-source-registry.md"
 
 def test_future_source_family_activation_gate_is_documented() -> None:
     content = ACTIVATION_DOC.read_text(encoding="utf-8")
-    normalized_content = " ".join(content.split())
+    header = "## Future Source-Family Activation Gate"
+    start = content.find(header)
+    assert start != -1
 
-    assert "## Future Source-Family Activation Gate" in content
+    next_section = content.find("\n## ", start + len(header))
+    activation_section = content[start : next_section if next_section != -1 else len(content)]
+    normalized_activation_section = " ".join(activation_section.split())
 
     required_states = [
         "`planned`",
@@ -18,7 +22,7 @@ def test_future_source_family_activation_gate_is_documented() -> None:
         "`active-baseline`",
     ]
     for state in required_states:
-        assert state in content
+        assert state in activation_section
 
     required_categories = [
         "Guard readiness",
@@ -30,7 +34,7 @@ def test_future_source_family_activation_gate_is_documented() -> None:
         "Row-bounds readiness",
     ]
     for category in required_categories:
-        assert category in content
+        assert category in activation_section
 
     fail_closed_blockers = [
         "missing guard readiness",
@@ -42,6 +46,9 @@ def test_future_source_family_activation_gate_is_documented() -> None:
         "missing row-bounds readiness",
     ]
     for blocker in fail_closed_blockers:
-        assert blocker in normalized_content
+        assert blocker in normalized_activation_section
 
-    assert "No planned or unsupported family may dispatch connector code" in content
+    assert (
+        "No planned or unsupported family may dispatch connector code"
+        in normalized_activation_section
+    )
