@@ -137,6 +137,7 @@ class OperatorWorkflowAuditEventSummary(BaseModel):
 
     event_id: str = Field(serialization_alias="eventId")
     event_type: str = Field(serialization_alias="eventType")
+    execution_run_id: Optional[str] = Field(default=None, serialization_alias="executionRunId")
     occurred_at: datetime = Field(serialization_alias="occurredAt")
     request_id: str = Field(serialization_alias="requestId")
     candidate_id: Optional[str] = Field(default=None, serialization_alias="candidateId")
@@ -158,6 +159,7 @@ class OperatorWorkflowExecutedEvidence(BaseModel):
         serialization_alias="canAuthorizeExecution",
     )
     candidate_id: str = Field(serialization_alias="candidateId")
+    execution_run_id: str = Field(serialization_alias="executionRunId")
     execution_audit_event_id: str = Field(serialization_alias="executionAuditEventId")
     execution_audit_event_type: Literal["execution_completed"] = Field(
         serialization_alias="executionAuditEventType",
@@ -434,10 +436,31 @@ def _read_payload_items(value: object) -> list[dict[str, object]]:
     return [item for item in value if isinstance(item, dict)]
 
 
+def _execution_run_id_for_event(event: PreviewAuditEvent) -> str:
+    for item in _read_payload_items(event.audit_payload.get("executed_evidence")):
+        if (
+            item.get("type") != "executed_evidence"
+            or item.get("authority") != "backend_execution_result"
+            or item.get("can_authorize_execution") is not False
+            or _read_text(item.get("source_id")) != event.source_id
+            or _read_text(item.get("execution_audit_event_id")) != str(event.event_id)
+        ):
+            continue
+
+        execution_run_id = _read_text(item.get("execution_run_id"))
+        if execution_run_id is not None:
+            return execution_run_id
+
+    return str(event.event_id)
+
+
 def _audit_event_summary(event: PreviewAuditEvent) -> OperatorWorkflowAuditEventSummary:
     return OperatorWorkflowAuditEventSummary(
         event_id=str(event.event_id),
         event_type=event.event_type,
+        execution_run_id=(
+            _execution_run_id_for_event(event) if _is_execution_event(event) else None
+        ),
         occurred_at=_as_utc_datetime(event.occurred_at),
         request_id=event.request_id,
         candidate_id=event.candidate_id,
@@ -464,6 +487,7 @@ def _executed_evidence_for_event(
             continue
 
         candidate_id = _read_text(item.get("candidate_id"))
+        execution_run_id = _read_text(item.get("execution_run_id"))
         execution_audit_event_id = _read_text(item.get("execution_audit_event_id"))
         row_count = _read_non_negative_int(item.get("row_count"))
         result_truncated = _read_bool(item.get("result_truncated"))
@@ -471,6 +495,7 @@ def _executed_evidence_for_event(
         source_family = _read_text(item.get("source_family"))
         if (
             candidate_id is None
+            or execution_run_id is None
             or execution_audit_event_id is None
             or item.get("execution_audit_event_type") != "execution_completed"
             or row_count is None
@@ -483,6 +508,7 @@ def _executed_evidence_for_event(
         evidence.append(
             OperatorWorkflowExecutedEvidence(
                 candidate_id=candidate_id,
+                execution_run_id=execution_run_id,
                 execution_audit_event_id=execution_audit_event_id,
                 execution_audit_event_type="execution_completed",
                 row_count=row_count,
@@ -732,7 +758,7 @@ def _build_operator_history(
         history.append(
             OperatorWorkflowHistoryItem(
                 item_type="run",
-                record_id=str(event.event_id),
+                record_id=_execution_run_id_for_event(event),
                 label=request_labels.get(event.request_id, "Execution run"),
                 source_id=event.source_id,
                 source_label=source_labels.get(event.source_id, event.source_id),

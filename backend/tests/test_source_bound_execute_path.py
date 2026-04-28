@@ -314,6 +314,7 @@ def test_execute_candidate_sql_derives_source_labeled_executed_evidence(
         "schema_snapshot_version": 7,
         "connector_profile_version": 11,
         "candidate_id": "candidate-123",
+        "execution_run_id": result.audit_event.event_id,
         "execution_audit_event_id": result.audit_event.event_id,
         "execution_audit_event_type": "execution_completed",
         "row_count": 1,

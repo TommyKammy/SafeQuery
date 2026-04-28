@@ -171,6 +171,7 @@ def test_retrieval_completed_audit_event_preserves_source_labeled_citations() ->
 
 def test_analyst_response_audit_event_keeps_executed_evidence_separate_from_citations() -> None:
     payload = _source_aware_payload()
+    execution_run_id = uuid4()
     execution_audit_event_id = uuid4()
     payload.update(
         {
@@ -200,6 +201,7 @@ def test_analyst_response_audit_event_keeps_executed_evidence_separate_from_cita
                     "execution_policy_version": 3,
                     "connector_profile_version": 11,
                     "candidate_id": "candidate-123",
+                    "execution_run_id": execution_run_id,
                     "execution_audit_event_id": execution_audit_event_id,
                     "execution_audit_event_type": "execution_completed",
                     "row_count": 12,
@@ -273,6 +275,7 @@ def test_executed_evidence_rejects_retrieval_citation_shape() -> None:
                     "dataset_contract_version": 2,
                     "schema_snapshot_version": 5,
                     "candidate_id": "candidate-123",
+                    "execution_run_id": uuid4(),
                     "execution_audit_event_id": uuid4(),
                     "row_count": 12,
                     "result_truncated": False,

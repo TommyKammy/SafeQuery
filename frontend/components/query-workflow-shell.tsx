@@ -551,6 +551,7 @@ function parseExecuteAuditEvent(value: unknown): OperatorWorkflowAuditEvent | nu
     denialReason: readOptionalString(value.denial_reason),
     eventId,
     eventType,
+    executionRunId: null,
     guardDecision: readOptionalString(value.guard_decision),
     occurredAt,
     primaryDenyCode: readOptionalString(value.primary_deny_code),
@@ -622,8 +623,9 @@ function buildExecutedEvidenceFromExecuteResponse(
       event.sourceId === result.sourceId
   );
   const sourceFamily = readOptionalString(metadata.source_family);
+  const executionRunId = readOptionalString(metadata.execution_run_id);
 
-  if (!completedEvent || !sourceFamily) {
+  if (!completedEvent || !sourceFamily || !executionRunId) {
     return [];
   }
 
@@ -632,6 +634,7 @@ function buildExecutedEvidenceFromExecuteResponse(
       authority: "backend_execution_result",
       canAuthorizeExecution: false,
       candidateId: result.candidateId,
+      executionRunId,
       executionAuditEventId: completedEvent.eventId,
       executionAuditEventType: "execution_completed",
       resultTruncated: result.resultTruncated,
@@ -1609,8 +1612,46 @@ function renderResultContent(
 function renderAuditEvidencePanel(
   auditEvents: OperatorWorkflowAuditEvent[],
   executedEvidence: OperatorWorkflowExecutedEvidence[],
-  retrievedCitations: OperatorWorkflowRetrievedCitation[]
+  retrievedCitations: OperatorWorkflowRetrievedCitation[],
+  history: OperatorHistoryItem[],
+  question: string
 ) {
+  function findNavigationTarget(
+    itemType: OperatorHistoryItem["itemType"],
+    recordId: string,
+    sourceId: string
+  ): OperatorHistoryItem | undefined {
+    return history.find(
+      (item) =>
+        item.itemType === itemType &&
+        item.recordId === recordId &&
+        item.sourceId === sourceId
+    );
+  }
+
+  function renderHistoryNavigation(
+    itemType: OperatorHistoryItem["itemType"],
+    recordId: string,
+    sourceId: string
+  ) {
+    const target = findNavigationTarget(itemType, recordId, sourceId);
+    if (!target) {
+      return <span>{`${itemType[0].toUpperCase()}${itemType.slice(1)} ${recordId}`}</span>;
+    }
+
+    return (
+      <a
+        className="inline-link"
+        href={buildStateHref(historyItemToState(target), target.label || question, target.sourceId, {
+          historyItemType: target.itemType,
+          historyRecordId: target.recordId
+        })}
+      >
+        Open {itemType} {recordId}
+      </a>
+    );
+  }
+
   return (
     <section className="surface surface-secondary">
       <div className="section-header">
@@ -1638,8 +1679,15 @@ function renderAuditEvidencePanel(
               <strong>{event.eventType}</strong>
               <span>{event.eventId}</span>
               <span>{event.occurredAt}</span>
-              <span>Request {event.requestId}</span>
-              {event.candidateId ? <span>Candidate {event.candidateId}</span> : null}
+              {renderHistoryNavigation("request", event.requestId, event.sourceId)}
+              {event.candidateId
+                ? renderHistoryNavigation("candidate", event.candidateId, event.sourceId)
+                : null}
+              {renderHistoryNavigation(
+                "run",
+                event.executionRunId ?? event.eventId,
+                event.sourceId
+              )}
               {event.rowCount !== null ? <span>{event.rowCount} rows</span> : null}
               {event.resultTruncated !== null ? (
                 <span>{event.resultTruncated ? "Result truncated" : "Result not truncated"}</span>
@@ -1656,7 +1704,8 @@ function renderAuditEvidencePanel(
               <span className="meta-label">Executed evidence</span>
               <strong>{evidence.authority}</strong>
               <span>{evidence.sourceId}</span>
-              <span>Candidate {evidence.candidateId}</span>
+              {renderHistoryNavigation("candidate", evidence.candidateId, evidence.sourceId)}
+              {renderHistoryNavigation("run", evidence.executionRunId, evidence.sourceId)}
               <span>{evidence.rowCount} rows</span>
               <span>{evidence.resultTruncated ? "Result truncated" : "Result not truncated"}</span>
               <span>Cannot authorize execution: {String(evidence.canAuthorizeExecution)}</span>
@@ -2835,7 +2884,9 @@ export function QueryWorkflowShell({
           {renderAuditEvidencePanel(
             selectedAuditEvents,
             selectedExecutedEvidence,
-            selectedRetrievedCitations
+            selectedRetrievedCitations,
+            operatorWorkflow.history,
+            submittedQuestion
           )}
 
           {renderCandidateAttemptComparison(selectedCandidateAttempts)}

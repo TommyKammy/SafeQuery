@@ -647,6 +647,7 @@ def test_operator_workflow_history_includes_execution_run_records() -> None:
         {
             "eventId": "00000000-0000-4000-8000-000000000012",
             "eventType": "execution_completed",
+            "executionRunId": "00000000-0000-4000-8000-000000000012",
             "occurredAt": "2026-01-02T03:05:03Z",
             "requestId": "preview-request-234",
             "candidateId": "preview-candidate-234",
@@ -658,6 +659,7 @@ def test_operator_workflow_history_includes_execution_run_records() -> None:
 
 
 def test_operator_workflow_history_surfaces_safe_audit_evidence_and_citations() -> None:
+    execution_run_id = UUID("00000000-0000-4000-8000-000000000099")
     execution_event_id = UUID("00000000-0000-4000-8000-000000000012")
     with _session_scope() as session:
         _seed_authoritative_source_governance(session)
@@ -708,6 +710,7 @@ def test_operator_workflow_history_surfaces_safe_audit_evidence_and_citations() 
                             "dataset_contract_version": 1,
                             "schema_snapshot_version": 1,
                             "candidate_id": "preview-candidate-234",
+                            "execution_run_id": str(execution_run_id),
                             "execution_audit_event_id": str(execution_event_id),
                             "execution_audit_event_type": "execution_completed",
                             "row_count": 12,
@@ -725,10 +728,12 @@ def test_operator_workflow_history_surfaces_safe_audit_evidence_and_citations() 
         snapshot = get_operator_workflow_snapshot(session)
 
     run = snapshot.history[0].model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert run["recordId"] == str(execution_run_id)
     assert run["auditEvents"] == [
         {
             "eventId": str(execution_event_id),
             "eventType": "execution_completed",
+            "executionRunId": str(execution_run_id),
             "occurredAt": "2026-01-02T03:05:03Z",
             "requestId": "preview-request-234",
             "candidateId": "preview-candidate-234",
@@ -742,6 +747,7 @@ def test_operator_workflow_history_surfaces_safe_audit_evidence_and_citations() 
             "authority": "backend_execution_result",
             "canAuthorizeExecution": False,
             "candidateId": "preview-candidate-234",
+            "executionRunId": str(execution_run_id),
             "executionAuditEventId": str(execution_event_id),
             "executionAuditEventType": "execution_completed",
             "rowCount": 12,
