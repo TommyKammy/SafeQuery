@@ -72,6 +72,69 @@ When a source changes to a non-executable state, SafeQuery should treat previous
 - invalidate them proactively
 - deny execution with an explicit stale-policy or invalidation outcome
 
+## Future Source-Family Activation Gate
+
+Future source families and flavors must move through explicit activation states
+before they can become executable. The gate applies to MySQL, MariaDB, Aurora,
+Oracle, and later families without implying that any connector work starts in
+this document.
+
+Activation states:
+
+- `planned`: product or architecture intent exists, but the family is metadata
+  only and cannot be selected for execution.
+- `unsupported`: the family is intentionally rejected even if a request, adapter
+  hint, source label, driver name, or connection shape claims it is available.
+- `activation-candidate`: all required evidence has been assembled for review,
+  but connector dispatch remains disabled until the gate is approved.
+- `active-baseline`: the backend-owned registry, connector, guard, audit,
+  evaluation, dataset, and runtime controls are approved together and covered by
+  release-gate reconstruction.
+
+Required readiness evidence before `active-baseline`:
+
+- Guard readiness: the family has an approved dialect profile, canonicalization
+  behavior, deny catalog mapping, deny corpus, parser-failure behavior, and
+  profile-version drift test. The explicit blocker is missing guard readiness.
+- Runtime readiness: the family has backend-owned connector selection, driver
+  availability checks, timeout handling, cancellation behavior, source
+  unavailable classification, rate or concurrency limits where applicable, and
+  no path that trusts adapter or client-supplied runtime hints. The explicit
+  blocker is missing runtime readiness.
+- Secrets readiness: the registry points only to backend-owned secret
+  indirection, health checks prove the secret reference can be resolved by the
+  trusted backend, and placeholder credentials, sample credentials, raw
+  connection strings, or client-supplied connection material are rejected.
+  The explicit blocker is missing secrets readiness.
+- Audit readiness: source id, source family, optional source flavor, dataset
+  contract, schema snapshot, execution policy, connector profile, dialect
+  profile, guard version, deny code, row count, truncation state, request id,
+  candidate id, approval id, and correlation id are present in source-aware
+  audit events where applicable. The explicit blocker is missing audit
+  readiness.
+- Evaluation readiness: positive, safety-deny, connector-selection, lifecycle,
+  runtime-control, audit reconstruction, release-gate reconstruction, and
+  operator-history scenarios exist as SafeQuery-owned evaluation artifacts for
+  the family or explicitly approved flavor inheritance. The explicit blocker is
+  missing evaluation readiness.
+- Dataset-contract readiness: the family has an approved dataset contract,
+  schema snapshot linkage, entitlement posture, row-level or view-level exposure
+  scope where applicable, and stale-contract denial behavior. The explicit
+  blocker is missing dataset-contract readiness.
+- Row-bounds readiness: the family has one approved bounded-read strategy that
+  runs before guard, preview, and execution, with tests for unbounded reads,
+  conflicting limits, offset behavior, truncation metadata, and audit
+  reconstruction. The explicit blocker is missing row-bounds readiness.
+
+No planned or unsupported family may dispatch connector code, appear in active
+execution coverage, or be treated as runtime-capable because it appears in a
+roadmap, matrix, sample config, adapter output, analyst artifact, MLflow trace,
+or operator-facing label. `activation-candidate` is also non-executable until
+the gate is approved. If any required guard, runtime, secrets, audit,
+evaluation, dataset-contract, or row-bounds evidence is missing, malformed,
+stale, or only inferred from a non-authoritative surface, SafeQuery must reject
+activation and keep the family non-executable.
+
 ## Health Checks
 
 Registry-aware health checks should verify the backend can still resolve:
