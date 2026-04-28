@@ -771,7 +771,8 @@ function parseExecuteSubmissionResult(
     rowCount < 0 ||
     typeof resultTruncated !== "boolean" ||
     rows === null ||
-    rows.length !== rowCount
+    rows.length > rowCount ||
+    (!resultTruncated && rows.length !== rowCount)
   ) {
     return null;
   }
@@ -1418,7 +1419,7 @@ function resultColumns(rows: ResultRow[]): string[] {
   return columns;
 }
 
-function renderResultRows(rows: ResultRow[]) {
+function renderResultRows(rows: ResultRow[], rowCount: number, resultTruncated: boolean) {
   if (rows.length === 0) {
     return null;
   }
@@ -1460,9 +1461,19 @@ function renderResultRows(rows: ResultRow[]) {
       </table>
       {rowsTruncated ? (
         <p className="section-copy">
-          Showing {displayedRows.length} of {rows.length} returned rows.
+          Showing {displayedRows.length} of {rows.length} rows attached to this bounded payload.
         </p>
       ) : null}
+      {resultTruncated ? (
+        <p className="section-copy">
+          SafeQuery returned a bounded preview of {rows.length} displayed rows for {rowCount} rows
+          reported by execution metadata; this is not complete dataset access.
+        </p>
+      ) : (
+        <p className="section-copy">
+          Showing bounded result rows attached to this selected run only.
+        </p>
+      )}
     </div>
   );
 }
@@ -1482,13 +1493,23 @@ function renderResultContent(
       return (
         <>
           <div className="state-callout state-callout-success">
-            <p className="state-callout-title">Authoritative result metadata</p>
+            <p className="state-callout-title">
+              {runContext.resultTruncated
+                ? "Truncated bounded result metadata"
+                : "Bounded result metadata"}
+            </p>
             <p>
-              {runContext.rowCount} rows returned; result payload{" "}
-              {runContext.resultTruncated ? "truncated" : "not truncated"}.
+              {runContext.rowCount} rows reported for this selected run; result payload{" "}
+              {runContext.resultTruncated
+                ? "was truncated by SafeQuery display limits."
+                : "was not truncated."}
             </p>
           </div>
-          {renderResultRows(runContext.resultRows ?? [])}
+          {renderResultRows(
+            runContext.resultRows ?? [],
+            runContext.rowCount,
+            runContext.resultTruncated
+          )}
         </>
       );
     }
@@ -1520,16 +1541,17 @@ function renderResultContent(
     return (
       <>
         <div className="state-callout state-callout-empty">
-          <p className="state-callout-title">Empty state reached</p>
+          <p className="state-callout-title">Empty result state reached</p>
           <p>
-            The approved workflow returned zero rows. Keep the question, SQL preview, and guard
-            history intact so the operator can revise without losing context.
+            The approved workflow executed successfully and returned zero rows. This is distinct
+            from denied or failed execution, and the candidate and run context remain attached for
+            revision.
           </p>
         </div>
         {runContext?.rowCount === 0 && runContext.resultTruncated === false ? (
           <div className="state-callout state-callout-success">
-            <p className="state-callout-title">Authoritative result metadata</p>
-            <p>0 rows returned; result payload not truncated.</p>
+            <p className="state-callout-title">Bounded result metadata</p>
+            <p>0 rows reported for this selected run; result payload was not truncated.</p>
           </div>
         ) : null}
       </>
