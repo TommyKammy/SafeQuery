@@ -295,6 +295,7 @@ button:focus-visible {
 .action-row,
 .guard-list,
 .evidence-list,
+.attempt-list,
 .history-list,
 .placeholder-block,
 .first-run-panel {
@@ -456,6 +457,44 @@ button:disabled {
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   background: rgba(7, 11, 20, 0.38);
+}
+
+.attempt-list {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.attempt-item {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(7, 11, 20, 0.38);
+  color: var(--text-secondary);
+}
+
+.attempt-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.attempt-heading strong {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.attempt-item-success {
+  border-color: rgba(79, 209, 139, 0.38);
+}
+
+.attempt-item-danger {
+  border-color: rgba(255, 107, 122, 0.38);
+}
+
+.attempt-item-warning {
+  border-color: rgba(240, 193, 91, 0.35);
 }
 
 .evidence-item {

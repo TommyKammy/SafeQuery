@@ -23,13 +23,33 @@ export type SourceOption = {
 export type OperatorWorkflowAuditEvent = {
   candidateId: string | null;
   candidateState: string | null;
+  denialReason: string | null;
   eventId: string;
   eventType: string;
+  guardDecision: string | null;
   occurredAt: string;
   primaryDenyCode: string | null;
   requestId: string;
   resultTruncated: boolean | null;
   rowCount: number | null;
+  sourceId: string;
+};
+
+export type OperatorWorkflowCandidateAttempt = {
+  approved: boolean;
+  candidateId: string;
+  candidateState: string;
+  datasetContractVersion: number;
+  denialReason: string | null;
+  executed: boolean;
+  guardDecision: string | null;
+  guardStatus: string;
+  occurredAt: string;
+  primaryDenyCode: string | null;
+  requestId: string;
+  schemaSnapshotVersion: number;
+  sourceFamily: string;
+  sourceFlavor: string | null;
   sourceId: string;
 };
 
@@ -66,6 +86,7 @@ export type OperatorWorkflowRevisionContext = {
 
 export type OperatorHistoryItem = {
   auditEvents: OperatorWorkflowAuditEvent[];
+  candidateAttempts: OperatorWorkflowCandidateAttempt[];
   candidateSql?: string | null;
   executedEvidence: OperatorWorkflowExecutedEvidence[];
   guardStatus?: string | null;
@@ -166,13 +187,65 @@ function parseAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
   return {
     candidateId: readOptionalString(value.candidateId) ?? null,
     candidateState: readOptionalString(value.candidateState) ?? null,
+    denialReason: readOptionalString(value.denialReason) ?? null,
     eventId,
     eventType,
+    guardDecision: readOptionalString(value.guardDecision) ?? null,
     occurredAt,
     primaryDenyCode: readOptionalString(value.primaryDenyCode) ?? null,
     requestId,
     resultTruncated: typeof value.resultTruncated === "boolean" ? value.resultTruncated : null,
     rowCount: readOptionalNonNegativeInteger(value.rowCount) ?? null,
+    sourceId
+  };
+}
+
+function parseCandidateAttempt(value: unknown): OperatorWorkflowCandidateAttempt | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const candidateId = readOptionalString(value.candidateId);
+  const candidateState = readOptionalString(value.candidateState);
+  const datasetContractVersion = readOptionalNonNegativeInteger(value.datasetContractVersion);
+  const guardStatus = readOptionalString(value.guardStatus);
+  const occurredAt = readOptionalString(value.occurredAt);
+  const requestId = readOptionalString(value.requestId);
+  const schemaSnapshotVersion = readOptionalNonNegativeInteger(value.schemaSnapshotVersion);
+  const sourceFamily = readOptionalString(value.sourceFamily);
+  const sourceId = readOptionalString(value.sourceId);
+
+  if (
+    !candidateId ||
+    !candidateState ||
+    datasetContractVersion === undefined ||
+    !guardStatus ||
+    !occurredAt ||
+    !requestId ||
+    schemaSnapshotVersion === undefined ||
+    !sourceFamily ||
+    !sourceId ||
+    typeof value.approved !== "boolean" ||
+    typeof value.executed !== "boolean"
+  ) {
+    return null;
+  }
+
+  return {
+    approved: value.approved,
+    candidateId,
+    candidateState,
+    datasetContractVersion,
+    denialReason: readOptionalString(value.denialReason) ?? null,
+    executed: value.executed,
+    guardDecision: readOptionalString(value.guardDecision) ?? null,
+    guardStatus,
+    occurredAt,
+    primaryDenyCode: readOptionalString(value.primaryDenyCode) ?? null,
+    requestId,
+    schemaSnapshotVersion,
+    sourceFamily,
+    sourceFlavor: readOptionalString(value.sourceFlavor) ?? null,
     sourceId
   };
 }
@@ -344,6 +417,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
   const lifecycleState = readOptionalString(value.lifecycleState);
   const occurredAt = readOptionalString(value.occurredAt);
   const auditEvents = parseArray(value.auditEvents, parseAuditEvent);
+  const candidateAttempts = parseArray(value.candidateAttempts, parseCandidateAttempt);
   const executedEvidence = parseArray(value.executedEvidence, parseExecutedEvidence);
   const retrievedCitations = parseArray(value.retrievedCitations, parseRetrievedCitation);
   const revisionContext = parseRevisionContext(value.revisionContext);
@@ -357,6 +431,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     !lifecycleState ||
     !occurredAt ||
     auditEvents === null ||
+    candidateAttempts === null ||
     executedEvidence === null ||
     retrievedCitations === null
   ) {
@@ -365,6 +440,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
 
   return {
     auditEvents,
+    candidateAttempts,
     candidateSql: readOptionalString(value.candidateSql) ?? null,
     executedEvidence,
     guardStatus: readOptionalString(value.guardStatus) ?? null,

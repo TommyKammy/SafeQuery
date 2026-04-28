@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
-from app.db.models.preview import PreviewAuditEvent
+from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewCandidateApproval
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.context import AuthenticatedSubject
@@ -198,6 +198,9 @@ def _audit_event(
     event_type: str,
     request_id: str = "preview-request-234",
     candidate_id: str | None = None,
+    primary_deny_code: str | None = None,
+    candidate_state: str | None = None,
+    audit_payload: dict[str, object] | None = None,
 ) -> PreviewAuditEvent:
     return PreviewAuditEvent(
         event_id=event_id,
@@ -214,7 +217,9 @@ def _audit_event(
         source_id="sap-approved-spend",
         source_family="postgresql",
         source_flavor="warehouse",
-        audit_payload={"event_type": event_type},
+        primary_deny_code=primary_deny_code,
+        candidate_state=candidate_state,
+        audit_payload=audit_payload or {"event_type": event_type},
     )
 
 
@@ -410,6 +415,170 @@ def test_operator_workflow_history_marks_revised_attempt_context() -> None:
         "candidateId": "preview-candidate-original",
         "sourceId": "sap-approved-spend",
     }
+
+
+def test_operator_workflow_history_compares_candidate_attempt_guard_outcomes() -> None:
+    with _session_scope() as session:
+        _seed_authoritative_source_governance(session)
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+            ),
+            subject,
+            session,
+            audit_context=_audit_context(
+                request_id="preview-request-original",
+                candidate_id="preview-candidate-original",
+            ),
+        )
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by yearly spend",
+                source_id="sap-approved-spend",
+                revise_from={
+                    "item_type": "candidate",
+                    "request_id": "preview-request-original",
+                    "candidate_id": "preview-candidate-original",
+                },
+            ),
+            subject,
+            session,
+            audit_context=_audit_context(
+                request_id="preview-request-revised",
+                candidate_id="preview-candidate-revised",
+            ),
+        )
+
+        original = session.execute(
+            select(PreviewCandidate).where(
+                PreviewCandidate.candidate_id == "preview-candidate-original"
+            )
+        ).scalar_one()
+        revised = session.execute(
+            select(PreviewCandidate).where(
+                PreviewCandidate.candidate_id == "preview-candidate-revised"
+            )
+        ).scalar_one()
+        original.candidate_state = "blocked"
+        original.guard_status = "blocked"
+        revised.candidate_state = "approved_for_execution"
+        revised.guard_status = "allow"
+        session.add_all(
+            [
+                _audit_event(
+                    event_id=UUID("00000000-0000-4000-8000-000000000021"),
+                    lifecycle_order=9,
+                    event_type="guard_evaluated",
+                    request_id="preview-request-original",
+                    candidate_id="preview-candidate-original",
+                    primary_deny_code="DENY_WRITE_OPERATION",
+                    candidate_state="blocked",
+                    audit_payload={
+                        "event_type": "guard_evaluated",
+                        "guard_decision": "reject",
+                        "denial_reason": "SQL guard rejected a write operation.",
+                    },
+                ),
+                _audit_event(
+                    event_id=UUID("00000000-0000-4000-8000-000000000022"),
+                    lifecycle_order=9,
+                    event_type="guard_evaluated",
+                    request_id="preview-request-revised",
+                    candidate_id="preview-candidate-revised",
+                    candidate_state="approved_for_execution",
+                    audit_payload={
+                        "event_type": "guard_evaluated",
+                        "guard_decision": "allow",
+                    },
+                ),
+                _audit_event(
+                    event_id=UUID("00000000-0000-4000-8000-000000000023"),
+                    lifecycle_order=10,
+                    event_type="execution_completed",
+                    request_id="preview-request-revised",
+                    candidate_id="preview-candidate-revised",
+                    candidate_state="approved_for_execution",
+                    audit_payload={
+                        "event_type": "execution_completed",
+                        "execution_row_count": 3,
+                        "result_truncated": False,
+                    },
+                ),
+            ]
+        )
+        approval = session.execute(
+            select(PreviewCandidateApproval).where(
+                PreviewCandidateApproval.candidate_id == revised.candidate_id
+            )
+        ).scalar_one()
+        original_approval = session.execute(
+            select(PreviewCandidateApproval).where(
+                PreviewCandidateApproval.candidate_id == original.candidate_id
+            )
+        ).scalar_one()
+        original_approval.invalidated_at = datetime(
+            2026, 1, 2, 3, 4, 30, tzinfo=timezone.utc
+        )
+        original_approval.approval_state = "invalidated"
+        approval.approved_at = datetime(2026, 1, 2, 3, 5, 0, tzinfo=timezone.utc)
+        approval.approval_expires_at = approval.approved_at + timedelta(minutes=10)
+        approval.executed_at = datetime(2026, 1, 2, 3, 6, 0, tzinfo=timezone.utc)
+        approval.approval_state = "executed"
+        session.commit()
+
+        snapshot = get_operator_workflow_snapshot(session)
+
+    history = [
+        item.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for item in snapshot.history
+    ]
+    revised_candidate = next(
+        item for item in history if item["recordId"] == "preview-candidate-revised"
+    )
+    assert revised_candidate["candidateAttempts"] == [
+        {
+            "candidateId": "preview-candidate-revised",
+            "requestId": "preview-request-revised",
+            "sourceId": "sap-approved-spend",
+            "sourceFamily": "postgresql",
+            "sourceFlavor": "warehouse",
+            "candidateState": "approved_for_execution",
+            "guardStatus": "allow",
+            "guardDecision": "allow",
+            "occurredAt": "2026-01-02T03:04:05Z",
+            "datasetContractVersion": 1,
+            "schemaSnapshotVersion": 1,
+            "approved": True,
+            "executed": True,
+        },
+        {
+            "candidateId": "preview-candidate-original",
+            "requestId": "preview-request-original",
+            "sourceId": "sap-approved-spend",
+            "sourceFamily": "postgresql",
+            "sourceFlavor": "warehouse",
+            "candidateState": "blocked",
+            "guardStatus": "blocked",
+            "guardDecision": "reject",
+            "primaryDenyCode": "DENY_WRITE_OPERATION",
+            "denialReason": "SQL guard rejected a write operation.",
+            "occurredAt": "2026-01-02T03:04:05Z",
+            "datasetContractVersion": 1,
+            "schemaSnapshotVersion": 1,
+            "approved": False,
+            "executed": False,
+        },
+    ]
+    serialized_attempts = str(revised_candidate["candidateAttempts"]).lower()
+    assert "select" not in serialized_attempts
+    assert "secret" not in serialized_attempts
+    assert "token" not in serialized_attempts
 
 
 def test_operator_workflow_history_includes_execution_run_records() -> None:

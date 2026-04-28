@@ -8,7 +8,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.dataset_contract import DatasetContract
-from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
+from app.db.models.preview import (
+    PreviewAuditEvent,
+    PreviewCandidate,
+    PreviewCandidateApproval,
+    PreviewRequest,
+)
 from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource
 from app.features.auth.governance_bindings import normalize_governance_binding
@@ -92,6 +97,30 @@ class OperatorWorkflowHistoryItem(BaseModel):
         default=None,
         serialization_alias="revisionContext",
     )
+    candidate_attempts: list["OperatorWorkflowCandidateAttemptSummary"] = Field(
+        default_factory=list,
+        serialization_alias="candidateAttempts",
+    )
+
+
+class OperatorWorkflowCandidateAttemptSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(serialization_alias="candidateId")
+    request_id: str = Field(serialization_alias="requestId")
+    source_id: str = Field(serialization_alias="sourceId")
+    source_family: str = Field(serialization_alias="sourceFamily")
+    source_flavor: Optional[str] = Field(default=None, serialization_alias="sourceFlavor")
+    candidate_state: str = Field(serialization_alias="candidateState")
+    guard_status: str = Field(serialization_alias="guardStatus")
+    guard_decision: Optional[str] = Field(default=None, serialization_alias="guardDecision")
+    primary_deny_code: Optional[str] = Field(default=None, serialization_alias="primaryDenyCode")
+    denial_reason: Optional[str] = Field(default=None, serialization_alias="denialReason")
+    occurred_at: datetime = Field(serialization_alias="occurredAt")
+    dataset_contract_version: int = Field(serialization_alias="datasetContractVersion")
+    schema_snapshot_version: int = Field(serialization_alias="schemaSnapshotVersion")
+    approved: bool
+    executed: bool
 
 
 class OperatorWorkflowRevisionContext(BaseModel):
@@ -539,6 +568,103 @@ def _terminal_run_events(
     return terminal_events
 
 
+def _candidate_attempts_by_candidate_id(
+    *,
+    candidates: list[PreviewCandidate],
+    candidate_events: dict[str, PreviewAuditEvent],
+    audit_events: list[PreviewAuditEvent],
+    approvals: list[PreviewCandidateApproval],
+) -> dict[str, list[OperatorWorkflowCandidateAttemptSummary]]:
+    candidate_ids = {candidate.candidate_id for candidate in candidates}
+    parents: dict[str, str] = {candidate_id: candidate_id for candidate_id in candidate_ids}
+    candidates_by_request_id = {candidate.request_id: candidate for candidate in candidates}
+
+    def find(candidate_id: str) -> str:
+        parent = parents[candidate_id]
+        if parent != candidate_id:
+            parents[candidate_id] = find(parent)
+        return parents[candidate_id]
+
+    def union(left: str, right: str) -> None:
+        if left not in parents or right not in parents:
+            return
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for candidate in candidates:
+        if candidate.revised_from_candidate_id:
+            union(candidate.candidate_id, candidate.revised_from_candidate_id)
+        if candidate.revised_from_request_id:
+            revised_from_candidate = candidates_by_request_id.get(
+                candidate.revised_from_request_id
+            )
+            if revised_from_candidate is not None:
+                union(candidate.candidate_id, revised_from_candidate.candidate_id)
+
+    approved_candidate_ids = {
+        approval.candidate_id
+        for approval in approvals
+        if approval.approval_state in {"approved", "executed"}
+        and approval.invalidated_at is None
+    }
+    executed_candidate_ids = {
+        event.candidate_id
+        for event in audit_events
+        if event.candidate_id is not None and event.event_type == "execution_completed"
+    }
+    attempts_by_root: dict[str, list[OperatorWorkflowCandidateAttemptSummary]] = {}
+    for candidate in candidates:
+        candidate_event = candidate_events.get(candidate.candidate_id)
+        attempts_by_root.setdefault(find(candidate.candidate_id), []).append(
+            OperatorWorkflowCandidateAttemptSummary(
+                candidate_id=candidate.candidate_id,
+                request_id=candidate.request_id,
+                source_id=candidate.source_id,
+                source_family=candidate.source_family,
+                source_flavor=candidate.source_flavor,
+                candidate_state=candidate.candidate_state,
+                guard_status=candidate.guard_status,
+                guard_decision=(
+                    _read_text(candidate_event.audit_payload.get("guard_decision"))
+                    if candidate_event
+                    else None
+                ),
+                primary_deny_code=(
+                    candidate_event.primary_deny_code if candidate_event else None
+                ),
+                denial_reason=(
+                    _read_text(candidate_event.audit_payload.get("denial_reason"))
+                    if candidate_event
+                    else None
+                ),
+                occurred_at=_history_occurred_at(
+                    candidate_event,
+                    candidate.updated_at or candidate.created_at,
+                ),
+                dataset_contract_version=candidate.dataset_contract_version,
+                schema_snapshot_version=candidate.schema_snapshot_version,
+                approved=candidate.candidate_id in approved_candidate_ids,
+                executed=candidate.candidate_id in executed_candidate_ids,
+            )
+        )
+
+    attempts_by_candidate_id: dict[str, list[OperatorWorkflowCandidateAttemptSummary]] = {}
+    for attempts in attempts_by_root.values():
+        if len(attempts) < 2:
+            continue
+        ordered_attempts = sorted(
+            attempts,
+            key=lambda attempt: (attempt.occurred_at, attempt.candidate_id),
+            reverse=True,
+        )
+        for attempt in ordered_attempts:
+            attempts_by_candidate_id[attempt.candidate_id] = ordered_attempts
+
+    return attempts_by_candidate_id
+
+
 def _history_occurred_at(
     event: PreviewAuditEvent | None,
     fallback: datetime,
@@ -572,6 +698,7 @@ def _build_operator_history(
 ) -> list[OperatorWorkflowHistoryItem]:
     requests = session.execute(select(PreviewRequest)).scalars().all()
     candidates = session.execute(select(PreviewCandidate)).scalars().all()
+    approvals = session.execute(select(PreviewCandidateApproval)).scalars().all()
     audit_events = (
         session.execute(
             select(PreviewAuditEvent).order_by(
@@ -588,6 +715,17 @@ def _build_operator_history(
     request_labels = _request_labels_by_id(requests)
     request_events = _latest_request_events(audit_events)
     candidate_events = _latest_candidate_events(audit_events)
+    candidate_attempts = _candidate_attempts_by_candidate_id(
+        candidates=candidates,
+        candidate_events=candidate_events,
+        audit_events=audit_events,
+        approvals=approvals,
+    )
+    request_candidate_attempts = {
+        candidate.request_id: candidate_attempts[candidate.candidate_id]
+        for candidate in candidates
+        if candidate.candidate_id in candidate_attempts
+    }
 
     history: list[OperatorWorkflowHistoryItem] = []
     for event, run_state in _terminal_run_events(audit_events):
@@ -608,6 +746,11 @@ def _build_operator_history(
                 audit_events=[_audit_event_summary(event)],
                 executed_evidence=_executed_evidence_for_event(event),
                 retrieved_citations=_retrieved_citations_for_event(event),
+                candidate_attempts=(
+                    candidate_attempts.get(event.candidate_id, [])
+                    if event.candidate_id is not None
+                    else []
+                ),
             )
         )
 
@@ -646,6 +789,7 @@ def _build_operator_history(
                     run_id=candidate.revised_from_run_id,
                     source_id=candidate.revised_from_source_id,
                 ),
+                candidate_attempts=candidate_attempts.get(candidate.candidate_id, []),
             )
         )
 
@@ -678,6 +822,7 @@ def _build_operator_history(
                     run_id=request.revised_from_run_id,
                     source_id=request.revised_from_source_id,
                 ),
+                candidate_attempts=request_candidate_attempts.get(request.request_id, []),
             )
         )
 
