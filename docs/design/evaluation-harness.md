@@ -44,9 +44,12 @@ evaluation assets include source-aware scenarios for:
 
 - positive read-only outcomes
 - safety deny outcomes
+- malformed input, unsupported syntax, and malformed artifact outcomes
+- metadata-only records that prove planned families remain non-executable
+- schema-bound dataset, schema snapshot, entitlement, and row-bound outcomes
 - connector-selection denies
 - candidate lifecycle revalidation
-- runtime timeout, cancellation, and kill-switch behavior
+- runtime unavailable, timeout, cancellation, and kill-switch behavior
 - source-aware audit artifact reconstruction
 - release-gate reconstruction
 - operator-history implications
@@ -55,6 +58,13 @@ Each scenario must carry source identity, source family, source flavor, dataset
 contract version, schema snapshot version, execution policy version, connector
 profile version, dialect profile version, expected outcome, and expected primary
 deny code when the outcome is a rejection.
+
+The release gate must treat allow, deny, malformed, metadata-only,
+schema-bound, and runtime-unavailable fixtures as activation prerequisites for
+future source families. Planned entries may document requirements, but they do
+not represent active runtime support until the release gate can reconstruct each
+required fixture category from SafeQuery-owned evaluation outcomes and
+source-aware audit events.
 
 Dialect, connector, or profile version drift must be represented as an explicit
 evaluation scenario and must fail closed when the observed artifact no longer

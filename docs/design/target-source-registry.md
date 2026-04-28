@@ -126,6 +126,33 @@ Required readiness evidence before `active-baseline`:
   conflicting limits, offset behavior, truncation metadata, and audit
   reconstruction. The explicit blocker is missing row-bounds readiness.
 
+Minimum source-family evaluation fixture categories:
+
+- allow fixtures: approved read-only prompts and expected successful outcomes
+  for the reviewed source family or explicitly approved flavor inheritance.
+- deny fixtures: guard, entitlement, stale-policy, unsupported-binding,
+  connector-selection, and lifecycle rejection cases with expected primary deny
+  codes.
+- malformed fixtures: parser failures, unsupported syntax, profile-version
+  drift, malformed source identity, malformed audit evidence, and malformed
+  evaluation artifacts that must fail closed.
+- metadata-only fixtures: planned-family and planned-flavor records that prove
+  roadmap entries, matrices, labels, adapter output, traces, and sample config
+  cannot make a family executable or runtime-capable.
+- schema-bound fixtures: dataset-contract, schema snapshot, row-bound,
+  entitlement, and stale-schema cases that prove execution remains tied to the
+  backend-selected authoritative source record.
+- runtime-unavailable fixtures: missing driver, missing secret reference,
+  unresolved backend-owned secret, source unavailable, timeout, cancellation,
+  kill-switch, and rate-limit cases that must deny before unsafe dispatch.
+
+Release-gate reconstruction must include these fixture categories before a
+planned family or flavor can move from `activation-candidate` to
+`active-baseline`. Missing category coverage, stale category evidence, or
+coverage inferred from non-authoritative projections must keep the family
+non-executable. Planned metadata must not count as active runtime support, and
+metadata-only fixtures must prove that boundary explicitly.
+
 No planned or unsupported family may dispatch connector code, appear in active
 execution coverage, or be treated as runtime-capable because it appears in a
 roadmap, matrix, sample config, adapter output, analyst artifact, MLflow trace,
