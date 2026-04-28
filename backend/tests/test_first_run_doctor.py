@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from types import SimpleNamespace
-from typing import Iterator
+from typing import Iterable, Iterator
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -16,8 +18,17 @@ from app.services.demo_source_seed import DEMO_SOURCE_UUID, seed_demo_source_gov
 from app.services.first_run_doctor import HttpProbeResponse, run_first_run_doctor
 
 
+def _current_alembic_heads() -> set[str]:
+    backend_root = first_run_doctor_service._backend_root()
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "alembic"))
+    return set(ScriptDirectory.from_config(config).get_heads())
+
+
 @contextmanager
-def _session_scope() -> Iterator[Session]:
+def _session_scope(
+    applied_revisions: Iterable[str] | None = None,
+) -> Iterator[Session]:
     from sqlalchemy import create_engine
     from sqlalchemy.pool import StaticPool
 
@@ -29,12 +40,16 @@ def _session_scope() -> Iterator[Session]:
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         session.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(255))"))
-        session.execute(
-            text(
-                "INSERT INTO alembic_version (version_num) "
-                "VALUES ('0009_candidate_approval_records')"
-            )
+        revisions = (
+            _current_alembic_heads()
+            if applied_revisions is None
+            else applied_revisions
         )
+        for revision in sorted(revisions):
+            session.execute(
+                text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+                {"revision": revision},
+            )
         session.commit()
         yield session
 
@@ -140,6 +155,27 @@ def test_first_run_doctor_fails_closed_when_migration_state_is_missing() -> None
     assert "Alembic migration state is missing" in sections["migrations"]["message"]
 
 
+def test_first_run_doctor_fails_closed_when_migration_state_is_stale() -> None:
+    with _session_scope(applied_revisions={"0009_candidate_approval_records"}) as session:
+        result = run_first_run_doctor(
+            session,
+            database_probe=lambda: None,
+            **_ready_surface_probes(),
+        )
+
+    sections = _doctor_sections(result.model_dump(mode="json"))
+    assert result.status == "fail"
+    assert sections["migrations"]["status"] == "fail"
+    assert (
+        "Application database is not at the current Alembic head"
+        in sections["migrations"]["message"]
+    )
+    assert sections["migrations"]["detail"] == {
+        "expected_heads": sorted(_current_alembic_heads()),
+        "applied_revisions": ["0009_candidate_approval_records"],
+    }
+
+
 def test_first_run_doctor_fails_closed_when_migration_metadata_is_unreadable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -167,7 +203,7 @@ def test_first_run_doctor_fails_closed_when_migration_metadata_is_unreadable(
     ]
     assert sections["migrations"]["detail"] == {
         "error": "RuntimeError",
-        "applied_revisions": ["0009_candidate_approval_records"],
+        "applied_revisions": sorted(_current_alembic_heads()),
     }
     assert "source_registry" in sections
 
