@@ -83,6 +83,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 - [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md): UI stack and OSS adoption boundaries for the SafeQuery-owned operator shell
 - [design/target-source-registry.md](./design/target-source-registry.md): backend-owned registry model, activation semantics, and secret indirection expectations
 - [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md): compact family and flavor rollout matrix for connector, guard, and evaluation planning
+- [design/dialect-guard-readiness-checklists.md](./design/dialect-guard-readiness-checklists.md): reviewable guard readiness evidence checklist for planned MySQL, MariaDB, Aurora, and Oracle support
 - [implementation-roadmap.md](./implementation-roadmap.md): current implementation sequence after Epic A, Epic A follow-up, and UX-1
 
 ## Documentation Intent

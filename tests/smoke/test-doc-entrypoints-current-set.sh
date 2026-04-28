@@ -71,6 +71,7 @@ docs_index_required_links=(
   "adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md"
   "design/target-source-registry.md"
   "design/dialect-capability-matrix.md"
+  "design/dialect-guard-readiness-checklists.md"
   "implementation-roadmap.md"
 )
 
@@ -104,6 +105,7 @@ reading_order_required_links=(
   "adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md"
   "design/target-source-registry.md"
   "design/dialect-capability-matrix.md"
+  "design/dialect-guard-readiness-checklists.md"
   "adr/ADR-0013-operator-workflow-and-ui-foundation.md"
   "adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md"
   "implementation-roadmap.md"
