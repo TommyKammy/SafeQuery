@@ -176,3 +176,17 @@ readiness, secrets readiness, audit readiness, evaluation readiness,
 dataset-contract readiness, and row-bounds readiness. If any evidence is
 missing, malformed, partial, stale, or inferred from a derived surface, the
 family must remain non-executable and fail closed.
+
+Runtime readiness evidence is connector-specific. MySQL and Aurora MySQL require
+an approved `mysqlclient` or `PyMySQL` backend driver check, MariaDB requires an
+approved MariaDB connector or reviewed `PyMySQL` compatibility check, Aurora
+PostgreSQL requires `psycopg`, and Oracle requires `python-oracledb` plus Oracle
+client or wallet prerequisites when that deployment shape requires them.
+
+Secrets readiness evidence must prove backend-owned secret indirection for the
+planned source profile. Blank secrets, TODO/sample credentials, raw connection
+strings, application PostgreSQL credentials, and client-supplied connection
+material are activation blockers. First-run doctor and support-bundle output may
+name dependency and readiness states, but any connection string, endpoint
+credential, or secret-bearing diagnostic must be redacted before logs, exports,
+or support bundles are emitted.

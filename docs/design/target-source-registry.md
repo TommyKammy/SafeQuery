@@ -135,6 +135,26 @@ evaluation, dataset-contract, or row-bounds evidence is missing, malformed,
 stale, or only inferred from a non-authoritative surface, SafeQuery must reject
 activation and keep the family non-executable.
 
+Runtime and secret evidence must be family-specific before activation:
+
+| Family or flavor | Driver/runtime prerequisite | Secret reference pattern |
+| --- | --- | --- |
+| MySQL | `mysqlclient` or `PyMySQL` import/install check | `safequery/business/mysql/<source_id>/reader` |
+| MariaDB | `mariadb` connector or approved `PyMySQL` compatibility check | `safequery/business/mariadb/<source_id>/reader` |
+| Aurora PostgreSQL | `psycopg` import/install check plus Aurora endpoint/TLS posture | `safequery/business/postgresql/<source_id>/reader` |
+| Aurora MySQL | MySQL driver prerequisite plus Aurora endpoint/TLS posture | `safequery/business/mysql/<source_id>/reader` |
+| Oracle | `python-oracledb` import/install check plus client or wallet prerequisite when required | `safequery/business/oracle/<source_id>/reader` |
+
+The activation gate must prove the backend can load the referenced secret
+without exposing its value. Blank secrets, placeholder values, sample
+credentials, raw connection strings, client-supplied connection material, and
+application PostgreSQL credentials are activation blockers. Any connection
+string or connection identity that appears in logs, doctor output, exports, or
+support bundles must be redacted before it leaves the trusted backend boundary.
+First-run doctor and support-bundle surfaces may report readiness state,
+dependency names, profile identifiers, source identity, and redaction posture,
+but they must not contain secret values or real connection strings.
+
 ## Health Checks
 
 Registry-aware health checks should verify the backend can still resolve:
