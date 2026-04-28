@@ -698,6 +698,98 @@ describe("HomePage", () => {
     );
   });
 
+  it("renders candidate attempt guard comparisons as read-only history evidence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateAttempts: [
+                      {
+                        approved: true,
+                        candidateId: "candidate-approved",
+                        candidateState: "approved_for_execution",
+                        datasetContractVersion: 1,
+                        executed: true,
+                        guardDecision: "allow",
+                        guardStatus: "allow",
+                        occurredAt: "2026-04-21T14:26:00Z",
+                        requestId: "request-approved",
+                        schemaSnapshotVersion: 1,
+                        sourceFamily: "postgresql",
+                        sourceFlavor: "warehouse",
+                        sourceId: "sap-approved-spend"
+                      },
+                      {
+                        approved: false,
+                        candidateId: "candidate-denied",
+                        candidateState: "blocked",
+                        datasetContractVersion: 1,
+                        denialReason: "SQL guard rejected a write operation.",
+                        executed: false,
+                        guardDecision: "reject",
+                        guardStatus: "blocked",
+                        occurredAt: "2026-04-21T14:20:00Z",
+                        primaryDenyCode: "DENY_WRITE_OPERATION",
+                        requestId: "request-denied",
+                        schemaSnapshotVersion: 1,
+                        sourceFamily: "postgresql",
+                        sourceFlavor: "warehouse",
+                        sourceId: "sap-approved-spend"
+                      }
+                    ],
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "allow",
+                    itemType: "candidate",
+                    label: "Approved revised candidate",
+                    lifecycleState: "approved_for_execution",
+                    occurredAt: "2026-04-21T14:26:00Z",
+                    recordId: "candidate-approved",
+                    requestId: "request-approved",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-approved",
+          question: "Approved revised candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    const comparison = screen.getByLabelText(/candidate attempt guard comparison/i);
+    expect(comparison).toHaveTextContent("candidate-approved");
+    expect(comparison).toHaveTextContent("Executed");
+    expect(comparison).toHaveTextContent("candidate-denied");
+    expect(comparison).toHaveTextContent("DENY_WRITE_OPERATION");
+    expect(comparison).toHaveTextContent("SQL guard rejected a write operation.");
+    expect(comparison).toHaveTextContent("Contract v1; schema v1");
+    expect(screen.getByRole("button", { name: /execute reviewed candidate/i })).toBeDisabled();
+    expect(comparison).not.toHaveTextContent(/select vendor_name/i);
+    expect(comparison).not.toHaveTextContent(/secret|token/i);
+  });
+
   it("keeps reopened history source separate from a mismatched draft source", async () => {
     vi.stubGlobal(
       "fetch",

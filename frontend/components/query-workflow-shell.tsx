@@ -6,6 +6,7 @@ import type { HealthSnapshot } from "../lib/health";
 import type {
   GovernanceBindingStatus,
   OperatorWorkflowAuditEvent,
+  OperatorWorkflowCandidateAttempt,
   OperatorWorkflowExecutedEvidence,
   OperatorHistoryItem,
   OperatorWorkflowRevisionContext,
@@ -547,8 +548,10 @@ function parseExecuteAuditEvent(value: unknown): OperatorWorkflowAuditEvent | nu
   return {
     candidateId: readOptionalString(value.query_candidate_id),
     candidateState: readOptionalString(value.candidate_state),
+    denialReason: readOptionalString(value.denial_reason),
     eventId,
     eventType,
+    guardDecision: readOptionalString(value.guard_decision),
     occurredAt,
     primaryDenyCode: readOptionalString(value.primary_deny_code),
     requestId,
@@ -1658,6 +1661,80 @@ function renderAuditEvidencePanel(
   );
 }
 
+function attemptTone(attempt: OperatorWorkflowCandidateAttempt): "success" | "danger" | "warning" {
+  const candidateState = attempt.candidateState.toLowerCase();
+  const guardStatus = attempt.guardStatus.toLowerCase();
+
+  if (attempt.executed || attempt.approved) {
+    return "success";
+  }
+
+  if (
+    candidateState === "blocked" ||
+    candidateState === "invalidated" ||
+    candidateState === "stale" ||
+    guardStatus === "blocked" ||
+    guardStatus === "invalidated" ||
+    guardStatus === "requires_revalidation"
+  ) {
+    return "danger";
+  }
+
+  return "warning";
+}
+
+function renderCandidateAttemptComparison(attempts: OperatorWorkflowCandidateAttempt[]) {
+  if (attempts.length < 2) {
+    return null;
+  }
+
+  return (
+    <section className="surface surface-secondary">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Candidate attempts</p>
+          <h2 className="panel-title">Guard outcome comparison</h2>
+        </div>
+        <span className="surface-badge surface-badge-code">Read only</span>
+      </div>
+      <div className="attempt-list" aria-label="candidate attempt guard comparison">
+        {attempts.map((attempt) => (
+          <div
+            className={`attempt-item attempt-item-${attemptTone(attempt)}`}
+            key={attempt.candidateId}
+          >
+            <div className="attempt-heading">
+              <strong>{attempt.candidateId}</strong>
+              <span className={`surface-badge surface-badge-${attemptTone(attempt)}`}>
+                {attempt.executed
+                  ? "Executed"
+                  : attempt.approved
+                    ? "Approved"
+                    : attempt.candidateState}
+              </span>
+            </div>
+            <span>Request {attempt.requestId}</span>
+            <span>
+              Guard {attempt.guardStatus}
+              {attempt.guardDecision ? ` / ${attempt.guardDecision}` : ""}
+            </span>
+            {attempt.primaryDenyCode ? <span>Deny code: {attempt.primaryDenyCode}</span> : null}
+            {attempt.denialReason ? <span>Reason: {attempt.denialReason}</span> : null}
+            <span>
+              {attempt.sourceId} / {attempt.sourceFamily}
+              {attempt.sourceFlavor ? ` / ${attempt.sourceFlavor}` : ""}
+            </span>
+            <span>
+              Contract v{attempt.datasetContractVersion}; schema v{attempt.schemaSnapshotVersion}
+            </span>
+            <span>{attempt.occurredAt}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function renderStatePanel(
   state: CanonicalWorkflowState,
   question: string,
@@ -1962,6 +2039,12 @@ export function QueryWorkflowShell({
   const selectedHistoryItem = historyRecordId
     ? operatorWorkflow.history.find((item) => item.recordId === historyRecordId)
     : undefined;
+  const selectedCandidateAttemptHistory =
+    selectedHistoryItem ??
+    (candidatePreview
+      ? operatorWorkflow.history.find((item) => item.recordId === candidatePreview.candidateId)
+      : undefined);
+  const selectedCandidateAttempts = selectedCandidateAttemptHistory?.candidateAttempts ?? [];
   const selectedRevisionDraft = revisionDraftFromSelectedContext(
     normalizedState,
     candidatePreview,
@@ -2732,6 +2815,8 @@ export function QueryWorkflowShell({
             selectedExecutedEvidence,
             selectedRetrievedCitations
           )}
+
+          {renderCandidateAttemptComparison(selectedCandidateAttempts)}
 
           <section className="surface surface-secondary">
             <div className="section-header">
