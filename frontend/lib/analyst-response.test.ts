@@ -329,6 +329,21 @@ describe("parseAnalystResponsePayload", () => {
     ).toBeNull();
   });
 
+  it("rejects retrieval-only narratives without executed evidence citations", () => {
+    expect(
+      parseAnalystResponsePayload({
+        responseId: "analyst-response-123",
+        requestId: "request-123",
+        narrative: "Retrieved metric definitions provide advisory context for the operator.",
+        advisoryOnly: true,
+        canAuthorizeExecution: false,
+        analystModeVersion: "analyst-schema-v1",
+        retrievalCitations: [citation("business-postgres-source", "postgresql")],
+        executedEvidence: []
+      })
+    ).toBeNull();
+  });
+
   it("rejects execution approval narratives", () => {
     expect(
       parseAnalystResponsePayload({

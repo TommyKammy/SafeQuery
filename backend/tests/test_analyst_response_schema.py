@@ -307,6 +307,20 @@ def test_analyst_response_payload_rejects_execution_claims_without_executed_evid
         )
 
 
+def test_analyst_response_payload_rejects_retrieval_only_narratives() -> None:
+    with pytest.raises(ValidationError, match="executed evidence"):
+        AnalystResponsePayload(
+            response_id="analyst-response-123",
+            request_id="request-123",
+            narrative="Retrieved metric definitions provide advisory context for the operator.",
+            advisory_only=True,
+            can_authorize_execution=False,
+            analyst_mode_version="analyst-schema-v1",
+            retrieval_citations=[_citation("business-postgres-source", "postgresql")],
+            executed_evidence=[],
+        )
+
+
 def test_analyst_response_payload_rejects_execution_approval_narratives() -> None:
     with pytest.raises(ValidationError, match="execution approval"):
         AnalystResponsePayload(

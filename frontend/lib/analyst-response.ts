@@ -448,7 +448,7 @@ export function parseAnalystResponsePayload(value: unknown): AnalystResponsePayl
     executedEvidence === null ||
     operatorHistoryHooks === null ||
     validationOutcome === null ||
-    (retrievalCitations.length === 0 && executedEvidence.length === 0) ||
+    executedEvidence.length === 0 ||
     !validateNarrativeAuthority(narrative, retrievalCitations, executedEvidence)
   ) {
     return null;

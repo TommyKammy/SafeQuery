@@ -2,6 +2,7 @@
 
 import { type FormEvent, useEffect, useState } from "react";
 import { HealthStatusCard } from "./health-status-card";
+import type { AnalystResponsePayload } from "../lib/analyst-response";
 import type { HealthSnapshot } from "../lib/health";
 import type {
   GovernanceBindingStatus,
@@ -168,6 +169,7 @@ type AuthoritativeCandidatePreview = {
 };
 
 type AuthoritativeRunContext = {
+  analystResponse: AnalystResponsePayload | null;
   auditEvents: OperatorWorkflowAuditEvent[];
   executedEvidence: OperatorWorkflowExecutedEvidence[];
   lifecycleState: string;
@@ -1096,6 +1098,7 @@ function findAuthoritativeRunContext(
   }
 
   return {
+    analystResponse: run.analystResponse,
     auditEvents: run.auditEvents,
     executedEvidence: run.executedEvidence,
     lifecycleState: run.lifecycleState,
@@ -1108,6 +1111,60 @@ function findAuthoritativeRunContext(
     runState: run.runState,
     sourceLabel: run.sourceLabel
   };
+}
+
+function renderSupplementalAnalystNarrative(analystResponse: AnalystResponsePayload | null) {
+  if (!analystResponse) {
+    return null;
+  }
+
+  return (
+    <section className="surface surface-secondary" aria-label="supplemental analyst narrative">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Supplemental context</p>
+          <h2 className="panel-title">Supplemental analyst narrative</h2>
+        </div>
+        <span className="surface-badge surface-badge-code">Non-authoritative</span>
+      </div>
+      <p className="section-copy">{analystResponse.narrative}</p>
+      <div className="state-callout">
+        <p className="state-callout-title">Workflow authority remains SafeQuery records</p>
+        <p>
+          This narrative cannot unlock execute, approval, export, audit, authorization, or
+          governance decisions.
+        </p>
+      </div>
+      <div className="evidence-list" aria-label="analyst run citations">
+        {analystResponse.executedEvidence.map((evidence) => (
+          <div className="evidence-item" key={evidence.executionAuditEventId}>
+            <span className="meta-label">Executed evidence citation</span>
+            <strong>{evidence.authority}</strong>
+            <span>{evidence.sourceId}</span>
+            <span>Candidate {evidence.candidateId}</span>
+            <span>Run {evidence.executionRunId}</span>
+            <span>Audit event {evidence.executionAuditEventId}</span>
+            <span>{evidence.rowCount} rows</span>
+            <span>Cannot authorize execution: {String(evidence.canAuthorizeExecution)}</span>
+          </div>
+        ))}
+      </div>
+      {analystResponse.retrievalCitations.length > 0 ? (
+        <div className="evidence-list" aria-label="analyst retrieval citations">
+          {analystResponse.retrievalCitations.map((citation) => (
+            <div className="evidence-item" key={`${citation.assetKind}:${citation.assetId}`}>
+              <span className="meta-label">Retrieval citation reference</span>
+              <strong>{citation.citationLabel}</strong>
+              <span>{citation.assetKind}</span>
+              <span>{citation.assetId}</span>
+              <span>{citation.authority}</span>
+              <span>Cannot authorize execution: {String(citation.canAuthorizeExecution)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 function revisionDraftFromSelectedContext(
@@ -2361,6 +2418,7 @@ export function QueryWorkflowShell({
         if (hasCanceledAuditEvent(payload)) {
           setSubmittedState("canceled");
           setSubmittedRunContext({
+            analystResponse: null,
             auditEvents: [],
             executedEvidence: [],
             lifecycleState: "canceled",
@@ -2418,6 +2476,7 @@ export function QueryWorkflowShell({
       const nextState = result.rowCount === 0 ? "empty" : "completed";
       setSubmittedState(nextState);
       setSubmittedRunContext({
+        analystResponse: null,
         auditEvents: result.auditEvents,
         executedEvidence: result.executedEvidence,
         lifecycleState: nextState,
@@ -2888,6 +2947,8 @@ export function QueryWorkflowShell({
             operatorWorkflow.history,
             submittedQuestion
           )}
+
+          {renderSupplementalAnalystNarrative(historyRunContext?.analystResponse ?? null)}
 
           {renderCandidateAttemptComparison(selectedCandidateAttempts)}
 
