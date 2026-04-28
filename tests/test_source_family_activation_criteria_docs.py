@@ -38,6 +38,8 @@ def test_future_source_family_activation_gate_is_documented() -> None:
         "missing secrets readiness",
         "missing audit readiness",
         "missing evaluation readiness",
+        "missing dataset-contract readiness",
+        "missing row-bounds readiness",
     ]
     for blocker in fail_closed_blockers:
         assert blocker in normalized_content

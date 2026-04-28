@@ -119,20 +119,21 @@ Required readiness evidence before `active-baseline`:
   missing evaluation readiness.
 - Dataset-contract readiness: the family has an approved dataset contract,
   schema snapshot linkage, entitlement posture, row-level or view-level exposure
-  scope where applicable, and stale-contract denial behavior.
+  scope where applicable, and stale-contract denial behavior. The explicit
+  blocker is missing dataset-contract readiness.
 - Row-bounds readiness: the family has one approved bounded-read strategy that
   runs before guard, preview, and execution, with tests for unbounded reads,
   conflicting limits, offset behavior, truncation metadata, and audit
-  reconstruction.
+  reconstruction. The explicit blocker is missing row-bounds readiness.
 
 No planned or unsupported family may dispatch connector code, appear in active
 execution coverage, or be treated as runtime-capable because it appears in a
 roadmap, matrix, sample config, adapter output, analyst artifact, MLflow trace,
 or operator-facing label. `activation-candidate` is also non-executable until
-the gate is approved. If any required guard, runtime, secrets, audit, or
-evaluation evidence is missing, malformed, stale, or only inferred from a
-non-authoritative surface, SafeQuery must reject activation and keep the family
-non-executable.
+the gate is approved. If any required guard, runtime, secrets, audit,
+evaluation, dataset-contract, or row-bounds evidence is missing, malformed,
+stale, or only inferred from a non-authoritative surface, SafeQuery must reject
+activation and keep the family non-executable.
 
 ## Health Checks
 
