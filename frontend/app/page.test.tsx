@@ -1933,7 +1933,7 @@ describe("HomePage", () => {
     expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
   });
 
-  it("renders audit context, executed evidence, and retrieved citations without sensitive fields", async () => {
+  it("renders audit context, executed evidence, and retrieved citations with authoritative navigation", async () => {
     const unsafeLocalPath = "/" + ["Users", "example", "secret-should-not-render"].join("/");
 
     vi.stubGlobal(
@@ -1947,6 +1947,35 @@ describe("HomePage", () => {
             json: () =>
               Promise.resolve({
                 history: [
+                  {
+                    auditEvents: [],
+                    candidateAttempts: [],
+                    executedEvidence: [],
+                    itemType: "request",
+                    label: "Selected completed run",
+                    lifecycleState: "previewed",
+                    occurredAt: "2026-04-21T14:40:00+09:00",
+                    recordId: "request-selected",
+                    retrievedCitations: [],
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  },
+                  {
+                    auditEvents: [],
+                    candidateAttempts: [],
+                    candidateSql: "select vendor_name from approved_vendor_spend",
+                    executedEvidence: [],
+                    guardStatus: "allow",
+                    itemType: "candidate",
+                    label: "Selected completed run",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:41:00+09:00",
+                    recordId: "candidate-selected",
+                    requestId: "request-selected",
+                    retrievedCitations: [],
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  },
                   {
                     auditEvents: [
                       {
@@ -1980,7 +2009,7 @@ describe("HomePage", () => {
                     label: "Selected completed run",
                     lifecycleState: "completed",
                     occurredAt: "2026-04-21T14:42:17+09:00",
-                    recordId: "run-authoritative-287",
+                    recordId: "00000000-0000-4000-8000-000000000012",
                     retrievedCitations: [
                       {
                         assetId: "spend-metric-definition",
@@ -2014,7 +2043,7 @@ describe("HomePage", () => {
       await HomePage({
         searchParams: {
           history_item_type: "run",
-          history_record_id: "run-authoritative-287",
+          history_record_id: "00000000-0000-4000-8000-000000000012",
           question: "Selected completed run",
           source_id: "sap-approved-spend",
           state: "completed"
@@ -2037,6 +2066,32 @@ describe("HomePage", () => {
     expect(screen.getByLabelText(/retrieved citation context/i)).toHaveTextContent(
       "advisory_context"
     );
+    const evidencePanel = screen.getByRole("heading", {
+      name: /operator evidence context/i
+    }).closest("section");
+    expect(evidencePanel).not.toBeNull();
+    const evidence = within(evidencePanel!);
+    expect(evidence.getByRole("link", { name: /open request request-selected/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("history_record_id=request-selected")
+    );
+    for (const candidateLink of evidence.getAllByRole("link", {
+      name: /open candidate candidate-selected/i
+    })) {
+      expect(candidateLink).toHaveAttribute(
+        "href",
+        expect.stringContaining("history_record_id=candidate-selected")
+      );
+    }
+    expect(
+      evidence.getAllByRole("link", {
+        name: /open run 00000000-0000-4000-8000-000000000012/i
+      }).every((runLink) =>
+        runLink
+          .getAttribute("href")
+          ?.includes("history_record_id=00000000-0000-4000-8000-000000000012")
+      )
+    ).toBe(true);
     expect(screen.getAllByText(/cannot authorize execution: false/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/session-secret-should-not-render/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/postgres:\/\/secret-should-not-render/i)).not.toBeInTheDocument();
