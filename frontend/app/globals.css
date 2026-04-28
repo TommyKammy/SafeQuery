@@ -363,6 +363,8 @@ button {
   border: 1px solid var(--border-soft);
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-secondary);
+  box-shadow: none;
+  cursor: pointer;
 }
 
 .inline-link,

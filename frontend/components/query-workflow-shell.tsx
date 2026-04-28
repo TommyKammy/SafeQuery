@@ -149,6 +149,7 @@ type PreviewSubmissionResult = {
   guardStatus: string;
   requestId: string;
   requestState: string;
+  revisionContext: RevisionDraftContext | null;
   sourceId: string;
 };
 
@@ -710,7 +711,36 @@ function parsePreviewSubmissionResult(
     guardStatus,
     requestId,
     requestState,
+    revisionContext:
+      parsePreviewRevisionContext(value.request.revision_context, expectedSourceId) ??
+      parsePreviewRevisionContext(value.candidate.revision_context, expectedSourceId),
     sourceId: expectedSourceId
+  };
+}
+
+function parsePreviewRevisionContext(
+  value: unknown,
+  expectedSourceId: string
+): RevisionDraftContext | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const itemType = value.item_type;
+  const sourceId = readOptionalString(value.source_id);
+  if (
+    (itemType !== "request" && itemType !== "candidate" && itemType !== "run") ||
+    sourceId !== expectedSourceId
+  ) {
+    return null;
+  }
+
+  return {
+    candidateId: readOptionalString(value.candidate_id) ?? undefined,
+    itemType,
+    requestId: readOptionalString(value.request_id) ?? undefined,
+    runId: readOptionalString(value.run_id) ?? undefined,
+    sourceId
   };
 }
 
@@ -912,6 +942,9 @@ function historyItemToState(item: OperatorHistoryItem): CanonicalWorkflowState {
     if (
       lifecycleState === "review_denied" ||
       lifecycleState === "blocked" ||
+      lifecycleState === "preview_denied" ||
+      lifecycleState === "preview_generation_failed" ||
+      lifecycleState === "preview_unavailable" ||
       lifecycleState === "invalidated" ||
       guardStatus === "blocked" ||
       guardStatus === "invalidated"
@@ -1073,6 +1106,7 @@ function revisionDraftFromSelectedContext(
   state: CanonicalWorkflowState,
   candidatePreview: AuthoritativeCandidatePreview | null,
   runContext: AuthoritativeRunContext | null,
+  selectedHistoryItem?: OperatorHistoryItem,
   sourceId?: string
 ): RevisionDraftContext | null {
   if (state === "review_denied" && candidatePreview) {
@@ -1087,7 +1121,10 @@ function revisionDraftFromSelectedContext(
   if (
     runContext &&
     sourceId &&
-    (state === "completed" || state === "empty" || state === "failed")
+    (state === "completed" ||
+      state === "empty" ||
+      state === "failed" ||
+      state === "execution_denied")
   ) {
     const auditEvent = runContext.auditEvents.find(
       (event) => event.eventId === runContext.runIdentity
@@ -1101,7 +1138,30 @@ function revisionDraftFromSelectedContext(
     };
   }
 
+  if (
+    state === "review_denied" &&
+    selectedHistoryItem?.itemType === "request" &&
+    selectedHistoryItem.sourceId === sourceId &&
+    isRevisableRequestLifecycleState(selectedHistoryItem.lifecycleState)
+  ) {
+    return {
+      itemType: "request",
+      requestId: selectedHistoryItem.recordId,
+      sourceId: selectedHistoryItem.sourceId
+    };
+  }
+
   return null;
+}
+
+function isRevisableRequestLifecycleState(lifecycleState: string): boolean {
+  const normalizedLifecycleState = lifecycleState.toLowerCase();
+  return (
+    normalizedLifecycleState === "blocked" ||
+    normalizedLifecycleState === "preview_denied" ||
+    normalizedLifecycleState === "preview_generation_failed" ||
+    normalizedLifecycleState === "preview_unavailable"
+  );
 }
 
 function revisionDraftFromHistoryContext(
@@ -1728,6 +1788,11 @@ function renderStatePanel(
           run-backed outcome that was rejected after preview.
         </p>
         <div className="action-row">
+          {onStartRevision ? (
+            <button className="ghost-button" onClick={onStartRevision} type="button">
+              Revise attempt
+            </button>
+          ) : null}
           <a className="action-link" href={buildStateHref("preview", question, sourceId)}>
             Back to SQL preview
           </a>
@@ -1892,15 +1957,18 @@ export function QueryWorkflowShell({
     normalizedState,
     operatorWorkflow
   );
+  const selectedHistoryItem = historyRecordId
+    ? operatorWorkflow.history.find((item) => item.recordId === historyRecordId)
+    : undefined;
   const selectedRevisionDraft = revisionDraftFromSelectedContext(
     normalizedState,
     candidatePreview,
     historyRunContext,
+    selectedHistoryItem,
     submittedSourceId
   );
-  const selectedHistoryItem = historyRecordId
-    ? operatorWorkflow.history.find((item) => item.recordId === historyRecordId)
-    : undefined;
+  const selectedRevisionContext =
+    revisionDraftFromHistoryContext(selectedHistoryItem?.revisionContext) ?? revisionDraft;
 
   function startRevision() {
     const nextRevisionDraft = selectedRevisionDraft;
@@ -2008,7 +2076,7 @@ export function QueryWorkflowShell({
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
         setSubmittedState("review_denied");
-        setRevisionDraft(null);
+        setRevisionDraft(result.revisionContext ?? revisionDraft);
         setSubmittedCandidatePreview({
           auditEvents: [],
           candidateId: result.candidateId,
@@ -2033,6 +2101,7 @@ export function QueryWorkflowShell({
       if (isPendingPreviewState(result) && !isReadyPreviewState(result)) {
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
+        setRevisionDraft(result.revisionContext ?? revisionDraft);
         setSubmittedCandidatePreview({
           auditEvents: [],
           candidateId: result.candidateId,
@@ -2066,7 +2135,7 @@ export function QueryWorkflowShell({
       setSubmittedQuestion(submittedQuestionText);
       setSubmittedSourceId(result.sourceId);
       setSubmittedState("preview");
-      setRevisionDraft(null);
+      setRevisionDraft(result.revisionContext ?? revisionDraft);
       setSubmittedCandidatePreview({
         auditEvents: [],
         candidateId: result.candidateId,
@@ -2586,13 +2655,13 @@ export function QueryWorkflowShell({
                 </span>
                 <strong>{workflowContext.candidateIdentity ?? "Draft only"}</strong>
               </div>
-              {selectedHistoryItem?.revisionContext ? (
+              {selectedRevisionContext ? (
                 <div className="guard-item">
                   <span className="meta-label">Revised from</span>
                   <strong>
-                    {selectedHistoryItem.revisionContext.runId ??
-                      selectedHistoryItem.revisionContext.candidateId ??
-                      selectedHistoryItem.revisionContext.requestId}
+                    {selectedRevisionContext.runId ??
+                      selectedRevisionContext.candidateId ??
+                      selectedRevisionContext.requestId}
                   </strong>
                 </div>
               ) : null}

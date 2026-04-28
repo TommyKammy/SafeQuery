@@ -1538,6 +1538,133 @@ def test_preview_revision_from_completed_run_creates_new_authoritative_attempt()
     assert revised_candidate.revised_from_source_id == "sap-approved-spend"
 
 
+def test_preview_revision_rejects_inconsistent_lineage_contract_fields() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+    completed_run_id = uuid4()
+
+    with Session(engine) as session:
+        _seed_authoritative_source_governance(session)
+
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+            ),
+            subject,
+            session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                request_id="preview-request-original",
+                correlation_id="preview-correlation-original",
+                user_subject="user:alice",
+                session_id="session-original",
+                query_candidate_id="preview-candidate-original",
+                candidate_owner_subject="user:alice",
+                auth_source="test-helper",
+            ),
+        )
+        request_preview_service.persist_execution_audit_events(
+            session,
+            candidate_id="preview-candidate-original",
+            audit_events=[
+                SourceAwareAuditEvent(
+                    event_id=completed_run_id,
+                    event_type="execution_completed",
+                    occurred_at=datetime(2026, 1, 2, 3, 5, 0, tzinfo=timezone.utc),
+                    request_id="preview-request-original",
+                    correlation_id="preview-correlation-original",
+                    user_subject="user:alice",
+                    session_id="session-original",
+                    query_candidate_id="preview-candidate-original",
+                    candidate_owner_subject="user:alice",
+                    source_id="sap-approved-spend",
+                    source_family="postgresql",
+                    source_flavor="warehouse",
+                    dataset_contract_version=1,
+                    schema_snapshot_version=1,
+                    execution_row_count=3,
+                    result_truncated=False,
+                )
+            ],
+        )
+
+        cases = [
+            (
+                {
+                    "item_type": "request",
+                    "request_id": "preview-request-original",
+                    "candidate_id": "preview-candidate-original",
+                },
+                "candidate_id or run_id",
+            ),
+            (
+                {
+                    "item_type": "request",
+                    "request_id": "preview-request-original",
+                    "lifecycle_state": "blocked",
+                },
+                "lifecycle_state does not match request_state",
+            ),
+            (
+                {
+                    "item_type": "candidate",
+                    "candidate_id": "preview-candidate-original",
+                    "run_id": str(completed_run_id),
+                },
+                "candidate cannot include run_id",
+            ),
+            (
+                {
+                    "item_type": "candidate",
+                    "candidate_id": "preview-candidate-original",
+                    "lifecycle_state": "blocked",
+                },
+                "lifecycle_state does not match candidate_state",
+            ),
+            (
+                {
+                    "item_type": "run",
+                    "run_id": str(completed_run_id),
+                    "lifecycle_state": "failed",
+                },
+                "lifecycle_state does not match run_state",
+            ),
+        ]
+
+        for revision_context, expected_message in cases:
+            with pytest.raises(PreviewSubmissionContractError) as exc_info:
+                submit_preview_request(
+                    PreviewSubmissionRequest(
+                        question="Show approved vendors by yearly spend",
+                        source_id="sap-approved-spend",
+                        revise_from=revision_context,
+                    ),
+                    subject,
+                    session,
+                    audit_context=PreviewAuditContext(
+                        occurred_at=datetime(2026, 1, 2, 3, 6, 0, tzinfo=timezone.utc),
+                        request_id="preview-request-revised",
+                        correlation_id="preview-correlation-revised",
+                        user_subject="user:alice",
+                        session_id="session-revised",
+                        query_candidate_id="preview-candidate-revised",
+                        candidate_owner_subject="user:alice",
+                        auth_source="test-helper",
+                    ),
+                )
+
+            assert expected_message in str(exc_info.value)
+
+
 def test_preview_revision_rejects_reused_authoritative_attempt_ids() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",

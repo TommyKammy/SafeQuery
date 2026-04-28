@@ -610,6 +610,10 @@ def _resolve_revision_record(
             raise PreviewSubmissionContractError(
                 "Revision context for a request requires an authoritative request id."
             )
+        if revision.candidate_id is not None or revision.run_id is not None:
+            raise PreviewSubmissionContractError(
+                "Revision context for a request cannot include candidate_id or run_id."
+            )
         request = session.scalar(
             select(PreviewRequest).where(
                 PreviewRequest.request_id == revision.request_id
@@ -618,6 +622,13 @@ def _resolve_revision_record(
         if request is None:
             raise PreviewSubmissionContractError(
                 "Revision context references an unknown preview request."
+            )
+        if (
+            revision.lifecycle_state is not None
+            and revision.lifecycle_state != request.request_state
+        ):
+            raise PreviewSubmissionContractError(
+                "Revision context lifecycle_state does not match request_state."
             )
         if request.request_state not in {
             "blocked",
@@ -640,6 +651,10 @@ def _resolve_revision_record(
             raise PreviewSubmissionContractError(
                 "Revision context for a candidate requires an authoritative candidate id."
             )
+        if revision.run_id is not None:
+            raise PreviewSubmissionContractError(
+                "Revision context for a candidate cannot include run_id."
+            )
         candidate = session.scalar(
             select(PreviewCandidate).where(
                 PreviewCandidate.candidate_id == revision.candidate_id
@@ -648,6 +663,13 @@ def _resolve_revision_record(
         if candidate is None:
             raise PreviewSubmissionContractError(
                 "Revision context references an unknown preview candidate."
+            )
+        if (
+            revision.lifecycle_state is not None
+            and revision.lifecycle_state != candidate.candidate_state
+        ):
+            raise PreviewSubmissionContractError(
+                "Revision context lifecycle_state does not match candidate_state."
             )
         if candidate.candidate_state not in {"blocked", "preview_ready"}:
             raise PreviewSubmissionContractError(
@@ -687,6 +709,10 @@ def _resolve_revision_record(
     if run_state not in {"completed", "empty", "failed", "execution_denied"}:
         raise PreviewSubmissionContractError(
             "Execution run state is not eligible for revision."
+        )
+    if revision.lifecycle_state is not None and revision.lifecycle_state != run_state:
+        raise PreviewSubmissionContractError(
+            "Revision context lifecycle_state does not match run_state."
         )
     if revision.candidate_id is not None and revision.candidate_id != run_event.candidate_id:
         raise PreviewSubmissionContractError(
