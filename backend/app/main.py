@@ -82,7 +82,12 @@ from app.services.operator_workflow import (
     OperatorWorkflowSnapshot,
     get_operator_workflow_snapshot,
 )
-from app.services.support_bundle import SupportBundle, build_support_bundle
+from app.services.support_bundle import (
+    BoundedResultSummaryExport,
+    SupportBundle,
+    build_bounded_result_summary_export,
+    build_support_bundle,
+)
 
 configure_logging()
 
@@ -548,6 +553,31 @@ def create_app() -> FastAPI:
             database=database,
             sql_generation=sql_generation,
         )
+
+    @app.get(
+        "/candidates/{candidate_id}/bounded-result-summary",
+        response_model=BoundedResultSummaryExport,
+    )
+    def read_bounded_result_summary_export(
+        candidate_id: str,
+        authenticated_subject: AuthenticatedSubject = Depends(
+            require_authenticated_subject
+        ),
+        session: Session = Depends(require_preview_submission_session),
+    ) -> BoundedResultSummaryExport:
+        authenticated_subject.normalized_subject_id()
+        ensure_operator_evidence_read_authority(authenticated_subject)
+        export = build_bounded_result_summary_export(
+            session,
+            candidate_id=candidate_id,
+        )
+        if export is None:
+            raise api_error(
+                404,
+                "bounded_result_summary_not_found",
+                "Bounded result summary is unavailable.",
+            )
+        return export
 
     @app.post("/requests/preview", response_model=PreviewSubmissionResponse)
     def create_request_preview(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
@@ -159,6 +159,83 @@ class SupportBundleRedaction(BaseModel):
     excluded: list[str]
 
 
+class BoundedResultSummaryRequestContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(serialization_alias="requestId")
+    request_state: str = Field(serialization_alias="requestState")
+
+
+class BoundedResultSummaryCandidateContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(serialization_alias="candidateId")
+    candidate_state: str = Field(serialization_alias="candidateState")
+    guard_status: str = Field(serialization_alias="guardStatus")
+
+
+class BoundedResultSummaryRunContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    execution_run_id: str = Field(serialization_alias="executionRunId")
+    event_type: Literal["execution_completed"] = Field(serialization_alias="eventType")
+    occurred_at: datetime = Field(serialization_alias="occurredAt")
+
+
+class BoundedResultSummarySourceContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(serialization_alias="sourceId")
+    source_family: str = Field(serialization_alias="sourceFamily")
+    source_flavor: Optional[str] = Field(default=None, serialization_alias="sourceFlavor")
+    dataset_contract_version: int = Field(serialization_alias="datasetContractVersion")
+    schema_snapshot_version: int = Field(serialization_alias="schemaSnapshotVersion")
+
+
+class BoundedResultSummaryAuditContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audit_event_id: str = Field(serialization_alias="auditEventId")
+    correlation_id: str = Field(serialization_alias="correlationId")
+    lifecycle_order: int = Field(serialization_alias="lifecycleOrder")
+
+
+class BoundedResultSummaryResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary_kind: Literal["aggregate_only", "bounded_rows"] = Field(
+        serialization_alias="summaryKind",
+    )
+    row_count: int = Field(serialization_alias="rowCount")
+    result_truncated: bool = Field(serialization_alias="resultTruncated")
+    bounded_rows: list[dict[str, Any]] = Field(
+        default_factory=list,
+        serialization_alias="boundedRows",
+    )
+    bounded_row_count: int = Field(serialization_alias="boundedRowCount")
+    bounded_row_limit: int = Field(serialization_alias="boundedRowLimit")
+
+
+class BoundedResultSummaryExport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    export_version: Literal[1] = Field(default=1, serialization_alias="exportVersion")
+    export_type: Literal["bounded_result_summary"] = Field(
+        default="bounded_result_summary",
+        serialization_alias="exportType",
+    )
+    generated_at: datetime = Field(serialization_alias="generatedAt")
+    authority: Literal["safequery_control_plane"] = "safequery_control_plane"
+    request: BoundedResultSummaryRequestContext
+    candidate: BoundedResultSummaryCandidateContext
+    run: BoundedResultSummaryRunContext
+    source: BoundedResultSummarySourceContext
+    audit: BoundedResultSummaryAuditContext
+    result: BoundedResultSummaryResult
+    limitations: list[str]
+    redaction: SupportBundleRedaction
+
+
 class GovernanceReviewLifecycleEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -299,6 +376,9 @@ class SupportBundle(BaseModel):
         serialization_alias="governanceReview",
     )
     redaction: SupportBundleRedaction
+
+
+_BOUNDED_RESULT_SUMMARY_ROW_LIMIT = 20
 
 
 def _active_sources(session: Session) -> list[SupportBundleSource]:
@@ -638,6 +718,7 @@ def _iter_string_values(
     if isinstance(value, dict):
         strings: list[tuple[tuple[str, ...], str]] = []
         for key, item in value.items():
+            strings.append(((*path, str(key)), str(key)))
             strings.extend(_iter_string_values(item, (*path, str(key))))
         return strings
     if isinstance(value, list):
@@ -667,6 +748,146 @@ def _assert_bundle_is_shareable(bundle: SupportBundle) -> None:
                 raise ValueError(
                     f"Support bundle contains non-shareable {category}."
                 )
+
+
+def _assert_bounded_result_summary_is_shareable(
+    export: BoundedResultSummaryExport,
+) -> None:
+    payload = export.model_dump(mode="json", by_alias=True, exclude_none=True)
+    for path, value in _iter_string_values(payload):
+        if _is_raw_identity_payload(path, value):
+            raise ValueError(
+                "Bounded result summary contains non-shareable raw identity payloads."
+            )
+        for category, pattern in _FORBIDDEN_EXPORT_VALUE_PATTERNS:
+            if pattern.search(value):
+                raise ValueError(
+                    f"Bounded result summary contains non-shareable {category}."
+                )
+
+
+def _bounded_operator_display_rows(
+    payload: Mapping[str, object],
+) -> list[dict[str, Any]]:
+    rows = payload.get("operator_display_rows")
+    if rows is None:
+        return []
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError(
+            "Bounded result summary contains malformed operator display rows."
+        )
+    if len(rows) > _BOUNDED_RESULT_SUMMARY_ROW_LIMIT:
+        raise ValueError(
+            "Bounded result summary contains too many operator display rows."
+        )
+    return [dict(row) for row in rows]
+
+
+def _latest_execution_completed_event(
+    session: Session,
+    *,
+    candidate_id: str,
+) -> PreviewAuditEvent | None:
+    return session.scalar(
+        select(PreviewAuditEvent)
+        .where(
+            PreviewAuditEvent.candidate_id == candidate_id,
+            PreviewAuditEvent.event_type == "execution_completed",
+        )
+        .order_by(
+            PreviewAuditEvent.occurred_at.desc(),
+            PreviewAuditEvent.lifecycle_order.desc(),
+            PreviewAuditEvent.event_id.desc(),
+        )
+        .limit(1)
+    )
+
+
+def build_bounded_result_summary_export(
+    session: Session,
+    *,
+    candidate_id: str,
+    generated_at: datetime | None = None,
+) -> BoundedResultSummaryExport | None:
+    candidate = session.scalar(
+        select(PreviewCandidate).where(PreviewCandidate.candidate_id == candidate_id)
+    )
+    if candidate is None:
+        return None
+
+    request = session.scalar(
+        select(PreviewRequest).where(PreviewRequest.request_id == candidate.request_id)
+    )
+    if request is None:
+        return None
+
+    execution_event = _latest_execution_completed_event(
+        session,
+        candidate_id=candidate_id,
+    )
+    if execution_event is None:
+        return None
+
+    row_count = _payload_non_negative_int(
+        execution_event.audit_payload,
+        "execution_row_count",
+    )
+    result_truncated = _payload_bool(
+        execution_event.audit_payload,
+        "result_truncated",
+    )
+    if row_count is None or result_truncated is None:
+        return None
+
+    bounded_rows = _bounded_operator_display_rows(execution_event.audit_payload)
+    generated_at = generated_at or datetime.now(timezone.utc)
+    export = BoundedResultSummaryExport(
+        generated_at=generated_at.astimezone(timezone.utc),
+        request=BoundedResultSummaryRequestContext(
+            request_id=request.request_id,
+            request_state=request.request_state,
+        ),
+        candidate=BoundedResultSummaryCandidateContext(
+            candidate_id=candidate.candidate_id,
+            candidate_state=candidate.candidate_state,
+            guard_status=candidate.guard_status,
+        ),
+        run=BoundedResultSummaryRunContext(
+            execution_run_id=str(execution_event.event_id),
+            event_type="execution_completed",
+            occurred_at=_as_utc_datetime(execution_event.occurred_at),
+        ),
+        source=BoundedResultSummarySourceContext(
+            source_id=execution_event.source_id,
+            source_family=execution_event.source_family,
+            source_flavor=execution_event.source_flavor,
+            dataset_contract_version=execution_event.dataset_contract_version
+            or candidate.dataset_contract_version,
+            schema_snapshot_version=execution_event.schema_snapshot_version
+            or candidate.schema_snapshot_version,
+        ),
+        audit=BoundedResultSummaryAuditContext(
+            audit_event_id=str(execution_event.event_id),
+            correlation_id=execution_event.correlation_id,
+            lifecycle_order=execution_event.lifecycle_order,
+        ),
+        result=BoundedResultSummaryResult(
+            summary_kind="bounded_rows" if bounded_rows else "aggregate_only",
+            row_count=row_count,
+            result_truncated=result_truncated,
+            bounded_rows=bounded_rows,
+            bounded_row_count=len(bounded_rows),
+            bounded_row_limit=_BOUNDED_RESULT_SUMMARY_ROW_LIMIT,
+        ),
+        limitations=[
+            "Export is a bounded operator handoff summary, not an authoritative audit bundle.",
+            "Raw SQL, connection details, credentials, tokens, raw result rows, and workstation-local paths are excluded.",
+            "Rows are included only when they were already persisted as bounded operator-display rows.",
+        ],
+        redaction=_redaction_policy(),
+    )
+    _assert_bounded_result_summary_is_shareable(export)
+    return export
 
 
 def build_support_bundle(
