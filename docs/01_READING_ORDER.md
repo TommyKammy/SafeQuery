@@ -85,18 +85,20 @@ This reading order is intended to help new contributors understand SafeQuery fro
     Use this to understand the concrete registry model, source lifecycle expectations, and application PostgreSQL separation guardrails.
 33. [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md)
     Review the family and flavor rollout matrix before planning connector, guard, or evaluation work for additional sources.
-34. [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md)
+34. [design/dialect-guard-readiness-checklists.md](./design/dialect-guard-readiness-checklists.md)
+    Use this as the review checklist for guard readiness evidence before any planned MySQL, MariaDB, Aurora, or Oracle source can be considered for connector activation.
+35. [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md)
     Read this to understand why the product shell is workflow-first and why the Epic A shell remains a developer state demo.
-35. [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md)
+36. [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md)
     Review how SafeQuery may borrow OSS ergonomics without turning the product into a generic chat shell or moving trust boundaries.
-36. [implementation-roadmap.md](./implementation-roadmap.md)
+37. [implementation-roadmap.md](./implementation-roadmap.md)
     Finish this section with the current implementation sequence so roadmap work stays aligned with the reviewed docs direction.
 
 ### 6. Local Setup and Threat Review
 
-37. [local-development.md](./local-development.md)
+38. [local-development.md](./local-development.md)
     Use this once the document set is clear so local startup follows the reviewed topology and role split.
-38. [security/threat-model.md](./security/threat-model.md)
+39. [security/threat-model.md](./security/threat-model.md)
     Finish with the threat model and residual risks for the current source-aware and UX-foundation baseline before pilot readiness review.
 
 ## Source Hierarchy
