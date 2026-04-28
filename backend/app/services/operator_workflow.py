@@ -17,11 +17,7 @@ from app.db.models.preview import (
 from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.governance_bindings import normalize_governance_binding
-from app.services.source_family_profiles import (
-    ACTIVE_SOURCE_FAMILIES,
-    get_planned_source_family_profile_requirements,
-    get_planned_source_flavor_profile_requirements,
-)
+from app.services.source_registry import effective_source_activation_posture
 
 
 GovernanceBindingState = Literal[
@@ -224,31 +220,7 @@ class OperatorWorkflowSnapshot(BaseModel):
 
 
 def _operator_activation_posture(source: RegisteredSource) -> SourceActivationPosture:
-    posture = SourceActivationPosture(source.activation_posture)
-    if posture is not SourceActivationPosture.ACTIVE:
-        return posture
-
-    source_family = source.source_family.strip().lower()
-    source_flavor = (
-        source.source_flavor.strip().lower() if source.source_flavor else None
-    )
-    planned_family = get_planned_source_family_profile_requirements(source_family)
-    planned_flavor = (
-        get_planned_source_flavor_profile_requirements(
-            source_family=source_family,
-            source_flavor=source_flavor,
-        )
-        if source_flavor is not None
-        else None
-    )
-    if (
-        source_family not in ACTIVE_SOURCE_FAMILIES
-        or planned_family is not None
-        or planned_flavor is not None
-    ):
-        return SourceActivationPosture.BLOCKED
-
-    return posture
+    return effective_source_activation_posture(source)
 
 
 def _source_description(
