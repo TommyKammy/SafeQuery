@@ -14,9 +14,14 @@ class ConnectorProfileRequirements(BaseModel):
     profile_id: str
     owner: Literal["backend"]
     read_only_posture: Literal["required"]
+    runtime_driver_dependencies: tuple[str, ...]
     secret_reference_pattern: str
+    secret_loading_owner: Literal["trusted_backend"]
+    secret_readiness_checks: tuple[str, ...]
+    connection_string_redaction: Literal["required_before_logs_exports_or_support_bundles"]
     connection_identity_fields: tuple[str, ...]
     required_controls: tuple[str, ...]
+    activation_gate_checks: tuple[str, ...]
     application_postgres_separation: str
 
 
@@ -191,6 +196,23 @@ FUTURE_FAMILY_SUPPLEMENTAL_ONLY_ARTIFACTS: tuple[str, ...] = (
     "adapter_traces",
 )
 
+FUTURE_FAMILY_SECRET_READINESS_CHECKS: tuple[str, ...] = (
+    "backend_secret_indirection_required",
+    "secret_reference_resolves_before_activation",
+    "blank_secret_rejected",
+    "placeholder_secret_rejected",
+    "raw_connection_string_rejected",
+    "connection_string_redaction_required",
+    "client_supplied_connection_material_rejected",
+)
+
+FUTURE_FAMILY_ACTIVATION_GATE_CHECKS: tuple[str, ...] = (
+    "driver_import_or_installation_check",
+    "first_run_doctor_family_runtime_check",
+    "support_bundle_redacted_readiness_snapshot",
+    "application_postgres_separation_check",
+)
+
 MYSQL_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
     source_family="mysql",
     rollout_status="planned",
@@ -224,7 +246,11 @@ MYSQL_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
         profile_id="mysql.readonly.planned.v1",
         owner="backend",
         read_only_posture="required",
+        runtime_driver_dependencies=("mysqlclient_or_pymysql",),
         secret_reference_pattern="safequery/business/mysql/<source_id>/reader",  # noqa: S106 - reference template, not a credential
+        secret_loading_owner="trusted_backend",
+        secret_readiness_checks=FUTURE_FAMILY_SECRET_READINESS_CHECKS,
+        connection_string_redaction="required_before_logs_exports_or_support_bundles",
         connection_identity_fields=(
             "host",
             "port",
@@ -237,6 +263,7 @@ MYSQL_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
             "statement_timeout_seconds",
             "cancellation_probe",
         ),
+        activation_gate_checks=FUTURE_FAMILY_ACTIVATION_GATE_CHECKS,
         application_postgres_separation=(
             "mysql business source credentials and endpoints must be distinct from "
             "the application PostgreSQL system of record"
@@ -355,7 +382,11 @@ MARIADB_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
         profile_id="mariadb.readonly.planned.v1",
         owner="backend",
         read_only_posture="required",
+        runtime_driver_dependencies=("mariadb_connector_or_pymysql",),
         secret_reference_pattern="safequery/business/mariadb/<source_id>/reader",  # noqa: S106 - reference template, not a credential
+        secret_loading_owner="trusted_backend",
+        secret_readiness_checks=FUTURE_FAMILY_SECRET_READINESS_CHECKS,
+        connection_string_redaction="required_before_logs_exports_or_support_bundles",
         connection_identity_fields=(
             "host",
             "port",
@@ -369,6 +400,7 @@ MARIADB_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
             "statement_timeout_seconds",
             "cancellation_probe",
         ),
+        activation_gate_checks=FUTURE_FAMILY_ACTIVATION_GATE_CHECKS,
         application_postgres_separation=(
             "mariadb business source credentials and endpoints must be distinct from "
             "the application PostgreSQL system of record"
@@ -493,7 +525,14 @@ ORACLE_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
         profile_id="oracle.readonly.long-range.v1",
         owner="backend",
         read_only_posture="required",
+        runtime_driver_dependencies=(
+            "python-oracledb",
+            "oracle_client_or_wallet_when_required",
+        ),
         secret_reference_pattern="safequery/business/oracle/<source_id>/reader",  # noqa: S106 - reference template, not a credential
+        secret_loading_owner="trusted_backend",
+        secret_readiness_checks=FUTURE_FAMILY_SECRET_READINESS_CHECKS,
+        connection_string_redaction="required_before_logs_exports_or_support_bundles",
         connection_identity_fields=(
             "connect_descriptor",
             "service_name",
@@ -506,6 +545,7 @@ ORACLE_FAMILY_PROFILE_REQUIREMENTS = SourceFamilyProfileRequirements(
             "statement_timeout_seconds",
             "cancellation_probe",
         ),
+        activation_gate_checks=FUTURE_FAMILY_ACTIVATION_GATE_CHECKS,
         application_postgres_separation=(
             "oracle business source credentials and endpoints must be distinct from "
             "the application PostgreSQL system of record"
@@ -645,9 +685,13 @@ AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
         profile_id="postgresql.aurora-readonly.planned.v1",
         owner="backend",
         read_only_posture="required",
+        runtime_driver_dependencies=("psycopg",),
         secret_reference_pattern=(
             "safequery/business/postgresql/<source_id>/reader"
         ),  # noqa: S106 - reference template, not a credential
+        secret_loading_owner="trusted_backend",
+        secret_readiness_checks=FUTURE_FAMILY_SECRET_READINESS_CHECKS,
+        connection_string_redaction="required_before_logs_exports_or_support_bundles",
         connection_identity_fields=(
             "cluster_endpoint",
             "port",
@@ -661,6 +705,7 @@ AURORA_POSTGRESQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
             "statement_timeout_seconds",
             "cancellation_probe",
         ),
+        activation_gate_checks=FUTURE_FAMILY_ACTIVATION_GATE_CHECKS,
         application_postgres_separation=(
             "aurora postgresql source credentials and endpoints must be distinct from "
             "the application PostgreSQL system of record"
@@ -772,9 +817,13 @@ AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
         profile_id="mysql.aurora-readonly.planned.v1",
         owner="backend",
         read_only_posture="required",
+        runtime_driver_dependencies=("mysqlclient_or_pymysql",),
         secret_reference_pattern=(
             "safequery/business/mysql/<source_id>/reader"
         ),  # noqa: S106 - reference template, not a credential
+        secret_loading_owner="trusted_backend",
+        secret_readiness_checks=FUTURE_FAMILY_SECRET_READINESS_CHECKS,
+        connection_string_redaction="required_before_logs_exports_or_support_bundles",
         connection_identity_fields=(
             "cluster_endpoint",
             "port",
@@ -788,6 +837,7 @@ AURORA_MYSQL_FLAVOR_PROFILE_REQUIREMENTS = SourceFlavorProfileRequirements(
             "statement_timeout_seconds",
             "cancellation_probe",
         ),
+        activation_gate_checks=FUTURE_FAMILY_ACTIVATION_GATE_CHECKS,
         application_postgres_separation=(
             "aurora mysql source credentials and endpoints must be distinct from "
             "the application PostgreSQL system of record"

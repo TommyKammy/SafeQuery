@@ -86,6 +86,53 @@ def test_future_family_activation_checklist_requires_authoritative_coverage() ->
         }.issubset(audit_and_evaluation.authoritative_release_gate_artifacts)
 
 
+def test_future_family_activation_gate_requires_runtime_driver_and_secret_readiness() -> None:
+    required_secret_checks = {
+        "backend_secret_indirection_required",
+        "secret_reference_resolves_before_activation",
+        "blank_secret_rejected",
+        "placeholder_secret_rejected",
+        "raw_connection_string_rejected",
+        "connection_string_redaction_required",
+        "client_supplied_connection_material_rejected",
+    }
+    required_activation_checks = {
+        "driver_import_or_installation_check",
+        "first_run_doctor_family_runtime_check",
+        "support_bundle_redacted_readiness_snapshot",
+        "application_postgres_separation_check",
+    }
+
+    expected_driver_dependencies = {
+        "mysql": ("mysqlclient_or_pymysql",),
+        "mariadb": ("mariadb_connector_or_pymysql",),
+        "oracle": ("python-oracledb", "oracle_client_or_wallet_when_required"),
+        "aurora-postgresql": ("psycopg",),
+        "aurora-mysql": ("mysqlclient_or_pymysql",),
+    }
+
+    for requirements in _future_family_requirements():
+        connector = requirements.connector
+        profile_key = getattr(
+            requirements,
+            "source_flavor",
+            requirements.source_family,
+        )
+
+        assert set(connector.runtime_driver_dependencies) == set(
+            expected_driver_dependencies[profile_key]
+        )
+        assert required_secret_checks.issubset(set(connector.secret_readiness_checks))
+        assert required_activation_checks.issubset(
+            set(connector.activation_gate_checks)
+        )
+        assert connector.secret_loading_owner == "trusted_backend"
+        assert (
+            connector.connection_string_redaction
+            == "required_before_logs_exports_or_support_bundles"
+        )
+
+
 def test_active_source_runtime_posture_is_explicit_for_timeout_retry_and_pooling() -> None:
     for source_family in ACTIVE_SOURCE_FAMILIES:
         posture = get_active_source_runtime_posture_requirements(source_family)
@@ -295,7 +342,19 @@ def test_mysql_family_requirements_cover_connector_dialect_guard_and_audit() -> 
         "profile_id": "mysql.readonly.planned.v1",
         "owner": "backend",
         "read_only_posture": "required",
+        "runtime_driver_dependencies": ("mysqlclient_or_pymysql",),
         "secret_reference_pattern": "safequery/business/mysql/<source_id>/reader",
+        "secret_loading_owner": "trusted_backend",
+        "secret_readiness_checks": (
+            "backend_secret_indirection_required",
+            "secret_reference_resolves_before_activation",
+            "blank_secret_rejected",
+            "placeholder_secret_rejected",
+            "raw_connection_string_rejected",
+            "connection_string_redaction_required",
+            "client_supplied_connection_material_rejected",
+        ),
+        "connection_string_redaction": "required_before_logs_exports_or_support_bundles",
         "connection_identity_fields": (
             "host",
             "port",
@@ -307,6 +366,12 @@ def test_mysql_family_requirements_cover_connector_dialect_guard_and_audit() -> 
             "connect_timeout_seconds",
             "statement_timeout_seconds",
             "cancellation_probe",
+        ),
+        "activation_gate_checks": (
+            "driver_import_or_installation_check",
+            "first_run_doctor_family_runtime_check",
+            "support_bundle_redacted_readiness_snapshot",
+            "application_postgres_separation_check",
         ),
         "application_postgres_separation": (
             "mysql business source credentials and endpoints must be distinct from "
@@ -368,7 +433,19 @@ def test_mariadb_delta_requirements_cover_shared_and_specific_boundaries() -> No
         "profile_id": "mariadb.readonly.planned.v1",
         "owner": "backend",
         "read_only_posture": "required",
+        "runtime_driver_dependencies": ("mariadb_connector_or_pymysql",),
         "secret_reference_pattern": "safequery/business/mariadb/<source_id>/reader",
+        "secret_loading_owner": "trusted_backend",
+        "secret_readiness_checks": (
+            "backend_secret_indirection_required",
+            "secret_reference_resolves_before_activation",
+            "blank_secret_rejected",
+            "placeholder_secret_rejected",
+            "raw_connection_string_rejected",
+            "connection_string_redaction_required",
+            "client_supplied_connection_material_rejected",
+        ),
+        "connection_string_redaction": "required_before_logs_exports_or_support_bundles",
         "connection_identity_fields": (
             "host",
             "port",
@@ -381,6 +458,12 @@ def test_mariadb_delta_requirements_cover_shared_and_specific_boundaries() -> No
             "connect_timeout_seconds",
             "statement_timeout_seconds",
             "cancellation_probe",
+        ),
+        "activation_gate_checks": (
+            "driver_import_or_installation_check",
+            "first_run_doctor_family_runtime_check",
+            "support_bundle_redacted_readiness_snapshot",
+            "application_postgres_separation_check",
         ),
         "application_postgres_separation": (
             "mariadb business source credentials and endpoints must be distinct from "
@@ -422,7 +505,22 @@ def test_oracle_requirements_cover_connector_dialect_guard_and_audit() -> None:
         "profile_id": "oracle.readonly.long-range.v1",
         "owner": "backend",
         "read_only_posture": "required",
+        "runtime_driver_dependencies": (
+            "python-oracledb",
+            "oracle_client_or_wallet_when_required",
+        ),
         "secret_reference_pattern": "safequery/business/oracle/<source_id>/reader",
+        "secret_loading_owner": "trusted_backend",
+        "secret_readiness_checks": (
+            "backend_secret_indirection_required",
+            "secret_reference_resolves_before_activation",
+            "blank_secret_rejected",
+            "placeholder_secret_rejected",
+            "raw_connection_string_rejected",
+            "connection_string_redaction_required",
+            "client_supplied_connection_material_rejected",
+        ),
+        "connection_string_redaction": "required_before_logs_exports_or_support_bundles",
         "connection_identity_fields": (
             "connect_descriptor",
             "service_name",
@@ -434,6 +532,12 @@ def test_oracle_requirements_cover_connector_dialect_guard_and_audit() -> None:
             "connect_timeout_seconds",
             "statement_timeout_seconds",
             "cancellation_probe",
+        ),
+        "activation_gate_checks": (
+            "driver_import_or_installation_check",
+            "first_run_doctor_family_runtime_check",
+            "support_bundle_redacted_readiness_snapshot",
+            "application_postgres_separation_check",
         ),
         "application_postgres_separation": (
             "oracle business source credentials and endpoints must be distinct from "
