@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models.dataset_contract import DatasetContract
+from app.db.models.preview import PreviewAuditEvent, PreviewCandidate, PreviewRequest
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.db.session import require_preview_submission_session
@@ -621,6 +622,58 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
                 self.assertIn(
                     "blocked activation posture",
                     sources_by_id[source_id]["description"],
+                )
+
+    def test_preview_submission_rejects_planned_or_unsupported_source_activation(
+        self,
+    ) -> None:
+        for source_id, source_family, source_flavor in (
+            ("mysql-planned-ledger", "mysql", "mysql-8"),
+            ("aurora-planned-ledger", "postgresql", "aurora-postgresql"),
+            ("unsupported-ledger", "unsupported-family", "warehouse"),
+        ):
+            with self.subTest(source_id=source_id):
+                self._seed_authoritative_source_governance(
+                    source_id=source_id,
+                    source_posture=SourceActivationPosture.ACTIVE,
+                    source_family=source_family,
+                    source_flavor=source_flavor,
+                )
+
+                response = self._post_preview(
+                    {
+                        "question": "Show approved vendors by quarterly spend",
+                        "source_id": source_id,
+                    },
+                )
+
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(
+                    response.json(),
+                    {
+                        "error": {
+                            "code": "preview_source_unavailable",
+                            "message": "Selected source is unavailable for preview.",
+                        }
+                    },
+                )
+                self.assertEqual(
+                    self.session.query(PreviewRequest)
+                    .filter_by(source_id=source_id)
+                    .count(),
+                    0,
+                )
+                self.assertEqual(
+                    self.session.query(PreviewCandidate)
+                    .filter_by(source_id=source_id)
+                    .count(),
+                    0,
+                )
+                self.assertEqual(
+                    self.session.query(PreviewAuditEvent)
+                    .filter_by(source_id=source_id)
+                    .count(),
+                    0,
                 )
 
     def test_preview_submission_rejects_subject_matching_only_security_review_binding(self) -> None:

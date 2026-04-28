@@ -43,7 +43,10 @@ from app.services.source_governance import (
     SourceGovernanceResolutionError,
     resolve_authoritative_source_governance,
 )
-from app.services.source_registry import SourceRegistryPostureError
+from app.services.source_registry import (
+    SourceRegistryActivationGateError,
+    SourceRegistryPostureError,
+)
 from app.services.generation_context import (
     GenerationContextPreparationError,
     prepare_generation_context,
@@ -1421,6 +1424,12 @@ def submit_preview_request(
         )
     except SourceEntitlementError as exc:
         if isinstance(exc.__cause__, (SourceRegistryPostureError, ValueError)):
+            if isinstance(exc.__cause__, SourceRegistryActivationGateError):
+                raise PreviewSubmissionContractError(
+                    str(exc),
+                    public_code="preview_source_unavailable",
+                    public_message="Selected source is unavailable for preview.",
+                ) from exc
             _enrich_preview_audit_context(
                 audit_context,
                 authenticated_subject=authenticated_subject,

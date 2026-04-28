@@ -3,6 +3,7 @@ import uuid
 
 from app.db.models.source_registry import RegisteredSource
 from app.services.source_registry import (
+    SourceRegistryActivationGateError,
     SourceRegistryPostureError,
     ensure_source_is_executable,
 )
@@ -50,6 +51,36 @@ class SourceRegistryPostureTestCase(unittest.TestCase):
                 with self.assertRaisesRegex(
                     SourceRegistryPostureError,
                     f"{posture} posture",
+                ):
+                    ensure_source_is_executable(source)
+
+    def test_planned_or_unsupported_active_sources_are_rejected_fail_closed(
+        self,
+    ) -> None:
+        for source_id, source_family, source_flavor in (
+            ("mysql-planned-ledger", "mysql", "mysql-8"),
+            ("aurora-planned-ledger", "postgresql", "aurora-postgresql"),
+            ("unsupported-ledger", "unsupported-family", "warehouse"),
+        ):
+            with self.subTest(source_id=source_id):
+                source = RegisteredSource(
+                    id=uuid.uuid4(),
+                    source_id=source_id,
+                    display_label=f"{source_id} display",
+                    source_family=source_family,
+                    source_flavor=source_flavor,
+                    activation_posture="active",
+                    connector_profile_id=None,
+                    dialect_profile_id=None,
+                    dataset_contract_id=None,
+                    schema_snapshot_id=None,
+                    execution_policy_id=None,
+                    connection_reference=f"vault:{source_id}",
+                )
+
+                with self.assertRaisesRegex(
+                    SourceRegistryActivationGateError,
+                    "blocked posture",
                 ):
                     ensure_source_is_executable(source)
 
