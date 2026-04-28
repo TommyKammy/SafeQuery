@@ -1,3 +1,8 @@
+import {
+  parseAnalystResponsePayload,
+  type AnalystResponsePayload
+} from "./analyst-response";
+
 export type SourceActivationPosture = "active" | "paused" | "blocked" | "retired";
 export type GovernanceBindingState = "valid" | "missing" | "ambiguous" | "stale" | "drifted";
 export type GovernanceBindingRole = "owner" | "security_review" | "exception_policy";
@@ -87,6 +92,7 @@ export type OperatorWorkflowRevisionContext = {
 };
 
 export type OperatorHistoryItem = {
+  analystResponse: AnalystResponsePayload | null;
   auditEvents: OperatorWorkflowAuditEvent[];
   candidateAttempts: OperatorWorkflowCandidateAttempt[];
   candidateSql?: string | null;
@@ -427,6 +433,10 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
   const executedEvidence = parseArray(value.executedEvidence, parseExecutedEvidence);
   const retrievedCitations = parseArray(value.retrievedCitations, parseRetrievedCitation);
   const revisionContext = parseRevisionContext(value.revisionContext);
+  const analystResponse =
+    value.analystResponse === undefined || value.analystResponse === null
+      ? null
+      : parseAnalystResponsePayload(value.analystResponse);
 
   if (
     (itemType !== "request" && itemType !== "candidate" && itemType !== "run") ||
@@ -445,6 +455,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
   }
 
   return {
+    analystResponse,
     auditEvents,
     candidateAttempts,
     candidateSql: readOptionalString(value.candidateSql) ?? null,

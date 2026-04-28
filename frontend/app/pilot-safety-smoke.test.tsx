@@ -45,6 +45,65 @@ function pilotWorkflowPayload() {
         sourceLabel: "Demo business PostgreSQL / approved_vendor_spend"
       },
       {
+        analystResponse: {
+          responseId: "analyst-response-pilot-001",
+          requestId: "request-pilot-001",
+          narrative:
+            "Supplemental analyst context: the completed SafeQuery run returned two approved vendors for this selected candidate.",
+          advisoryOnly: true,
+          canAuthorizeExecution: false,
+          analystModeVersion: "analyst-schema-v1",
+          confidence: "medium",
+          caveats: ["Use the persisted run record for workflow decisions."],
+          sourceSummaries: [
+            {
+              sourceId: "demo-business-postgres",
+              sourceFamily: "postgresql",
+              sourceFlavor: "warehouse",
+              datasetContractVersion: 2,
+              schemaSnapshotVersion: 7,
+              executionPolicyVersion: 3
+            }
+          ],
+          retrievalCitations: [
+            {
+              assetId: "schema-snapshot-7",
+              assetKind: "schema_snapshot",
+              authority: "advisory_context",
+              canAuthorizeExecution: false,
+              citationLabel: "Approved spend schema snapshot",
+              datasetContractVersion: 2,
+              schemaSnapshotVersion: 7,
+              sourceFamily: "postgresql",
+              sourceFlavor: "warehouse",
+              sourceId: "demo-business-postgres"
+            }
+          ],
+          executedEvidence: [
+            {
+              type: "executed_evidence",
+              authority: "backend_execution_result",
+              canAuthorizeExecution: false,
+              candidateId: "candidate-pilot-001",
+              connectorProfileVersion: 11,
+              datasetContractVersion: 2,
+              executionPolicyVersion: 3,
+              executionRunId: "5dbcc36c-c6d6-4755-b307-5a3af5d6ec24",
+              executionAuditEventId: "5dbcc36c-c6d6-4755-b307-5a3af5d6ec25",
+              executionAuditEventType: "execution_completed",
+              resultTruncated: false,
+              rowCount: 2,
+              schemaSnapshotVersion: 7,
+              sourceFamily: "postgresql",
+              sourceFlavor: "warehouse",
+              sourceId: "demo-business-postgres"
+            }
+          ],
+          operatorHistoryHooks: {
+            auditEventId: "5dbcc36c-c6d6-4755-b307-5a3af5d6ec25",
+            historyRecordIds: ["request-pilot-001", "candidate-pilot-001", "run-pilot-001"]
+          }
+        },
         auditEvents: [
           {
             candidateId: "candidate-pilot-001",
@@ -173,6 +232,15 @@ describe("pilot safety UI smoke", () => {
     expect(screen.getByRole("heading", { name: /completed state/i })).toBeInTheDocument();
     expect(screen.getByText(/2 rows reported for this selected run/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent("backend_execution_result");
+    expect(
+      screen.getByRole("heading", { name: /supplemental analyst narrative/i })
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/supplemental analyst narrative/i)).toHaveTextContent(
+      "Supplemental analyst context"
+    );
+    expect(screen.getByLabelText(/supplemental analyst narrative/i)).toHaveTextContent(
+      "Cannot authorize execution: false"
+    );
     expect(screen.queryByText(/execution results unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/run-sq-204/i)).not.toBeInTheDocument();

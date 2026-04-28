@@ -183,6 +183,11 @@ class AnalystResponsePayload(BaseModel):
                 "Analyst narrative must not imply execution approval authority."
             )
 
+        if not self.executed_evidence:
+            raise ValueError(
+                "Analyst responses must cite source-labeled executed evidence."
+            )
+
         if not self.executed_evidence and _EXECUTION_CLAIM_PATTERN.search(narrative):
             raise ValueError(
                 "Analyst narrative must not claim executed evidence without source-labeled executed evidence."
