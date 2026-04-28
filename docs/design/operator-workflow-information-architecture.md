@@ -60,6 +60,24 @@ one primary job obvious:
 Only one of those jobs should dominate the main surface at a time, even if nearby context remains
 visible.
 
+### Raw SQL review boundary
+
+Raw candidate SQL may be visible only inside the authorized operator workflow review surface. That
+surface is bound to the authenticated operator, selected source, server-owned request record,
+server-owned candidate record, guard posture, and direct audit context. It is not an export,
+support bundle, analyst handoff, MLflow artifact, or generic evidence surface.
+
+Operator copy should name the preview as an authorized review surface when raw candidate SQL is
+shown. It must not suggest that raw SQL can be copied into execute APIs, support artifacts, or
+handoff exports. Execution remains candidate-bound; clients still submit the server-owned candidate
+identifier and selected source binding, not raw SQL text.
+
+Support bundles, bounded handoff exports, dedicated governance review exports, and other shared
+diagnostic artifacts must stay redacted. They may carry candidate ids, source ids, lifecycle state,
+guard status, row counts, audit event ids, redaction posture, and bounded metadata, but they must
+exclude raw SQL, raw result rows, credentials, connection strings, source connection references,
+tokens, raw identity payloads, and workstation-local absolute paths.
+
 ### Support surfaces
 
 Support surfaces hold contextual information that should remain visible without overtaking the main

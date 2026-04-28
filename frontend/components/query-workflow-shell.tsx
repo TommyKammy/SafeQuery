@@ -2842,6 +2842,14 @@ export function QueryWorkflowShell({
               </div>
               <span className="surface-badge surface-badge-code">Preview</span>
             </div>
+            <div className="state-callout" aria-label="Authorized operator SQL review">
+              <p className="state-callout-title">Authorized operator review surface</p>
+              <p>
+                Raw candidate SQL is visible only inside this authorized operator workflow review.
+                Support bundles and handoff exports stay redacted and exclude raw SQL, secrets,
+                connection strings, result rows, and local paths.
+              </p>
+            </div>
             {renderCandidateSqlPreview(candidatePreview)}
           </section>
 

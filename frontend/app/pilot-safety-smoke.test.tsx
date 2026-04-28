@@ -207,6 +207,12 @@ describe("pilot safety UI smoke", () => {
     expect(
       screen.getByText("select vendor_name from finance.approved_vendor_spend limit 10;")
     ).toBeInTheDocument();
+    expect(screen.getByLabelText(/authorized operator sql review/i)).toHaveTextContent(
+      /Raw candidate SQL is visible only inside this authorized operator workflow review/i
+    );
+    expect(screen.getByLabelText(/authorized operator sql review/i)).toHaveTextContent(
+      /Support bundles and handoff exports stay redacted/i
+    );
     expect(screen.getByText("candidate-pilot-001")).toBeInTheDocument();
     expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent("guard_evaluated");
     expect(screen.getByLabelText(/retrieved citation context/i)).toHaveTextContent(
