@@ -9,8 +9,54 @@ def _section(content: str, header: str) -> str:
     start = content.find(header)
     assert start != -1, f"Missing section: {header}"
 
-    next_section = content.find("\n### ", start + len(header))
+    header_prefix = header.split(" ", maxsplit=1)[0]
+    assert header_prefix and set(header_prefix) == {"#"}, f"Invalid header: {header}"
+
+    next_sections = [
+        content.find(f"\n{'#' * level} ", start + len(header))
+        for level in range(1, len(header_prefix) + 1)
+    ]
+    next_sections = [index for index in next_sections if index != -1]
+    next_section = min(next_sections) if next_sections else -1
     return content[start : next_section if next_section != -1 else len(content)]
+
+
+def test_section_stops_at_same_or_higher_heading_boundary() -> None:
+    content = "\n".join(
+        [
+            "## Future Connector Threat Model",
+            "intro",
+            "### MySQL",
+            "mysql details",
+            "#### Nested context",
+            "nested details",
+            "### MariaDB",
+            "mariadb details",
+            "## Residual Risks",
+            "residual details",
+        ]
+    )
+
+    assert _section(content, "### MySQL") == "\n".join(
+        [
+            "### MySQL",
+            "mysql details",
+            "#### Nested context",
+            "nested details",
+        ]
+    )
+    assert _section(content, "## Future Connector Threat Model") == "\n".join(
+        [
+            "## Future Connector Threat Model",
+            "intro",
+            "### MySQL",
+            "mysql details",
+            "#### Nested context",
+            "nested details",
+            "### MariaDB",
+            "mariadb details",
+        ]
+    )
 
 
 def test_connector_threat_model_covers_planned_families_and_flavors() -> None:
