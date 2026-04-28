@@ -131,6 +131,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         *,
         source_id: str,
         source_posture: SourceActivationPosture,
+        source_family: str = "postgresql",
+        source_flavor: Optional[str] = "warehouse",
         snapshot_status: SchemaSnapshotReviewStatus = SchemaSnapshotReviewStatus.APPROVED,
         owner_binding: str = "group:finance-analysts",
         security_review_binding: Optional[str] = None,
@@ -140,8 +142,8 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
             id=uuid4(),
             source_id=source_id,
             display_label=f"{source_id} display",
-            source_family="postgresql",
-            source_flavor="warehouse",
+            source_family=source_family,
+            source_flavor=source_flavor,
             activation_posture=source_posture,
             connector_profile_id=None,
             dialect_profile_id=None,
@@ -565,6 +567,61 @@ class RequestSourceSelectionTestCase(unittest.TestCase):
         self.assertEqual(payload["history"], [])
         self.assertNotIn("connection_reference", response.text)
         self.assertNotIn("vault:", response.text)
+
+    def test_operator_workflow_snapshot_does_not_make_planned_families_executable(
+        self,
+    ) -> None:
+        self._seed_authoritative_source_governance(
+            source_id="mysql-planned-ledger",
+            source_posture=SourceActivationPosture.ACTIVE,
+            source_family="mysql",
+            source_flavor="mysql-8",
+        )
+        self._seed_authoritative_source_governance(
+            source_id="aurora-planned-ledger",
+            source_posture=SourceActivationPosture.ACTIVE,
+            source_family="postgresql",
+            source_flavor="aurora-postgresql",
+        )
+        self._seed_authoritative_source_governance(
+            source_id="unsupported-ledger",
+            source_posture=SourceActivationPosture.ACTIVE,
+            source_family="unsupported-family",
+            source_flavor="warehouse",
+        )
+        self._seed_authoritative_source_governance(
+            source_id="sap-approved-spend",
+            source_posture=SourceActivationPosture.ACTIVE,
+        )
+
+        response = self.client.get("/operator/workflow")
+
+        self.assertEqual(response.status_code, 200)
+        sources_by_id = {
+            source["sourceId"]: source for source in response.json()["sources"]
+        }
+        self.assertEqual(
+            sources_by_id["sap-approved-spend"]["activationPosture"],
+            "active",
+        )
+        for source_id in (
+            "mysql-planned-ledger",
+            "aurora-planned-ledger",
+            "unsupported-ledger",
+        ):
+            with self.subTest(source_id=source_id):
+                self.assertNotEqual(
+                    sources_by_id[source_id]["activationPosture"],
+                    "active",
+                )
+                self.assertEqual(
+                    sources_by_id[source_id]["activationPosture"],
+                    "blocked",
+                )
+                self.assertIn(
+                    "blocked activation posture",
+                    sources_by_id[source_id]["description"],
+                )
 
     def test_preview_submission_rejects_subject_matching_only_security_review_binding(self) -> None:
         self.app.dependency_overrides[require_authenticated_subject] = lambda: AuthenticatedSubject(
