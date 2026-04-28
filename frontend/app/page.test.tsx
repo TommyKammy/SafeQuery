@@ -1263,6 +1263,8 @@ describe("HomePage", () => {
     expect(resultsSection).not.toBeNull();
     const results = within(resultsSection!);
     expect(results.getByRole("table", { name: /execute response result rows/i })).toBeInTheDocument();
+    expect(results.getByText(/2 rows reported for this selected run/i)).toBeInTheDocument();
+    expect(results.getByText(/showing bounded result rows attached to this selected run only/i)).toBeInTheDocument();
     expect(results.getByText("vendor_name")).toBeInTheDocument();
     expect(results.getByText("total_spend")).toBeInTheDocument();
     expect(results.getByText("Acme Supplies")).toBeInTheDocument();
@@ -1280,6 +1282,114 @@ describe("HomePage", () => {
     expect(screen.queryByText(/row-token-should-not-render/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/session-secret-should-not-render/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/token-secret-should-not-render/i)).not.toBeInTheDocument();
+  });
+
+  it("renders truncated execute responses as bounded previews without requiring unbounded rows", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              history: [
+                {
+                  candidateSql: "select vendor_name, total_spend from approved_vendor_spend;",
+                  guardStatus: "passed",
+                  itemType: "candidate",
+                  label: "Selected candidate",
+                  lifecycleState: "preview_ready",
+                  occurredAt: "2026-04-21T14:24:00Z",
+                  recordId: "candidate-selected",
+                  requestId: "request-selected",
+                  sourceId: "sap-approved-spend",
+                  sourceLabel: "SAP spend cube / approved_vendor_spend"
+                }
+              ],
+              sources: workflowPayload().sources
+            })
+        });
+      }
+
+      if (url.endsWith("/candidates/candidate-selected/execute")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [
+                  {
+                    candidate_state: "executed",
+                    event_id: "00000000-0000-4000-8000-000000000300",
+                    event_type: "execution_completed",
+                    execution_row_count: 25,
+                    occurred_at: "2026-04-21T14:44:17+09:00",
+                    query_candidate_id: "candidate-selected",
+                    request_id: "request-selected",
+                    result_truncated: true,
+                    source_id: "sap-approved-spend"
+                  }
+                ]
+              },
+              candidate_id: "candidate-selected",
+              connector_id: "postgresql_readonly",
+              metadata: {
+                candidate_id: "candidate-selected",
+                execution_run_id: "00000000-0000-4000-8000-000000000300",
+                result_truncated: true,
+                row_count: 25,
+                source_family: "postgresql",
+                source_flavor: "warehouse",
+                source_id: "sap-approved-spend",
+                truncation_reason: "row_limit"
+              },
+              rows: [
+                { total_spend: 1200, vendor_name: "Acme Supplies" },
+                { total_spend: 980, vendor_name: "Globex Services" }
+              ],
+              source_id: "sap-approved-spend"
+            })
+        });
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-selected",
+          question: "Selected candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /execute reviewed candidate/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/execution completed/i).length).toBeGreaterThan(0);
+    });
+
+    const resultsSection = screen.getByRole("heading", { name: /completed result set/i }).closest("section");
+    expect(resultsSection).not.toBeNull();
+    const results = within(resultsSection!);
+    expect(results.getByText(/truncated bounded result metadata/i)).toBeInTheDocument();
+    expect(results.getByText(/25 rows reported for this selected run/i)).toBeInTheDocument();
+    expect(results.getByText(/bounded preview of 2 displayed rows for 25 rows/i)).toBeInTheDocument();
+    expect(results.getByText(/not complete dataset access/i)).toBeInTheDocument();
+    expect(results.getByText("Acme Supplies")).toBeInTheDocument();
+    expect(results.getByText("Globex Services")).toBeInTheDocument();
+    expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent("Result truncated");
   });
 
   it("renders zero-row execute response audit context on the empty state", async () => {
@@ -1376,7 +1486,11 @@ describe("HomePage", () => {
       expect(screen.getByRole("heading", { name: /empty state/i })).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/0 rows returned; result payload not truncated/i)).toBeInTheDocument();
+    expect(screen.getByText(/empty result state reached/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/approved workflow executed successfully and returned zero rows/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/0 rows reported for this selected run/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent("execution_completed");
     expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent(
       "00000000-0000-4000-8000-000000000299"
@@ -1812,9 +1926,9 @@ describe("HomePage", () => {
     expect(resultsSection).not.toBeNull();
     const results = within(resultsSection!);
 
-    expect(results.getByText(/authoritative result metadata/i)).toBeInTheDocument();
-    expect(results.getByText(/12 rows/i)).toBeInTheDocument();
-    expect(results.getByText(/truncated/i)).toBeInTheDocument();
+    expect(results.getByText(/truncated bounded result metadata/i)).toBeInTheDocument();
+    expect(results.getByText(/12 rows reported for this selected run/i)).toBeInTheDocument();
+    expect(results.getByText(/truncated by SafeQuery display limits/i)).toBeInTheDocument();
     expect(results.queryByText(/99 rows/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
   });
@@ -1940,7 +2054,7 @@ describe("HomePage", () => {
       })
     );
 
-    expect(screen.getByText(/empty state reached/i)).toBeInTheDocument();
+    expect(screen.getByText(/empty result state reached/i)).toBeInTheDocument();
 
     rerender(
       await HomePage({

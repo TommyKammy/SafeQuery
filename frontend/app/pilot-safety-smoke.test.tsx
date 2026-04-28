@@ -170,7 +170,7 @@ describe("pilot safety UI smoke", () => {
     );
 
     expect(screen.getByRole("heading", { name: /completed state/i })).toBeInTheDocument();
-    expect(screen.getByText(/2 rows returned; result payload not truncated/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 rows reported for this selected run/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent("backend_execution_result");
     expect(screen.queryByText(/execution results unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/placeholder query results/i)).not.toBeInTheDocument();
