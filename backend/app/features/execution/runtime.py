@@ -138,6 +138,7 @@ class ExecutionResult(BaseModel):
             or audit_event.execution_row_count is None
             or audit_event.execution_row_count < 0
             or audit_event.result_truncated is None
+            or self.metadata.execution_run_id is None
         ):
             return None
 
@@ -150,6 +151,7 @@ class ExecutionResult(BaseModel):
             execution_policy_version=audit_event.execution_policy_version,
             connector_profile_version=audit_event.connector_profile_version,
             candidate_id=audit_event.query_candidate_id,
+            execution_run_id=self.metadata.execution_run_id,
             execution_audit_event_id=audit_event.event_id,
             row_count=audit_event.execution_row_count,
             result_truncated=audit_event.result_truncated,

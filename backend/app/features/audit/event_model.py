@@ -88,6 +88,7 @@ class ExecutedEvidenceAuditPayload(BaseModel):
     execution_policy_version: Optional[PositiveInt] = None
     connector_profile_version: Optional[PositiveInt] = None
     candidate_id: NonEmptyTrimmedString
+    execution_run_id: UUID
     execution_audit_event_id: UUID
     execution_audit_event_type: Literal["execution_completed"] = "execution_completed"
     row_count: NonNegativeInt

@@ -24,6 +24,7 @@ export type AnalystExecutedEvidence = {
   executionPolicyVersion: number | null;
   connectorProfileVersion: number | null;
   candidateId: string;
+  executionRunId: string;
   executionAuditEventId: string;
   executionAuditEventType: "execution_completed";
   rowCount: number;
@@ -263,6 +264,7 @@ function parseExecutedEvidence(value: unknown): AnalystExecutedEvidence | null {
   const executionPolicyVersion = readOptionalPositiveInteger(value.executionPolicyVersion);
   const connectorProfileVersion = readOptionalPositiveInteger(value.connectorProfileVersion);
   const candidateId = readRequiredString(value.candidateId);
+  const executionRunId = readExecutionAuditEventId(value.executionRunId);
   const executionAuditEventId = readExecutionAuditEventId(value.executionAuditEventId);
   const rowCount = readNonNegativeInteger(value.rowCount);
 
@@ -276,6 +278,7 @@ function parseExecutedEvidence(value: unknown): AnalystExecutedEvidence | null {
     executionPolicyVersion === undefined ||
     connectorProfileVersion === undefined ||
     !candidateId ||
+    !executionRunId ||
     !executionAuditEventId ||
     value.executionAuditEventType !== "execution_completed" ||
     rowCount === null ||
@@ -296,6 +299,7 @@ function parseExecutedEvidence(value: unknown): AnalystExecutedEvidence | null {
     executionPolicyVersion,
     connectorProfileVersion,
     candidateId,
+    executionRunId,
     executionAuditEventId,
     executionAuditEventType: "execution_completed",
     rowCount,

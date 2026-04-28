@@ -34,6 +34,7 @@ def _executed_evidence(source_id: str, source_family: str) -> dict[str, object]:
         "execution_policy_version": 3,
         "connector_profile_version": 11,
         "candidate_id": f"{source_id}-candidate-123",
+        "execution_run_id": uuid4(),
         "execution_audit_event_id": uuid4(),
         "execution_audit_event_type": "execution_completed",
         "row_count": 12,

@@ -26,6 +26,7 @@ export type OperatorWorkflowAuditEvent = {
   denialReason: string | null;
   eventId: string;
   eventType: string;
+  executionRunId: string | null;
   guardDecision: string | null;
   occurredAt: string;
   primaryDenyCode: string | null;
@@ -57,6 +58,7 @@ export type OperatorWorkflowExecutedEvidence = {
   authority: "backend_execution_result";
   canAuthorizeExecution: false;
   candidateId: string;
+  executionRunId: string;
   executionAuditEventId: string;
   executionAuditEventType: "execution_completed";
   rowCount: number;
@@ -190,6 +192,7 @@ function parseAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
     denialReason: readOptionalString(value.denialReason) ?? null,
     eventId,
     eventType,
+    executionRunId: readOptionalString(value.executionRunId) ?? null,
     guardDecision: readOptionalString(value.guardDecision) ?? null,
     occurredAt,
     primaryDenyCode: readOptionalString(value.primaryDenyCode) ?? null,
@@ -256,6 +259,7 @@ function parseExecutedEvidence(value: unknown): OperatorWorkflowExecutedEvidence
   }
 
   const candidateId = readOptionalString(value.candidateId);
+  const executionRunId = readOptionalString(value.executionRunId);
   const executionAuditEventId = readOptionalString(value.executionAuditEventId);
   const rowCount = readOptionalNonNegativeInteger(value.rowCount);
   const sourceId = readOptionalString(value.sourceId);
@@ -265,6 +269,7 @@ function parseExecutedEvidence(value: unknown): OperatorWorkflowExecutedEvidence
     value.authority !== "backend_execution_result" ||
     value.canAuthorizeExecution !== false ||
     !candidateId ||
+    !executionRunId ||
     !executionAuditEventId ||
     value.executionAuditEventType !== "execution_completed" ||
     rowCount === undefined ||
@@ -279,6 +284,7 @@ function parseExecutedEvidence(value: unknown): OperatorWorkflowExecutedEvidence
     authority: "backend_execution_result",
     canAuthorizeExecution: false,
     candidateId,
+    executionRunId,
     executionAuditEventId,
     executionAuditEventType: "execution_completed",
     rowCount,

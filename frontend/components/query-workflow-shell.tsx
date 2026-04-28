@@ -551,6 +551,7 @@ function parseExecuteAuditEvent(value: unknown): OperatorWorkflowAuditEvent | nu
     denialReason: readOptionalString(value.denial_reason),
     eventId,
     eventType,
+    executionRunId: null,
     guardDecision: readOptionalString(value.guard_decision),
     occurredAt,
     primaryDenyCode: readOptionalString(value.primary_deny_code),
@@ -622,8 +623,9 @@ function buildExecutedEvidenceFromExecuteResponse(
       event.sourceId === result.sourceId
   );
   const sourceFamily = readOptionalString(metadata.source_family);
+  const executionRunId = readOptionalString(metadata.execution_run_id);
 
-  if (!completedEvent || !sourceFamily) {
+  if (!completedEvent || !sourceFamily || !executionRunId) {
     return [];
   }
 
@@ -632,6 +634,7 @@ function buildExecutedEvidenceFromExecuteResponse(
       authority: "backend_execution_result",
       canAuthorizeExecution: false,
       candidateId: result.candidateId,
+      executionRunId,
       executionAuditEventId: completedEvent.eventId,
       executionAuditEventType: "execution_completed",
       resultTruncated: result.resultTruncated,
@@ -1680,7 +1683,11 @@ function renderAuditEvidencePanel(
               {event.candidateId
                 ? renderHistoryNavigation("candidate", event.candidateId, event.sourceId)
                 : null}
-              {renderHistoryNavigation("run", event.eventId, event.sourceId)}
+              {renderHistoryNavigation(
+                "run",
+                event.executionRunId ?? event.eventId,
+                event.sourceId
+              )}
               {event.rowCount !== null ? <span>{event.rowCount} rows</span> : null}
               {event.resultTruncated !== null ? (
                 <span>{event.resultTruncated ? "Result truncated" : "Result not truncated"}</span>
@@ -1698,7 +1705,7 @@ function renderAuditEvidencePanel(
               <strong>{evidence.authority}</strong>
               <span>{evidence.sourceId}</span>
               {renderHistoryNavigation("candidate", evidence.candidateId, evidence.sourceId)}
-              {renderHistoryNavigation("run", evidence.executionAuditEventId, evidence.sourceId)}
+              {renderHistoryNavigation("run", evidence.executionRunId, evidence.sourceId)}
               <span>{evidence.rowCount} rows</span>
               <span>{evidence.resultTruncated ? "Result truncated" : "Result not truncated"}</span>
               <span>Cannot authorize execution: {String(evidence.canAuthorizeExecution)}</span>

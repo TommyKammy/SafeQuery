@@ -27,6 +27,7 @@ function evidence(sourceId: string, sourceFamily: "mssql" | "postgresql") {
     executionPolicyVersion: 3,
     connectorProfileVersion: 11,
     candidateId: `${sourceId}-candidate-123`,
+    executionRunId: "5dbcc36c-c6d6-4755-b307-5a3af5d6ec24",
     executionAuditEventId: "5dbcc36c-c6d6-4755-b307-5a3af5d6ec25",
     executionAuditEventType: "execution_completed",
     rowCount: 12,

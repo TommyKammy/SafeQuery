@@ -1981,6 +1981,7 @@ describe("HomePage", () => {
                       {
                         eventId: "00000000-0000-4000-8000-000000000012",
                         eventType: "execution_completed",
+                        executionRunId: "00000000-0000-4000-8000-000000000099",
                         occurredAt: "2026-04-21T14:42:17+09:00",
                         requestId: "request-selected",
                         candidateId: "candidate-selected",
@@ -1995,6 +1996,7 @@ describe("HomePage", () => {
                         authority: "backend_execution_result",
                         canAuthorizeExecution: false,
                         candidateId: "candidate-selected",
+                        executionRunId: "00000000-0000-4000-8000-000000000099",
                         executionAuditEventId: "00000000-0000-4000-8000-000000000012",
                         executionAuditEventType: "execution_completed",
                         rowCount: 12,
@@ -2009,7 +2011,7 @@ describe("HomePage", () => {
                     label: "Selected completed run",
                     lifecycleState: "completed",
                     occurredAt: "2026-04-21T14:42:17+09:00",
-                    recordId: "00000000-0000-4000-8000-000000000012",
+                    recordId: "00000000-0000-4000-8000-000000000099",
                     retrievedCitations: [
                       {
                         assetId: "spend-metric-definition",
@@ -2043,7 +2045,7 @@ describe("HomePage", () => {
       await HomePage({
         searchParams: {
           history_item_type: "run",
-          history_record_id: "00000000-0000-4000-8000-000000000012",
+          history_record_id: "00000000-0000-4000-8000-000000000099",
           question: "Selected completed run",
           source_id: "sap-approved-spend",
           state: "completed"
@@ -2085,11 +2087,11 @@ describe("HomePage", () => {
     }
     expect(
       evidence.getAllByRole("link", {
-        name: /open run 00000000-0000-4000-8000-000000000012/i
+        name: /open run 00000000-0000-4000-8000-000000000099/i
       }).every((runLink) =>
         runLink
           .getAttribute("href")
-          ?.includes("history_record_id=00000000-0000-4000-8000-000000000012")
+          ?.includes("history_record_id=00000000-0000-4000-8000-000000000099")
       )
     ).toBe(true);
     expect(screen.getAllByText(/cannot authorize execution: false/i).length).toBeGreaterThan(0);

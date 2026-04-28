@@ -64,6 +64,7 @@ function pilotWorkflowPayload() {
             authority: "backend_execution_result",
             canAuthorizeExecution: false,
             candidateId: "candidate-pilot-001",
+            executionRunId: "run-pilot-001",
             executionAuditEventId: "run-pilot-001",
             executionAuditEventType: "execution_completed",
             resultTruncated: false,
