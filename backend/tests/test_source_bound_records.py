@@ -112,6 +112,7 @@ def test_preview_submission_binds_all_records_to_authoritative_source_id() -> No
         "request": {
             "question": "Show approved vendors by quarterly spend",
             "request_id": payload["request"]["request_id"],
+            "revision_context": None,
             "source_id": "sap-approved-spend",
             "state": "submitted",
         },
