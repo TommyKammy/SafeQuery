@@ -294,4 +294,94 @@ describe("pilot safety UI smoke", () => {
     expect(screen.queryByText(/execution completed/i)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText(/operator history/i)).getByText("Pilot completed run")).toBeInTheDocument();
   });
+
+  it("submits a revised preview attempt with prior run context", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(pilotWorkflowPayload())
+        });
+      }
+
+      if (url.endsWith("/requests/preview")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [],
+                source_id: "demo-business-postgres",
+                state: "recorded"
+              },
+              candidate: {
+                candidate_id: "candidate-revised-001",
+                candidate_sql: null,
+                guard_status: "pending",
+                source_id: "demo-business-postgres",
+                state: "preview_ready"
+              },
+              request: {
+                question: "Pilot source preview with revised filter",
+                request_id: "request-revised-001",
+                revision_context: {
+                  run_id: "run-pilot-001",
+                  source_id: "demo-business-postgres"
+                },
+                source_id: "demo-business-postgres",
+                state: "submitted"
+              }
+            })
+        });
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-pilot-001",
+          question: "Pilot source preview",
+          source_id: "demo-business-postgres",
+          state: "completed"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /revise attempt/i }));
+    expect(screen.getByText(/revised attempt draft/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+      target: { value: "Pilot source preview with revised filter" }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8000/requests/preview",
+        expect.objectContaining({
+          body: JSON.stringify({
+            question: "Pilot source preview with revised filter",
+            source_id: "demo-business-postgres",
+            revise_from: {
+              item_type: "run",
+              request_id: "request-pilot-001",
+              candidate_id: "candidate-pilot-001",
+              run_id: "run-pilot-001"
+            }
+          }),
+          method: "POST"
+        })
+      );
+    });
+  });
 });

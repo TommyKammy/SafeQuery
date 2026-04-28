@@ -358,6 +358,60 @@ def test_operator_workflow_history_is_built_from_preview_request_and_candidate_r
     assert history[1]["auditEvents"][0]["eventType"] == "guard_evaluated"
 
 
+def test_operator_workflow_history_marks_revised_attempt_context() -> None:
+    with _session_scope() as session:
+        _seed_authoritative_source_governance(session)
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+            ),
+            subject,
+            session,
+            audit_context=_audit_context(
+                request_id="preview-request-original",
+                candidate_id="preview-candidate-original",
+            ),
+        )
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by yearly spend",
+                source_id="sap-approved-spend",
+                revise_from={
+                    "item_type": "candidate",
+                    "request_id": "preview-request-original",
+                    "candidate_id": "preview-candidate-original",
+                },
+            ),
+            subject,
+            session,
+            audit_context=_audit_context(
+                request_id="preview-request-revised",
+                candidate_id="preview-candidate-revised",
+            ),
+        )
+
+        snapshot = get_operator_workflow_snapshot(session)
+
+    history = [
+        item.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for item in snapshot.history
+    ]
+    revised_candidate = next(
+        item for item in history if item["recordId"] == "preview-candidate-revised"
+    )
+    assert revised_candidate["revisionContext"] == {
+        "requestId": "preview-request-original",
+        "candidateId": "preview-candidate-original",
+        "sourceId": "sap-approved-spend",
+    }
+
+
 def test_operator_workflow_history_includes_execution_run_records() -> None:
     with _session_scope() as session:
         _seed_authoritative_source_governance(session)

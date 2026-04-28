@@ -8,6 +8,7 @@ import type {
   OperatorWorkflowAuditEvent,
   OperatorWorkflowExecutedEvidence,
   OperatorHistoryItem,
+  OperatorWorkflowRevisionContext,
   OperatorWorkflowRetrievedCitation,
   OperatorWorkflowSnapshot,
   SourceOption
@@ -72,6 +73,14 @@ type ResolvedSourceBinding = {
 type WorkflowHrefContext = {
   historyItemType?: OperatorHistoryItem["itemType"];
   historyRecordId?: string;
+};
+
+type RevisionDraftContext = {
+  candidateId?: string;
+  itemType: "request" | "candidate" | "run";
+  requestId?: string;
+  runId?: string;
+  sourceId: string;
 };
 
 type FirstRunGuidance = {
@@ -1060,6 +1069,91 @@ function findAuthoritativeRunContext(
   };
 }
 
+function revisionDraftFromSelectedContext(
+  state: CanonicalWorkflowState,
+  candidatePreview: AuthoritativeCandidatePreview | null,
+  runContext: AuthoritativeRunContext | null,
+  sourceId?: string
+): RevisionDraftContext | null {
+  if (state === "review_denied" && candidatePreview) {
+    return {
+      candidateId: candidatePreview.candidateId,
+      itemType: "candidate",
+      requestId: candidatePreview.requestId,
+      sourceId: candidatePreview.sourceId
+    };
+  }
+
+  if (
+    runContext &&
+    sourceId &&
+    (state === "completed" || state === "empty" || state === "failed")
+  ) {
+    const auditEvent = runContext.auditEvents.find(
+      (event) => event.eventId === runContext.runIdentity
+    );
+    return {
+      candidateId: auditEvent?.candidateId ?? undefined,
+      itemType: "run",
+      requestId: auditEvent?.requestId,
+      runId: runContext.runIdentity,
+      sourceId
+    };
+  }
+
+  return null;
+}
+
+function revisionDraftFromHistoryContext(
+  revisionContext?: OperatorWorkflowRevisionContext | null
+): RevisionDraftContext | null {
+  if (!revisionContext) {
+    return null;
+  }
+
+  if (revisionContext.runId) {
+    return {
+      candidateId: revisionContext.candidateId ?? undefined,
+      itemType: "run",
+      requestId: revisionContext.requestId ?? undefined,
+      runId: revisionContext.runId,
+      sourceId: revisionContext.sourceId
+    };
+  }
+
+  if (revisionContext.candidateId) {
+    return {
+      candidateId: revisionContext.candidateId,
+      itemType: "candidate",
+      requestId: revisionContext.requestId ?? undefined,
+      sourceId: revisionContext.sourceId
+    };
+  }
+
+  if (revisionContext.requestId) {
+    return {
+      itemType: "request",
+      requestId: revisionContext.requestId,
+      sourceId: revisionContext.sourceId
+    };
+  }
+
+  return null;
+}
+
+function serializeRevisionDraft(revision: RevisionDraftContext | null) {
+  if (!revision) {
+    return undefined;
+  }
+
+  return {
+    item_type: revision.itemType,
+    request_id: revision.requestId,
+    candidate_id: revision.candidateId,
+    run_id: revision.runId
+  };
+}
+
 function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null) {
   if (!preview) {
     return (
@@ -1507,7 +1601,8 @@ function renderStatePanel(
   question: string,
   sourceId?: string,
   canOpenCompleted = false,
-  context?: WorkflowHrefContext
+  context?: WorkflowHrefContext,
+  onStartRevision?: () => void
 ) {
   if (state === "signin") {
     return (
@@ -1567,9 +1662,11 @@ function renderStatePanel(
           <a className="action-link" href={buildStateHref("empty", question, sourceId)}>
             Open empty state
           </a>
-          <a className="ghost-link" href={buildStateHref("failed", question, sourceId)}>
-            Open failed state
-          </a>
+          {onStartRevision ? (
+            <button className="ghost-button" onClick={onStartRevision} type="button">
+              Revise attempt
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -1585,9 +1682,11 @@ function renderStatePanel(
           denial, auth failure, or transport issues.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("query", question, sourceId)}>
-            Revise question
-          </a>
+          {onStartRevision ? (
+            <button className="action-button" onClick={onStartRevision} type="button">
+              Revise attempt
+            </button>
+          ) : null}
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
             Back to SQL preview
           </a>
@@ -1606,9 +1705,11 @@ function renderStatePanel(
           sees a blocked candidate, not a synthetic run outcome.
         </p>
         <div className="action-row">
-          <a className="action-link" href={buildStateHref("query", question, sourceId)}>
-            Return to query input
-          </a>
+          {onStartRevision ? (
+            <button className="action-button" onClick={onStartRevision} type="button">
+              Revise attempt
+            </button>
+          ) : null}
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
             Back to SQL preview
           </a>
@@ -1630,9 +1731,6 @@ function renderStatePanel(
           <a className="action-link" href={buildStateHref("preview", question, sourceId)}>
             Back to SQL preview
           </a>
-          <a className="ghost-link" href={buildStateHref("query", question, sourceId)}>
-            Revise question
-          </a>
         </div>
       </div>
     );
@@ -1651,9 +1749,11 @@ function renderStatePanel(
           <a className="action-link" href={buildStateHref("completed", question, sourceId)}>
             Open completed state
           </a>
-          <a className="ghost-link" href={buildStateHref("query", question, sourceId)}>
-            Revise question
-          </a>
+          {onStartRevision ? (
+            <button className="ghost-button" onClick={onStartRevision} type="button">
+              Revise attempt
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -1716,6 +1816,7 @@ export function QueryWorkflowShell({
   const [submittedQuestion, setSubmittedQuestion] = useState(question);
   const [submittedSourceId, setSubmittedSourceId] = useState(sourceId);
   const [submittedState, setSubmittedState] = useState(requestedState);
+  const [revisionDraft, setRevisionDraft] = useState<RevisionDraftContext | null>(null);
 
   useEffect(() => {
     setSubmittedQuestion(question);
@@ -1725,6 +1826,7 @@ export function QueryWorkflowShell({
     setExecuteSubmission({ status: "idle" });
     setSubmittedCandidatePreview(null);
     setSubmittedRunContext(null);
+    setRevisionDraft(null);
   }, [question, requestedState, sourceId]);
 
   const sourceBinding = resolveSourceBinding(
@@ -1790,6 +1892,28 @@ export function QueryWorkflowShell({
     normalizedState,
     operatorWorkflow
   );
+  const selectedRevisionDraft = revisionDraftFromSelectedContext(
+    normalizedState,
+    candidatePreview,
+    historyRunContext,
+    submittedSourceId
+  );
+  const selectedHistoryItem = historyRecordId
+    ? operatorWorkflow.history.find((item) => item.recordId === historyRecordId)
+    : undefined;
+
+  function startRevision() {
+    const nextRevisionDraft = selectedRevisionDraft;
+    if (!nextRevisionDraft) {
+      return;
+    }
+    setRevisionDraft(nextRevisionDraft);
+    setSubmittedQuestion(submittedQuestion);
+    setSubmittedSourceId(submittedSourceId ?? nextRevisionDraft.sourceId);
+    setSubmittedState("query");
+    setPreviewSubmission({ status: "idle" });
+    setExecuteSubmission({ status: "idle" });
+  }
 
   async function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1845,7 +1969,8 @@ export function QueryWorkflowShell({
       const response = await fetch(`${apiUrl}/requests/preview`, {
         body: JSON.stringify({
           question: submittedQuestionText,
-          source_id: selectedSourceId
+          source_id: selectedSourceId,
+          revise_from: serializeRevisionDraft(revisionDraft)
         }),
         credentials: "same-origin",
         headers,
@@ -1883,6 +2008,7 @@ export function QueryWorkflowShell({
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
         setSubmittedState("review_denied");
+        setRevisionDraft(null);
         setSubmittedCandidatePreview({
           auditEvents: [],
           candidateId: result.candidateId,
@@ -1940,6 +2066,7 @@ export function QueryWorkflowShell({
       setSubmittedQuestion(submittedQuestionText);
       setSubmittedSourceId(result.sourceId);
       setSubmittedState("preview");
+      setRevisionDraft(null);
       setSubmittedCandidatePreview({
         auditEvents: [],
         candidateId: result.candidateId,
@@ -2192,7 +2319,8 @@ export function QueryWorkflowShell({
               question,
               candidateSourceId,
               canOpenCompletedFromPreview,
-              historyHrefContext
+              historyHrefContext,
+              selectedRevisionDraft ? startRevision : undefined
             )}
           </section>
 
@@ -2210,6 +2338,15 @@ export function QueryWorkflowShell({
             <form className="query-form" onSubmit={submitPreview}>
               {sourceSelectVisible ? (
                 <>
+                  {revisionDraft ? (
+                    <div className="state-callout state-callout-warning">
+                      <p className="state-callout-title">Revised attempt draft</p>
+                      <p>
+                        New preview will keep prior context from {revisionDraft.itemType}{" "}
+                        {revisionDraft.runId ?? revisionDraft.candidateId ?? revisionDraft.requestId}.
+                      </p>
+                    </div>
+                  ) : null}
                   <label className="field-label" htmlFor="source_id">
                     Source
                   </label>
@@ -2449,6 +2586,16 @@ export function QueryWorkflowShell({
                 </span>
                 <strong>{workflowContext.candidateIdentity ?? "Draft only"}</strong>
               </div>
+              {selectedHistoryItem?.revisionContext ? (
+                <div className="guard-item">
+                  <span className="meta-label">Revised from</span>
+                  <strong>
+                    {selectedHistoryItem.revisionContext.runId ??
+                      selectedHistoryItem.revisionContext.candidateId ??
+                      selectedHistoryItem.revisionContext.requestId}
+                  </strong>
+                </div>
+              ) : null}
               <div className="guard-item">
                 <span className="meta-label">
                   {workflowContext.candidateState ? "Candidate state" : "Lifecycle state"}
