@@ -57,6 +57,13 @@ export type OperatorWorkflowRetrievedCitation = {
   sourceFlavor: string | null;
 };
 
+export type OperatorWorkflowRevisionContext = {
+  candidateId?: string | null;
+  requestId?: string | null;
+  runId?: string | null;
+  sourceId: string;
+};
+
 export type OperatorHistoryItem = {
   auditEvents: OperatorWorkflowAuditEvent[];
   candidateSql?: string | null;
@@ -75,6 +82,7 @@ export type OperatorHistoryItem = {
   sourceId: string;
   sourceLabel: string;
   retrievedCitations: OperatorWorkflowRetrievedCitation[];
+  revisionContext?: OperatorWorkflowRevisionContext | null;
 };
 
 export type OperatorWorkflowSnapshot = {
@@ -243,6 +251,27 @@ function parseRetrievedCitation(value: unknown): OperatorWorkflowRetrievedCitati
   };
 }
 
+function parseRevisionContext(value: unknown): OperatorWorkflowRevisionContext | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const sourceId = readOptionalString(value.sourceId);
+  if (!sourceId) {
+    return null;
+  }
+
+  return {
+    candidateId: readOptionalString(value.candidateId) ?? null,
+    requestId: readOptionalString(value.requestId) ?? null,
+    runId: readOptionalString(value.runId) ?? null,
+    sourceId
+  };
+}
+
 function parseGovernanceBindingStatus(value: unknown): GovernanceBindingStatus | null {
   if (!isObject(value)) {
     return null;
@@ -317,6 +346,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
   const auditEvents = parseArray(value.auditEvents, parseAuditEvent);
   const executedEvidence = parseArray(value.executedEvidence, parseExecutedEvidence);
   const retrievedCitations = parseArray(value.retrievedCitations, parseRetrievedCitation);
+  const revisionContext = parseRevisionContext(value.revisionContext);
 
   if (
     (itemType !== "request" && itemType !== "candidate" && itemType !== "run") ||
@@ -351,7 +381,8 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     runState: readOptionalString(value.runState) ?? null,
     sourceId,
     sourceLabel,
-    retrievedCitations
+    retrievedCitations,
+    revisionContext
   };
 }
 

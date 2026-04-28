@@ -56,6 +56,22 @@ class PreviewRequest(Base):
     session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     governance_bindings: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     entitlement_decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    revised_from_request_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    revised_from_candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    revised_from_run_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    revised_from_source_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     request_text: Mapped[str] = mapped_column(Text, nullable=False)
     request_state: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -119,6 +135,22 @@ class PreviewCandidate(Base):
     )
     schema_snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False)
     authenticated_subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    revised_from_request_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    revised_from_candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    revised_from_run_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    revised_from_source_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     candidate_sql: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     adapter_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     adapter_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

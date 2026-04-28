@@ -294,4 +294,274 @@ describe("pilot safety UI smoke", () => {
     expect(screen.queryByText(/execution completed/i)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText(/operator history/i)).getByText("Pilot completed run")).toBeInTheDocument();
   });
+
+  it("submits a revised preview attempt with prior run context", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(pilotWorkflowPayload())
+        });
+      }
+
+      if (url.endsWith("/requests/preview")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [],
+                source_id: "demo-business-postgres",
+                state: "recorded"
+              },
+              candidate: {
+                candidate_id: "candidate-revised-001",
+                candidate_sql: null,
+                guard_status: "pending",
+                source_id: "demo-business-postgres",
+                state: "preview_ready"
+              },
+              request: {
+                question: "Pilot source preview with revised filter",
+                request_id: "request-revised-001",
+                revision_context: {
+                  item_type: "run",
+                  request_id: "request-pilot-001",
+                  candidate_id: "candidate-pilot-001",
+                  run_id: "run-pilot-001",
+                  lifecycle_state: "completed",
+                  source_id: "demo-business-postgres"
+                },
+                source_id: "demo-business-postgres",
+                state: "submitted"
+              }
+            })
+        });
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-pilot-001",
+          question: "Pilot source preview",
+          source_id: "demo-business-postgres",
+          state: "completed"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /revise attempt/i }));
+    expect(screen.getByText(/revised attempt draft/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+      target: { value: "Pilot source preview with revised filter" }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8000/requests/preview",
+        expect.objectContaining({
+          body: JSON.stringify({
+            question: "Pilot source preview with revised filter",
+            source_id: "demo-business-postgres",
+            revise_from: {
+              item_type: "run",
+              request_id: "request-pilot-001",
+              candidate_id: "candidate-pilot-001",
+              run_id: "run-pilot-001"
+            }
+          }),
+          method: "POST"
+        })
+      );
+    });
+  });
+
+  it("submits a revised preview attempt from execution-denied run context", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        const payload = pilotWorkflowPayload();
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              ...payload,
+              history: [
+                ...payload.history,
+                {
+                  auditEvents: [
+                    {
+                      candidateId: "candidate-pilot-001",
+                      candidateState: "preview_ready",
+                      eventId: "run-pilot-denied-001",
+                      eventType: "execution_denied",
+                      occurredAt: "2026-04-21T14:40:00Z",
+                      primaryDenyCode: "DENY_EXECUTION_POLICY",
+                      requestId: "request-pilot-001",
+                      resultTruncated: null,
+                      rowCount: null,
+                      sourceId: "demo-business-postgres"
+                    }
+                  ],
+                  executedEvidence: [],
+                  itemType: "run",
+                  label: "Pilot denied run",
+                  lifecycleState: "execution_denied",
+                  occurredAt: "2026-04-21T14:40:00Z",
+                  recordId: "run-pilot-denied-001",
+                  requestId: "request-pilot-001",
+                  retrievedCitations: [],
+                  runState: "execution_denied",
+                  sourceId: "demo-business-postgres",
+                  sourceLabel: "Demo business PostgreSQL / approved_vendor_spend"
+                }
+              ]
+            })
+        });
+      }
+
+      if (url.endsWith("/requests/preview")) {
+        return new Promise(() => {});
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-pilot-denied-001",
+          question: "Pilot denied run",
+          source_id: "demo-business-postgres",
+          state: "execution_denied"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /revise attempt/i }));
+    fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+      target: { value: "Pilot denied run with revised filter" }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8000/requests/preview",
+        expect.objectContaining({
+          body: JSON.stringify({
+            question: "Pilot denied run with revised filter",
+            source_id: "demo-business-postgres",
+            revise_from: {
+              item_type: "run",
+              request_id: "request-pilot-001",
+              candidate_id: "candidate-pilot-001",
+              run_id: "run-pilot-denied-001"
+            }
+          }),
+          method: "POST"
+        })
+      );
+    });
+  });
+
+  it.each([
+    ["preview_unavailable", "unavailable"],
+    ["preview_malformed", "malformed"]
+  ])(
+    "submits a revised preview attempt from %s request-backed failure history",
+    async (lifecycleState, failureLabel) => {
+      const requestId = `request-pilot-${failureLabel}-001`;
+      const question = `Pilot ${failureLabel} preview`;
+      const revisedQuestion = `Pilot ${failureLabel} preview with revised source context`;
+      const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          const payload = pilotWorkflowPayload();
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                ...payload,
+                history: [
+                  {
+                    auditEvents: [],
+                    executedEvidence: [],
+                    itemType: "request",
+                    label: question,
+                    lifecycleState,
+                    occurredAt: "2026-04-21T14:42:00Z",
+                    recordId: requestId,
+                    retrievedCitations: [],
+                    sourceId: "demo-business-postgres",
+                    sourceLabel: "Demo business PostgreSQL / approved_vendor_spend"
+                  },
+                  ...payload.history
+                ]
+              })
+          });
+        }
+
+        if (url.endsWith("/requests/preview")) {
+          return new Promise(() => {});
+        }
+
+        return new Promise(() => {});
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        await HomePage({
+          searchParams: {
+            history_item_type: "request",
+            history_record_id: requestId,
+            question,
+            source_id: "demo-business-postgres",
+            state: "review_denied"
+          }
+        })
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /revise attempt/i }));
+      fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+        target: { value: revisedQuestion }
+      });
+      fireEvent.submit(
+        screen.getByRole("button", { name: /submit for preview/i }).closest("form")!
+      );
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "http://127.0.0.1:8000/requests/preview",
+          expect.objectContaining({
+            body: JSON.stringify({
+              question: revisedQuestion,
+              source_id: "demo-business-postgres",
+              revise_from: {
+                item_type: "request",
+                request_id: requestId
+              }
+            }),
+            method: "POST"
+          })
+        );
+      });
+    }
+  );
 });

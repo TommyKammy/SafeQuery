@@ -88,6 +88,19 @@ class OperatorWorkflowHistoryItem(BaseModel):
         default_factory=list,
         serialization_alias="retrievedCitations",
     )
+    revision_context: Optional["OperatorWorkflowRevisionContext"] = Field(
+        default=None,
+        serialization_alias="revisionContext",
+    )
+
+
+class OperatorWorkflowRevisionContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: Optional[str] = Field(default=None, serialization_alias="requestId")
+    candidate_id: Optional[str] = Field(default=None, serialization_alias="candidateId")
+    run_id: Optional[str] = Field(default=None, serialization_alias="runId")
+    source_id: str = Field(serialization_alias="sourceId")
 
 
 class OperatorWorkflowAuditEventSummary(BaseModel):
@@ -533,6 +546,25 @@ def _history_occurred_at(
     return _as_utc_datetime(event.occurred_at if event is not None else fallback)
 
 
+def _revision_context_for_record(
+    *,
+    request_id: str | None,
+    candidate_id: str | None,
+    run_id: str | None,
+    source_id: str | None,
+) -> OperatorWorkflowRevisionContext | None:
+    if source_id is None or (
+        request_id is None and candidate_id is None and run_id is None
+    ):
+        return None
+    return OperatorWorkflowRevisionContext(
+        request_id=request_id,
+        candidate_id=candidate_id,
+        run_id=run_id,
+        source_id=source_id,
+    )
+
+
 def _build_operator_history(
     session: Session,
     *,
@@ -608,6 +640,12 @@ def _build_operator_history(
                 retrieved_citations=(
                     _retrieved_citations_for_event(candidate_event) if candidate_event else []
                 ),
+                revision_context=_revision_context_for_record(
+                    request_id=candidate.revised_from_request_id,
+                    candidate_id=candidate.revised_from_candidate_id,
+                    run_id=candidate.revised_from_run_id,
+                    source_id=candidate.revised_from_source_id,
+                ),
             )
         )
 
@@ -633,6 +671,12 @@ def _build_operator_history(
                 ),
                 retrieved_citations=(
                     _retrieved_citations_for_event(request_event) if request_event else []
+                ),
+                revision_context=_revision_context_for_record(
+                    request_id=request.revised_from_request_id,
+                    candidate_id=request.revised_from_candidate_id,
+                    run_id=request.revised_from_run_id,
+                    source_id=request.revised_from_source_id,
                 ),
             )
         )

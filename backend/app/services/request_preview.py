@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from typing import Any, NoReturn, Optional
+from typing import Any, Literal, NoReturn, Optional
 from typing_extensions import Annotated
 from uuid import UUID, uuid4
 
@@ -138,6 +138,17 @@ class PreviewSubmissionRequest(BaseModel):
 
     question: NonEmptyTrimmedString
     source_id: NonEmptyTrimmedString
+    revise_from: Optional["PreviewRevisionContext"] = None
+
+
+class PreviewRevisionContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["request", "candidate", "run"]
+    request_id: Optional[NonEmptyTrimmedString] = None
+    candidate_id: Optional[NonEmptyTrimmedString] = None
+    run_id: Optional[NonEmptyTrimmedString] = None
+    lifecycle_state: Optional[NonEmptyTrimmedString] = None
 
 
 class RequestRecord(BaseModel):
@@ -145,6 +156,7 @@ class RequestRecord(BaseModel):
     request_id: str
     source_id: str
     state: str
+    revision_context: Optional["RevisionRecord"] = None
 
 
 class CandidateRecord(BaseModel):
@@ -159,6 +171,16 @@ class CandidateRecord(BaseModel):
     state: str
     primary_deny_code: Optional[str] = None
     denial_reason: Optional[str] = None
+    revision_context: Optional["RevisionRecord"] = None
+
+
+class RevisionRecord(BaseModel):
+    item_type: Literal["request", "candidate", "run"]
+    request_id: Optional[str] = None
+    candidate_id: Optional[str] = None
+    run_id: Optional[str] = None
+    source_id: str
+    lifecycle_state: Optional[str] = None
 
 
 class AuditRecord(BaseModel):
@@ -565,6 +587,152 @@ def _joined_governance_bindings(bindings: list[str]) -> str | None:
     return ",".join(sorted(bindings)) if bindings else None
 
 
+def _terminal_run_state(event: PreviewAuditEvent) -> str | None:
+    if event.event_type == "execution_completed":
+        row_count = event.audit_payload.get("execution_row_count")
+        return "empty" if row_count == 0 else "completed"
+    if event.event_type == "execution_denied":
+        return "execution_denied"
+    if event.event_type == "execution_failed":
+        return "canceled" if event.candidate_state == "canceled" else "failed"
+    return None
+
+
+def _resolve_revision_record(
+    session: Session,
+    revision: PreviewRevisionContext | None,
+) -> RevisionRecord | None:
+    if revision is None:
+        return None
+
+    if revision.item_type == "request":
+        if revision.request_id is None:
+            raise PreviewSubmissionContractError(
+                "Revision context for a request requires an authoritative request id."
+            )
+        if revision.candidate_id is not None or revision.run_id is not None:
+            raise PreviewSubmissionContractError(
+                "Revision context for a request cannot include candidate_id or run_id."
+            )
+        request = session.scalar(
+            select(PreviewRequest).where(
+                PreviewRequest.request_id == revision.request_id
+            )
+        )
+        if request is None:
+            raise PreviewSubmissionContractError(
+                "Revision context references an unknown preview request."
+            )
+        if (
+            revision.lifecycle_state is not None
+            and revision.lifecycle_state != request.request_state
+        ):
+            raise PreviewSubmissionContractError(
+                "Revision context lifecycle_state does not match request_state."
+            )
+        if request.request_state not in {
+            "blocked",
+            "preview_denied",
+            "preview_generation_failed",
+            "preview_malformed",
+            "preview_unavailable",
+        }:
+            raise PreviewSubmissionContractError(
+                "Preview request state is not eligible for revision."
+            )
+        return RevisionRecord(
+            item_type="request",
+            request_id=request.request_id,
+            source_id=request.source_id,
+            lifecycle_state=request.request_state,
+        )
+
+    if revision.item_type == "candidate":
+        if revision.candidate_id is None:
+            raise PreviewSubmissionContractError(
+                "Revision context for a candidate requires an authoritative candidate id."
+            )
+        if revision.run_id is not None:
+            raise PreviewSubmissionContractError(
+                "Revision context for a candidate cannot include run_id."
+            )
+        candidate = session.scalar(
+            select(PreviewCandidate).where(
+                PreviewCandidate.candidate_id == revision.candidate_id
+            )
+        )
+        if candidate is None:
+            raise PreviewSubmissionContractError(
+                "Revision context references an unknown preview candidate."
+            )
+        if (
+            revision.lifecycle_state is not None
+            and revision.lifecycle_state != candidate.candidate_state
+        ):
+            raise PreviewSubmissionContractError(
+                "Revision context lifecycle_state does not match candidate_state."
+            )
+        if candidate.candidate_state not in {"blocked", "preview_ready"}:
+            raise PreviewSubmissionContractError(
+                "Preview candidate state is not eligible for revision."
+            )
+        if revision.request_id is not None and revision.request_id != candidate.request_id:
+            raise PreviewSubmissionContractError(
+                "Revision context candidate does not belong to the supplied request."
+            )
+        return RevisionRecord(
+            item_type="candidate",
+            request_id=candidate.request_id,
+            candidate_id=candidate.candidate_id,
+            source_id=candidate.source_id,
+            lifecycle_state=candidate.candidate_state,
+        )
+
+    if revision.run_id is None:
+        raise PreviewSubmissionContractError(
+            "Revision context for a run requires an authoritative run id."
+        )
+    try:
+        run_event_id = UUID(revision.run_id)
+    except ValueError as exc:
+        raise PreviewSubmissionContractError(
+            "Revision context run id is malformed."
+        ) from exc
+
+    run_event = session.scalar(
+        select(PreviewAuditEvent).where(PreviewAuditEvent.event_id == run_event_id)
+    )
+    if run_event is None:
+        raise PreviewSubmissionContractError(
+            "Revision context references an unknown execution run."
+        )
+    run_state = _terminal_run_state(run_event)
+    if run_state not in {"completed", "empty", "failed", "execution_denied"}:
+        raise PreviewSubmissionContractError(
+            "Execution run state is not eligible for revision."
+        )
+    if revision.lifecycle_state is not None and revision.lifecycle_state != run_state:
+        raise PreviewSubmissionContractError(
+            "Revision context lifecycle_state does not match run_state."
+        )
+    if revision.candidate_id is not None and revision.candidate_id != run_event.candidate_id:
+        raise PreviewSubmissionContractError(
+            "Revision context run does not belong to the supplied candidate."
+        )
+    if revision.request_id is not None and revision.request_id != run_event.request_id:
+        raise PreviewSubmissionContractError(
+            "Revision context run does not belong to the supplied request."
+        )
+    return RevisionRecord(
+        item_type="run",
+        request_id=run_event.request_id,
+        candidate_id=run_event.candidate_id,
+        run_id=str(run_event.event_id),
+        source_id=run_event.source_id,
+        lifecycle_state=run_state,
+    )
+
+
 def _persist_preview_audit_events(
     session: Session,
     *,
@@ -822,6 +990,7 @@ def _persist_preview_submission_records(
     candidate_state: str = "preview_ready",
     guard_status: GuardStatus = PREVIEW_PENDING_GUARD_STATUS,
 ) -> tuple[str, str]:
+    revision_record = _resolve_revision_record(session, payload.revise_from)
     request_id = (
         audit_context.request_id
         if audit_context is not None and audit_context.request_id.strip()
@@ -840,6 +1009,14 @@ def _persist_preview_submission_records(
     governance_bindings = _joined_governance_bindings(
         sorted(authenticated_subject.normalized_governance_bindings())
     )
+    if revision_record is not None and (
+        request_id == revision_record.request_id
+        or candidate_id == revision_record.candidate_id
+    ):
+        _raise_preview_persistence_contract_error(
+            session,
+            "Revised preview attempts must use new request and candidate identities.",
+        )
 
     for attempt in range(2):
         try:
@@ -849,6 +1026,11 @@ def _persist_preview_submission_records(
             if preview_request is None:
                 preview_request = PreviewRequest(request_id=request_id)
                 session.add(preview_request)
+            elif revision_record is not None:
+                _raise_preview_persistence_contract_error(
+                    session,
+                    "Revised preview attempts cannot overwrite an existing request.",
+                )
             elif preview_request.registered_source_id != resolved_source.id:
                 _raise_preview_persistence_contract_error(
                     session,
@@ -872,6 +1054,18 @@ def _persist_preview_submission_records(
             )
             preview_request.governance_bindings = governance_bindings
             preview_request.entitlement_decision = "allow"
+            preview_request.revised_from_request_id = (
+                revision_record.request_id if revision_record is not None else None
+            )
+            preview_request.revised_from_candidate_id = (
+                revision_record.candidate_id if revision_record is not None else None
+            )
+            preview_request.revised_from_run_id = (
+                revision_record.run_id if revision_record is not None else None
+            )
+            preview_request.revised_from_source_id = (
+                revision_record.source_id if revision_record is not None else None
+            )
             preview_request.request_text = payload.question
             preview_request.request_state = request_state
             session.flush()
@@ -882,12 +1076,22 @@ def _persist_preview_submission_records(
                     PreviewCandidate.source_id == resolved_source.source_id,
                 )
             ).scalar_one_or_none()
+            if preview_candidate is not None and revision_record is not None:
+                _raise_preview_persistence_contract_error(
+                    session,
+                    "Revised preview attempts cannot overwrite an existing candidate.",
+                )
             if preview_candidate is None:
                 preview_candidate = session.execute(
                     select(PreviewCandidate).where(
                         PreviewCandidate.candidate_id == candidate_id
                     )
                 ).scalar_one_or_none()
+                if preview_candidate is not None and revision_record is not None:
+                    _raise_preview_persistence_contract_error(
+                        session,
+                        "Revised preview attempts cannot overwrite an existing candidate.",
+                    )
                 if preview_candidate is None:
                     preview_candidate = PreviewCandidate(candidate_id=candidate_id)
                     session.add(preview_candidate)
@@ -928,6 +1132,18 @@ def _persist_preview_submission_records(
             preview_candidate.schema_snapshot_id = schema_snapshot.id
             preview_candidate.schema_snapshot_version = schema_snapshot.snapshot_version
             preview_candidate.authenticated_subject_id = subject_id
+            preview_candidate.revised_from_request_id = (
+                revision_record.request_id if revision_record is not None else None
+            )
+            preview_candidate.revised_from_candidate_id = (
+                revision_record.candidate_id if revision_record is not None else None
+            )
+            preview_candidate.revised_from_run_id = (
+                revision_record.run_id if revision_record is not None else None
+            )
+            preview_candidate.revised_from_source_id = (
+                revision_record.source_id if revision_record is not None else None
+            )
             preview_candidate.candidate_sql = candidate_sql
             preview_candidate.adapter_provider = (
                 adapter_metadata.adapter_provider if adapter_metadata is not None else None
@@ -1063,6 +1279,7 @@ def _persist_preview_denial_records(
     request_state: str = "preview_denied",
     entitlement_decision: str = "deny",
 ) -> None:
+    revision_record = _resolve_revision_record(session, payload.revise_from)
     request_id = (
         audit_context.request_id
         if audit_context is not None and audit_context.request_id.strip()
@@ -1072,6 +1289,11 @@ def _persist_preview_denial_records(
     governance_bindings = _joined_governance_bindings(
         sorted(authenticated_subject.normalized_governance_bindings())
     )
+    if revision_record is not None and request_id == revision_record.request_id:
+        _raise_preview_persistence_contract_error(
+            session,
+            "Revised preview attempts must use a new request identity.",
+        )
 
     try:
         preview_request = session.execute(
@@ -1080,6 +1302,11 @@ def _persist_preview_denial_records(
         if preview_request is None:
             preview_request = PreviewRequest(request_id=request_id)
             session.add(preview_request)
+        elif revision_record is not None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Revised preview attempts cannot overwrite an existing request.",
+            )
         elif preview_request.registered_source_id != resolved_source.id:
             _raise_preview_persistence_contract_error(
                 session,
@@ -1103,6 +1330,18 @@ def _persist_preview_denial_records(
         )
         preview_request.governance_bindings = governance_bindings
         preview_request.entitlement_decision = entitlement_decision
+        preview_request.revised_from_request_id = (
+            revision_record.request_id if revision_record is not None else None
+        )
+        preview_request.revised_from_candidate_id = (
+            revision_record.candidate_id if revision_record is not None else None
+        )
+        preview_request.revised_from_run_id = (
+            revision_record.run_id if revision_record is not None else None
+        )
+        preview_request.revised_from_source_id = (
+            revision_record.source_id if revision_record is not None else None
+        )
         preview_request.request_text = payload.question
         preview_request.request_state = request_state
         session.flush()
@@ -1265,6 +1504,7 @@ def submit_preview_request(
         dataset_contract=dataset_contract,
         entitlement_decision="allow",
     )
+    revision_record = _resolve_revision_record(session, payload.revise_from)
 
     candidate_sql: str | None = None
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None
@@ -1375,6 +1615,7 @@ def submit_preview_request(
             request_id=request_id,
             source_id=resolved_source.source_id,
             state="submitted",
+            revision_context=revision_record,
         ),
         candidate=CandidateRecord(
             candidate_id=candidate_id,
@@ -1388,6 +1629,7 @@ def submit_preview_request(
             state=candidate_state,
             primary_deny_code=primary_deny_code,
             denial_reason=denial_reason,
+            revision_context=revision_record,
         ),
         audit=audit,
         evaluation=EvaluationRecord(
