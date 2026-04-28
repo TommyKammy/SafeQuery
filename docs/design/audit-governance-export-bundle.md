@@ -100,6 +100,12 @@ passwords, no tokens, no cookies, no CSRF secrets, no private keys, no raw
 identity payloads, no raw SQL, no raw result rows, no source connection
 references, and no workstation-local absolute paths.
 
+This differs from the authorized operator workflow review surface. Operators may
+see raw candidate SQL there while reviewing a server-owned candidate under the
+authenticated SafeQuery workflow context, but that visibility does not carry into
+support bundles, handoff exports, dedicated governance review exports, MLflow
+artifacts, analyst context, or any other shared diagnostic artifact.
+
 Redacted fields should be omitted or replaced with stable redaction markers such
 as `<redacted>`. A missing field means unavailable or intentionally redacted; it
 is not proof that the omitted action was safe.

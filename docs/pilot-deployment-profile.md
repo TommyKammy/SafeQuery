@@ -160,6 +160,12 @@ include application version, environment label, source ids, source posture,
 health summaries, migration posture, workflow state summaries, lifecycle
 metrics, and audit completeness counts.
 
+They are not the same surface as authorized operator SQL review. Raw candidate
+SQL may appear in the SafeQuery operator workflow only for an authenticated,
+authorized operator reviewing a server-owned candidate in its selected source
+context. Sharing artifacts must use the redacted export or support-bundle
+boundary instead of carrying that raw preview text forward.
+
 Dedicated governance review exports are separate reviewer-scoped artifacts, not
 support bundles with a broader audience. Use
 `docs/design/audit-governance-export-bundle.md` for the required source/time
