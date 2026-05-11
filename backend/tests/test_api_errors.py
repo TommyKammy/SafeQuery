@@ -3,12 +3,27 @@ import json
 import os
 import unittest
 from io import StringIO
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.core.errors import _http_error_message
 from app.core.logging import JsonLogFormatter, get_logger
+from app.db.session import require_preview_submission_session
+from app.features.auth.context import (
+    AuthenticatedSubject,
+    require_authenticated_subject,
+)
+from app.features.auth.session import (
+    ApplicationSessionContext,
+    require_application_session,
+)
+
+
+class _BlankRequestId:
+    def __str__(self) -> str:
+        return " "
 
 
 class ApiErrorHandlingTestCase(unittest.TestCase):
@@ -160,6 +175,59 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
         self.assertNotIn(raw_token, response.text)
         self.assertNotIn(raw_cookie, response.text)
         self.assertNotIn("csrf-token-should-not-render", response.text)
+
+    def test_preview_missing_request_id_uses_controlled_fail_closed_error(
+        self,
+    ) -> None:
+        self.app.dependency_overrides[require_authenticated_subject] = (
+            lambda: AuthenticatedSubject(
+                subject_id="user:demo-local-operator",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            )
+        )
+        self.app.dependency_overrides[require_application_session] = (
+            lambda: ApplicationSessionContext(
+                subject_id="user:demo-local-operator",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+                auth_source="test-helper",
+            )
+        )
+        self.app.dependency_overrides[require_preview_submission_session] = object
+        main_module = importlib.import_module("app.main")
+
+        try:
+            with patch.object(main_module, "uuid4", return_value=_BlankRequestId()):
+                response = self.client.post(
+                    "/requests/preview",
+                    json={
+                        "question": "Show approved vendors by quarterly spend",
+                        "source_id": "finance-postgres",
+                    },
+                )
+
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(
+                response.json(),
+                {
+                    "error": {
+                        "code": "request_context_unavailable",
+                        "message": "Request processing context is unavailable.",
+                    },
+                    "audit": {
+                        "events": [
+                            {
+                                "event_type": "request_context_unavailable",
+                                "operation": "preview",
+                                "denial_cause": "missing_request_audit_context",
+                            }
+                        ]
+                    },
+                },
+            )
+            self.assertNotIn("Request audit context is unavailable", response.text)
+            self.assertNotIn("Traceback", response.text)
+        finally:
+            self.app.dependency_overrides.clear()
 
     def test_unhandled_errors_and_logs_do_not_leak_secrets(self) -> None:
         test_token = "test-token-1234"

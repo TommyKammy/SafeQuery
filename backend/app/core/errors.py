@@ -26,6 +26,7 @@ _SAFE_API_ERROR_CODES = frozenset(
         "preview_generation_failed",
         "preview_source_malformed",
         "preview_source_unavailable",
+        "request_context_unavailable",
     }
 )
 
@@ -75,6 +76,15 @@ _SAFE_EXECUTION_AUDIT_FIELDS = frozenset(
         "primary_deny_code",
         "denial_cause",
         "candidate_state",
+    }
+)
+
+_SAFE_REQUEST_CONTEXT_AUDIT_FIELDS = frozenset(
+    {
+        "event_type",
+        "operation",
+        "candidate_id",
+        "denial_cause",
     }
 )
 
@@ -176,6 +186,8 @@ def _safe_http_exception_audit(
         "execution_unavailable",
     }:
         safe_fields = _SAFE_EXECUTION_AUDIT_FIELDS
+    elif exc.status_code == 503 and code == "request_context_unavailable":
+        safe_fields = _SAFE_REQUEST_CONTEXT_AUDIT_FIELDS
     else:
         return None
 
