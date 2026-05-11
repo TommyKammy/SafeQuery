@@ -18,7 +18,7 @@ This SQL-backed path is the required Phase 1 core flow. Governed search, analyst
 
    The authenticated user submits a natural language question through the custom web UI.
 
-   Generate-path rate limits and concurrency checks apply before generation proceeds. If the request is rejected, the application records the rejection as an operational audit event.
+   The current backend authenticates the user, establishes application-session context, resolves the selected source, and performs source entitlement checks before generation proceeds. Preview-request rate-limit and concurrency enforcement is not active in this release; it is tracked as follow-up implementation work in [implementation-roadmap.md](../implementation-roadmap.md).
 
 3. Audit start
 
@@ -70,7 +70,7 @@ This SQL-backed path is the required Phase 1 core flow. Governed search, analyst
 
    If the approved candidate remains visible and unexpired, the user may explicitly trigger execution through the UI. The execution request submits the `query_candidate_id`, not raw SQL text. No silent automatic execution is assumed in the first PoC.
 
-   Execute-path rate limits and concurrency checks are applied separately from generate-path limits.
+   Execute requests keep the candidate-bound source and authenticated subject checks separate from preview submission. Dedicated execute-request rate-limit and concurrency enforcement is not active in this release; it is tracked as follow-up implementation work in [implementation-roadmap.md](../implementation-roadmap.md).
 
 11. Controlled SQL execution
 
@@ -130,7 +130,7 @@ stateDiagram-v2
 - If the client submits an expired or mismatched `query_candidate_id`, execution is denied.
 - If the current authenticated subject does not match candidate ownership or current authorization no longer permits execution, execution is denied.
 - If another request already claimed the candidate atomically, later requests are denied as replay or stale-claim attempts.
-- If rate limits or concurrency limits are exceeded, the affected request is rejected and audited.
+- Future preview and execute rate-limit or concurrency denials must reject the affected request and persist an audit denial event when that enforcement is implemented.
 - If SQL execution fails after approval, the failure is recorded as part of the audit trail.
 
 ## Key Design Rules
