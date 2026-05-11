@@ -1029,7 +1029,7 @@ describe("HomePage", () => {
     }
   });
 
-  it("executes only preview-ready candidates and maps denied or canceled execute responses to recovery states", async () => {
+  it("executes only preview-ready candidates and maps stale-ui backend denials or cancellations to recovery states", async () => {
     const csrfToken = document.createElement("meta");
     csrfToken.name = "safequery-csrf-token";
     csrfToken.content = "csrf-from-session-bootstrap";
@@ -1038,6 +1038,20 @@ describe("HomePage", () => {
     const executeResponses = [
       {
         body: {
+          audit: {
+            events: [
+              {
+                candidate_state: "denied",
+                event_id: "event-source-posture-denial",
+                event_type: "execution_denied",
+                occurred_at: "2026-04-21T14:25:00Z",
+                primary_deny_code: "DENY_SOURCE_ACTIVATION_POSTURE",
+                query_candidate_id: "candidate-selected",
+                request_id: "request-selected",
+                source_id: "sap-approved-spend"
+              }
+            ]
+          },
           error: {
             code: "execution_denied",
             message: "Candidate execution was denied.",
@@ -1150,6 +1164,7 @@ describe("HomePage", () => {
         screen.getByRole("heading", { name: executeResponse.expectedHeading })
       ).toBeInTheDocument();
       expect(screen.queryByText(/execution completed/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("table", { name: /execute response result rows/i })).not.toBeInTheDocument();
       expect(screen.queryByText("driver-secret-should-not-render")).not.toBeInTheDocument();
     }
   });

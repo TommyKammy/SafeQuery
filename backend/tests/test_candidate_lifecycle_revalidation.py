@@ -721,7 +721,7 @@ def test_revalidate_candidate_lifecycle_rejects_non_executable_bound_source() ->
 
         with pytest.raises(
             CandidateLifecycleRevalidationError,
-            match="DENY_POLICY_VERSION_STALE",
+            match="DENY_SOURCE_ACTIVATION_POSTURE",
         ) as exc_info:
             revalidate_candidate_lifecycle(
                 candidate=_candidate(),
@@ -733,7 +733,51 @@ def test_revalidate_candidate_lifecycle_rejects_non_executable_bound_source() ->
                 as_of=datetime.now(timezone.utc),
             )
 
-    assert exc_info.value.deny_code == "DENY_POLICY_VERSION_STALE"
+    assert exc_info.value.deny_code == "DENY_SOURCE_ACTIVATION_POSTURE"
+
+
+def test_authoritative_candidate_approval_rejects_planned_source_flavor_posture() -> None:
+    with _session_scope() as session:
+        source = _seed_source(
+            session,
+            source_id="planned-aurora-postgresql-spend",
+            source_family="postgresql",
+            source_flavor="aurora-postgresql",
+        )
+        approval = _seed_preview_candidate_approval(
+            session,
+            source=source,
+        )
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="DENY_SOURCE_ACTIVATION_POSTURE",
+        ) as exc_info:
+            revalidate_authoritative_candidate_approval(
+                session=session,
+                candidate_id=approval.candidate_id,
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                as_of=datetime.now(timezone.utc),
+                selected_source_id="planned-aurora-postgresql-spend",
+                audit_context=_audit_context(),
+            )
+
+    assert exc_info.value.deny_code == "DENY_SOURCE_ACTIVATION_POSTURE"
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert {
+        "event_type": "execution_denied",
+        "query_candidate_id": "candidate-123",
+        "source_id": "planned-aurora-postgresql-spend",
+        "source_family": "postgresql",
+        "source_flavor": "aurora-postgresql",
+        "primary_deny_code": "DENY_SOURCE_ACTIVATION_POSTURE",
+        "denial_cause": "source_activation_posture",
+        "candidate_state": "denied",
+    }.items() <= audit_event.model_dump(exclude_none=True).items()
 
 
 def test_revalidate_candidate_lifecycle_classifies_wrapped_value_error_as_stale_policy(

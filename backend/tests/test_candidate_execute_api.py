@@ -567,6 +567,52 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(approval.approval_state, "approved")
         self.assertIsNone(approval.executed_at)
 
+    def test_execute_candidate_api_rejects_blocked_source_posture_without_consuming_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        source = (
+            self.session.query(RegisteredSource)
+            .filter_by(source_id="demo-business-postgres")
+            .one()
+        )
+        source.activation_posture = SourceActivationPosture.BLOCKED
+        self.session.commit()
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(lambda **_: calls.append("called")).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_SOURCE_ACTIVATION_POSTURE",
+        )
+        persisted_event = self.session.query(PreviewAuditEvent).one()
+        self.assertEqual(persisted_event.event_type, "execution_denied")
+        self.assertEqual(
+            persisted_event.primary_deny_code,
+            "DENY_SOURCE_ACTIVATION_POSTURE",
+        )
+        self.assertEqual(
+            persisted_event.audit_payload["denial_cause"],
+            "source_activation_posture",
+        )
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
     def test_execute_candidate_api_rejects_application_postgres_connection_reference_without_leaking_secret(
         self,
     ) -> None:

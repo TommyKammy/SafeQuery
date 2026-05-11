@@ -19,6 +19,7 @@ from app.features.guard.deny_taxonomy import (
     DENY_CANDIDATE_REPLAYED,
     DENY_ENTITLEMENT_CHANGED,
     DENY_POLICY_VERSION_STALE,
+    DENY_SOURCE_ACTIVATION_POSTURE,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_SUBJECT_MISMATCH,
 )
@@ -30,7 +31,10 @@ from app.services.source_governance import (
     SourceGovernanceResolutionError,
     resolve_authoritative_source_governance,
 )
-from app.services.source_registry import SourceRegistryPostureError
+from app.services.source_registry import (
+    SourceRegistryPostureError,
+    effective_source_activation_posture,
+)
 
 
 CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY = {
@@ -109,6 +113,7 @@ def _denial_cause_for_code(deny_code: str) -> str:
         DENY_CANDIDATE_REPLAYED: "candidate_replayed",
         DENY_ENTITLEMENT_CHANGED: "entitlement_changed",
         DENY_POLICY_VERSION_STALE: "policy_stale",
+        DENY_SOURCE_ACTIVATION_POSTURE: "source_activation_posture",
         DENY_SOURCE_BINDING_MISMATCH: "source_binding_mismatch",
         DENY_SUBJECT_MISMATCH: "subject_mismatch",
     }.get(deny_code, "execution_denied")
@@ -257,6 +262,18 @@ def revalidate_candidate_lifecycle(
         _raise_revalidation_error(
             deny_code=DENY_POLICY_VERSION_STALE,
             message=str(exc),
+            candidate=candidate,
+            audit_context=audit_context,
+        )
+
+    effective_activation_posture = effective_source_activation_posture(source)
+    if not effective_activation_posture.is_executable:
+        _raise_revalidation_error(
+            deny_code=DENY_SOURCE_ACTIVATION_POSTURE,
+            message=(
+                f"Registered source '{source.source_id}' is not executable while in "
+                f"{effective_activation_posture.value} posture."
+            ),
             candidate=candidate,
             audit_context=audit_context,
         )
