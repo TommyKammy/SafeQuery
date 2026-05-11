@@ -31,6 +31,11 @@ from app.services.candidate_lifecycle import (
 )
 
 
+class _BlankRequestId:
+    def __str__(self) -> str:
+        return " "
+
+
 class CandidateExecuteApiTestCase(unittest.TestCase):
     """Lower-level execute revalidation tests seed approved candidates directly."""
 
@@ -323,6 +328,46 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             self.assertEqual(event.audit_payload["execution_policy_version"], 3)
             self.assertNotIn("safequery_exec:secret", str(event.audit_payload))
             self.assertNotIn("business-postgres-source", str(event.audit_payload))
+
+    def test_execute_candidate_missing_request_id_uses_controlled_fail_closed_error(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        main_module = importlib.import_module("app.main")
+
+        with patch.object(main_module, "uuid4", return_value=_BlankRequestId()):
+            response = self._client(lambda **_: calls.append("called")).post(
+                "/candidates/candidate-123/execute",
+                headers=app_session.headers,
+                cookies=app_session.cookies,
+                json={"selected_source_id": "demo-business-postgres"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "request_context_unavailable",
+                    "message": "Request processing context is unavailable.",
+                },
+                "audit": {
+                    "events": [
+                        {
+                            "event_type": "request_context_unavailable",
+                            "operation": "execute",
+                            "candidate_id": "candidate-123",
+                            "denial_cause": "missing_request_audit_context",
+                        }
+                    ]
+                },
+            },
+        )
+        self.assertEqual(calls, [])
+        self.assertNotIn("Request audit context is unavailable", response.text)
+        self.assertNotIn("Traceback", response.text)
+        self.assertEqual(self.session.query(PreviewAuditEvent).count(), 0)
 
     def test_execute_candidate_api_runs_approved_snapshot_after_preview_row_drift(
         self,

@@ -250,6 +250,39 @@ def _serialize_execution_audit_events(
     return serialized
 
 
+def _raise_request_context_unavailable(
+    request: Request,
+    *,
+    operation: str,
+    candidate_id: str | None = None,
+) -> None:
+    audit_event: dict[str, object] = {
+        "event_type": "request_context_unavailable",
+        "operation": operation,
+        "denial_cause": "missing_request_audit_context",
+    }
+    if candidate_id is not None:
+        audit_event["candidate_id"] = candidate_id
+
+    get_logger().warning(
+        "request.audit_context_unavailable",
+        extra={
+            "event_data": {
+                "event": "request.audit_context_unavailable",
+                "method": request.method,
+                "path": request.url.path,
+                **audit_event,
+            }
+        },
+    )
+    raise api_error(
+        503,
+        "request_context_unavailable",
+        "Request processing context is unavailable.",
+        audit_events=[audit_event],
+    )
+
+
 def _require_execution_connector_configuration(
     *,
     connector_id: str,
@@ -594,9 +627,9 @@ def create_app() -> FastAPI:
         try:
             request_id = getattr(request.state, "request_id", None)
             if not isinstance(request_id, str) or not request_id.strip():
-                raise HTTPException(
-                    status_code=500,
-                    detail="Request audit context is unavailable.",
+                _raise_request_context_unavailable(
+                    request,
+                    operation="preview",
                 )
 
             user_subject = authenticated_subject.normalized_subject_id()
@@ -652,9 +685,10 @@ def create_app() -> FastAPI:
     ) -> CandidateExecuteResponse:
         request_id = getattr(http_request.state, "request_id", None)
         if not isinstance(request_id, str) or not request_id.strip():
-            raise HTTPException(
-                status_code=500,
-                detail="Request audit context is unavailable.",
+            _raise_request_context_unavailable(
+                http_request,
+                operation="execute",
+                candidate_id=candidate_id,
             )
 
         occurred_at = datetime.now(timezone.utc)
