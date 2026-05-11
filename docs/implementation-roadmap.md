@@ -60,6 +60,10 @@ Focus areas:
 - complete preview-before-execute for the active source-aware path
 - complete source-aware audit and evaluation
 - complete result controls, kill switch behavior, and replay-safe execution handling
+- implement preview and execute rate-limit and concurrency enforcement with
+  separate keys that include authenticated subject, source, and endpoint kind;
+  return deterministic public deny codes, persist audit denial events with
+  request/candidate/source context, and cover source switching plus burst and concurrent request tests before documenting the controls as active
 - ship a core vertical slice that stays application-owned from request to execution
 
 ## Optional Extension Tracks
