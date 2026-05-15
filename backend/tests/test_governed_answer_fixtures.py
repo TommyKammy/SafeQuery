@@ -13,7 +13,19 @@ FIXTURE_PATH = (
 )
 
 
-HOME_PATH_PATTERN = re.compile(r"(/Users/[^\\s\"']+|/home/[^\\s\"']+|[A-Za-z]:\\\\Users\\\\)")
+MACOS_HOME_ROOT = "/" + "Users" + "/"
+LINUX_HOME_ROOT = "/" + "home" + "/"
+WINDOWS_HOME_ROOT = "Users" + r"\\"
+HOME_PATH_PATTERN = re.compile(
+    "("
+    + re.escape(MACOS_HOME_ROOT)
+    + r"[^\s\"']+|"
+    + re.escape(LINUX_HOME_ROOT)
+    + r"[^\s\"']+|"
+    + r"[A-Za-z]:\\"
+    + WINDOWS_HOME_ROOT
+    + ")"
+)
 REQUIRED_FIXTURE_FIELDS = {
     "id",
     "question",
