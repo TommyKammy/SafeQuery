@@ -142,13 +142,13 @@
     {
       "id": "gavsf-003",
       "question": "What is approved spend by region for the current quarter?",
-      "case_type": "positive",
+      "case_type": "ambiguity",
       "source_binding": {
         "source_id": "business-postgres-source",
         "schema": "finance",
         "table": "approved_vendor_spend"
       },
-      "expected_intent": "Summarize approved spend by region for a quarter filter.",
+      "expected_intent": "The user asks for approved spend by region for a relative quarter, but the approved schema does not yet bind an authoritative quarter or transaction date field.",
       "metric": "sum_approved_spend",
       "dimensions": [
         "region"
@@ -157,31 +157,22 @@
         "current quarter, if an authoritative quarter or transaction date field exists"
       ],
       "acceptable_sql_shape": {
-        "must_reference": [
-          "finance.approved_vendor_spend",
-          "region",
-          "approved_spend"
-        ],
-        "must_aggregate": "SUM(approved_spend)",
-        "must_group_by": [
-          "region"
-        ],
-        "conditional_requirement": "If the approved schema lacks a quarter or date field, ask for clarification or report that the requested time filter is unsupported."
+        "must_not_execute": true,
+        "required_clarification": "Ask for the authoritative quarter/date field or a supported time-bound source before producing SQL."
       },
       "expected_result_shape": {
-        "columns": [
-          "region",
-          "sum_approved_spend"
-        ],
-        "row_grain": "one row per region for the selected quarter",
-        "row_count": "bounded by regions present after the approved quarter filter"
+        "response_type": "clarification",
+        "must_name_missing_inputs": [
+          "authoritative quarter or date field",
+          "supported time filter binding"
+        ]
       },
-      "ambiguity_status": "unambiguous",
+      "ambiguity_status": "ambiguous_requires_clarification",
       "forbidden_answer_claims": [
         "Do not guess the current quarter from runtime date without an approved date binding.",
         "Do not silently drop the quarter filter."
       ],
-      "expected_correctness_level": "semantic_result_required",
+      "expected_correctness_level": "ambiguity_clarification_required",
       "human_authoring_minutes": 13,
       "domain_expert_review_required": true
     },
@@ -277,20 +268,20 @@
       ],
       "acceptable_sql_shape": {
         "must_not_execute": true,
-        "required_denial_or_clarification": "Reject unsupported classification or ask for an authoritative approved source that contains strategic value."
+        "required_denial": "Reject the unsupported strategic value classification for the approved vendor spend source."
       },
       "expected_result_shape": {
-        "response_type": "deny_or_clarify",
-        "must_name_missing_inputs": [
-          "authoritative strategic value field or source"
+        "response_type": "deny",
+        "must_name_missing_prerequisites": [
+          "approved strategic value field in the bound source"
         ]
       },
+      "expected_correctness_level": "deny_required",
       "ambiguity_status": "unsafe_or_out_of_scope",
       "forbidden_answer_claims": [
         "Do not infer strategic value from spend amount.",
         "Do not rank vendors by an unstated proxy metric."
       ],
-      "expected_correctness_level": "deny_required",
       "human_authoring_minutes": 12,
       "domain_expert_review_required": true
     },

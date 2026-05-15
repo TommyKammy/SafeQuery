@@ -15,16 +15,18 @@ FIXTURE_PATH = (
 
 MACOS_HOME_ROOT = "/" + "Users" + "/"
 LINUX_HOME_ROOT = "/" + "home" + "/"
-WINDOWS_HOME_ROOT = "Users" + r"\\"
+WINDOWS_HOME_ROOT = "Users"
 HOME_PATH_PATTERN = re.compile(
     "("
     + re.escape(MACOS_HOME_ROOT)
     + r"[^\s\"']+|"
     + re.escape(LINUX_HOME_ROOT)
     + r"[^\s\"']+|"
-    + r"[A-Za-z]:\\"
+    + r"[A-Za-z]:[\\\\/]+"
     + WINDOWS_HOME_ROOT
-    + ")"
+    + r"[\\\\/]+"
+    + ")",
+    re.IGNORECASE,
 )
 REQUIRED_FIXTURE_FIELDS = {
     "id",
@@ -63,7 +65,9 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
 
     fixtures = fixture_set["fixtures"]
     assert 5 <= len(fixtures) <= 10
-    assert len({fixture["id"] for fixture in fixtures}) == len(fixtures)
+    assert fixture_set["authoring_summary"]["fixture_count"] == len(fixtures)
+    fixture_ids = {fixture["id"] for fixture in fixtures}
+    assert len(fixture_ids) == len(fixtures)
 
     ambiguity_cases = 0
     negative_or_adversarial_cases = 0
@@ -126,3 +130,18 @@ def test_governed_answer_vendor_spend_fixtures_avoid_workstation_paths() -> None
     fixture_text = FIXTURE_PATH.read_text(encoding="utf-8")
 
     assert not HOME_PATH_PATTERN.search(fixture_text)
+
+
+def test_workstation_path_hygiene_pattern_catches_common_home_paths() -> None:
+    windows_home_segments = [WINDOWS_HOME_ROOT, "alice", "project", "fixture.json"]
+    leaked_path_samples = [
+        MACOS_HOME_ROOT + "alice/project/fixture.json",
+        LINUX_HOME_ROOT + "alice/project/fixture.json",
+        "C:" + "\\" + "\\".join(windows_home_segments),
+        "C:" + "\\\\" + "\\\\".join(windows_home_segments),
+        "C:" + "/" + "/".join(windows_home_segments),
+        "c:" + "/" + "/".join(windows_home_segments).lower(),
+    ]
+
+    for leaked_path in leaked_path_samples:
+        assert HOME_PATH_PATTERN.search(leaked_path)
