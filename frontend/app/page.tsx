@@ -1,4 +1,4 @@
-import { QueryWorkflowShell, resolveWorkflowState } from "../components/query-workflow-shell";
+import { QueryWorkflowShell } from "../components/query-workflow-shell";
 import { getAppConfig } from "../lib/config";
 import { DEFAULT_HEALTH_SNAPSHOT } from "../lib/health";
 import { getOperatorWorkflowSnapshot } from "../lib/operator-workflow";
@@ -23,7 +23,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const question = readParam(params.question)?.trim() || "List the top 10 approved vendors by quarterly spend.";
   const sourceId = readParam(params.source_id)?.trim();
   const historyRecordId = readParam(params.history_record_id)?.trim();
-  const state = resolveWorkflowState(readParam(params.state));
+  const state = readParam(params.state)?.trim();
   const operatorWorkflow = await getOperatorWorkflowSnapshot(config.apiInternalBaseUrl);
 
   return (

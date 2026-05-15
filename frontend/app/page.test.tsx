@@ -50,6 +50,13 @@ function stubWorkflowFetch() {
   });
 }
 
+function appendCsrfToken(value = "csrf-from-session-bootstrap") {
+  const csrfToken = document.createElement("meta");
+  csrfToken.name = "safequery-csrf-token";
+  csrfToken.content = value;
+  document.head.appendChild(csrfToken);
+}
+
 describe("HomePage", () => {
   beforeEach(() => {
     process.env.API_INTERNAL_BASE_URL = "http://127.0.0.1:8000";
@@ -933,7 +940,7 @@ describe("HomePage", () => {
             question: "Show approved vendors by quarterly spend",
             source_id: "sap-approved-spend"
           }),
-          credentials: "same-origin",
+          credentials: "include",
           headers: expect.objectContaining({
             "content-type": "application/json",
             "x-safequery-csrf": "csrf-from-session-bootstrap"
@@ -964,6 +971,7 @@ describe("HomePage", () => {
 
     for (const stateCase of stateCases) {
       cleanup();
+      appendCsrfToken();
       const fetchMock = vi.fn((input: RequestInfo | URL) => {
         const url = input.toString();
 
@@ -1147,7 +1155,7 @@ describe("HomePage", () => {
             body: JSON.stringify({
               selected_source_id: "sap-approved-spend"
             }),
-            credentials: "same-origin",
+            credentials: "include",
             headers: expect.objectContaining({
               "content-type": "application/json",
               "x-safequery-csrf": "csrf-from-session-bootstrap"
@@ -1622,6 +1630,7 @@ describe("HomePage", () => {
 
     for (const failureCase of failureCases) {
       cleanup();
+      appendCsrfToken();
       const fetchMock = vi.fn((input: RequestInfo | URL) => {
         const url = input.toString();
 
@@ -1671,6 +1680,7 @@ describe("HomePage", () => {
 
     for (const failureCase of failureCases) {
       cleanup();
+      appendCsrfToken();
       const fetchMock = vi.fn((input: RequestInfo | URL) => {
         const url = input.toString();
 

@@ -6,7 +6,7 @@ from time import perf_counter
 from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -39,6 +39,7 @@ from app.features.auth.operator_access import (
 )
 from app.features.auth.session import (
     ApplicationSessionContext,
+    create_application_session,
     require_application_session,
 )
 from app.features.guard.deny_taxonomy import DENY_SOURCE_BINDING_MISMATCH
@@ -160,6 +161,12 @@ class CandidateExecuteResponse(BaseModel):
     rows: list[dict[str, Any]]
     metadata: dict[str, Any]
     audit: dict[str, list[dict[str, Any]]]
+
+
+class DevSessionBootstrapResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    csrf_token: str
 
 
 def _operator_runtime_safety_state(request: Request) -> ExecutionRuntimeSafetyState | None:
@@ -520,6 +527,35 @@ def create_app() -> FastAPI:
                 "audit": "reserved",
             },
         }
+
+    @app.post("/auth/dev/session", response_model=DevSessionBootstrapResponse)
+    def create_dev_application_session(
+        response: Response,
+        authenticated_subject: AuthenticatedSubject = Depends(
+            require_authenticated_subject
+        ),
+    ) -> DevSessionBootstrapResponse:
+        if not settings.dev_auth_enabled or settings.environment not in {
+            "development",
+            "test",
+        }:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        application_session = create_application_session(
+            authenticated_subject,
+            settings=settings,
+            auth_source="dev-session-bootstrap",
+        )
+        response.set_cookie(
+            application_session.cookie_name,
+            application_session.cookie_value,
+            httponly=True,
+            max_age=8 * 60 * 60,
+            path="/",
+            samesite="lax",
+            secure=False,
+        )
+        return DevSessionBootstrapResponse(csrf_token=application_session.csrf_token)
 
     @app.get("/health")
     def read_health(

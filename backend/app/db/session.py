@@ -12,6 +12,8 @@ from app.core.config import get_settings
 
 @lru_cache
 def get_engine(database_url: str) -> Engine:
+    if database_url.startswith("postgresql://"):
+        database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
     return create_engine(database_url)
 
 

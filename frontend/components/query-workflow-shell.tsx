@@ -47,7 +47,7 @@ type QueryWorkflowShellProps = {
   operatorWorkflow: OperatorWorkflowSnapshot;
   question: string;
   sourceId?: string;
-  state: WorkflowState;
+  state?: string;
 };
 
 type StateDefinition = {
@@ -500,6 +500,14 @@ function readCsrfToken(): string | undefined {
     document.querySelector<HTMLInputElement>('input[name="csrf_token"]')?.value;
 
   return readRequiredString(token);
+}
+
+function parseDevSessionBootstrap(value: unknown): string | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  return readRequiredString(value.csrf_token);
 }
 
 function parseApiErrorEnvelope(value: unknown): ApiErrorEnvelope | null {
@@ -2089,6 +2097,7 @@ export function QueryWorkflowShell({
   const [submittedSourceId, setSubmittedSourceId] = useState(sourceId);
   const [submittedState, setSubmittedState] = useState(requestedState);
   const [revisionDraft, setRevisionDraft] = useState<RevisionDraftContext | null>(null);
+  const [applicationCsrfToken, setApplicationCsrfToken] = useState<string | undefined>();
 
   useEffect(() => {
     setSubmittedQuestion(question);
@@ -2196,6 +2205,31 @@ export function QueryWorkflowShell({
     setExecuteSubmission({ status: "idle" });
   }
 
+  async function resolveApplicationCsrfToken(): Promise<string | undefined> {
+    const existingToken = readCsrfToken() ?? applicationCsrfToken;
+    if (existingToken) {
+      return existingToken;
+    }
+
+    try {
+      const response = await fetch(`${apiUrl}/auth/dev/session`, {
+        credentials: "include",
+        method: "POST"
+      });
+      if (!response.ok) {
+        return undefined;
+      }
+
+      const token = parseDevSessionBootstrap(await response.json());
+      if (token) {
+        setApplicationCsrfToken(token);
+      }
+      return token;
+    } catch {
+      return undefined;
+    }
+  }
+
   async function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -2241,7 +2275,7 @@ export function QueryWorkflowShell({
     const headers: Record<string, string> = {
       "content-type": "application/json"
     };
-    const csrfToken = readCsrfToken();
+    const csrfToken = await resolveApplicationCsrfToken();
     if (csrfToken) {
       headers["x-safequery-csrf"] = csrfToken;
     }
@@ -2253,7 +2287,7 @@ export function QueryWorkflowShell({
           source_id: selectedSourceId,
           revise_from: serializeRevisionDraft(revisionDraft)
         }),
-        credentials: "same-origin",
+        credentials: "include",
         headers,
         method: "POST"
       });
@@ -2386,7 +2420,7 @@ export function QueryWorkflowShell({
     const headers: Record<string, string> = {
       "content-type": "application/json"
     };
-    const csrfToken = readCsrfToken();
+    const csrfToken = await resolveApplicationCsrfToken();
     if (csrfToken) {
       headers["x-safequery-csrf"] = csrfToken;
     }
@@ -2396,7 +2430,7 @@ export function QueryWorkflowShell({
         body: JSON.stringify({
           selected_source_id: candidatePreview.sourceId
         }),
-        credentials: "same-origin",
+        credentials: "include",
         headers,
         method: "POST"
       });

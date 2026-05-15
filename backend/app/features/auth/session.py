@@ -170,13 +170,13 @@ def _decode_signed_payload(token: str, *, signing_key: bytes) -> dict[str, Any]:
     return payload
 
 
-def create_test_application_session(
+def create_application_session(
     authenticated_subject: AuthenticatedSubject,
     *,
     settings: Settings | None = None,
     now: datetime | None = None,
     ttl: timedelta = _DEFAULT_TTL,
-    auth_source: str = "test-helper",
+    auth_source: str,
     csrf_token: str | None = None,
 ) -> TestApplicationSession:
     settings = settings or get_settings()
@@ -204,6 +204,25 @@ def create_test_application_session(
             signing_key=_session_signing_key(settings),
         ),
         csrf_header_name=CSRF_HEADER,
+        csrf_token=csrf_token,
+    )
+
+
+def create_test_application_session(
+    authenticated_subject: AuthenticatedSubject,
+    *,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+    ttl: timedelta = _DEFAULT_TTL,
+    auth_source: str = "test-helper",
+    csrf_token: str | None = None,
+) -> TestApplicationSession:
+    return create_application_session(
+        authenticated_subject,
+        settings=settings,
+        now=now,
+        ttl=ttl,
+        auth_source=auth_source,
         csrf_token=csrf_token,
     )
 

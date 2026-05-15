@@ -172,6 +172,36 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
         self.assertNotIn(app_session.csrf_token, response.text)
         self.assertNotIn(app_session.cookie_value, response.text)
 
+    def test_enabled_development_dev_auth_bootstraps_browser_session(self) -> None:
+        os.environ["SAFEQUERY_ENVIRONMENT"] = "development"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "true"
+        client = self._client()
+
+        session_response = client.post("/auth/dev/session")
+
+        self.assertEqual(session_response.status_code, 200)
+        csrf_token = session_response.json()["csrf_token"]
+        self.assertIsInstance(csrf_token, str)
+        self.assertGreater(len(csrf_token), 20)
+        set_cookie = session_response.headers["set-cookie"]
+        self.assertIn(f"{APPLICATION_SESSION_COOKIE}=", set_cookie)
+        self.assertIn("HttpOnly", set_cookie)
+
+        preview_response = client.post(
+            "/requests/preview",
+            headers={"x-safequery-csrf": csrf_token},
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": DEMO_SOURCE_ID,
+            },
+        )
+
+        self.assertEqual(preview_response.status_code, 200)
+        self.assertEqual(
+            preview_response.json()["audit"]["events"][0]["auth_source"],
+            "dev-session-bootstrap",
+        )
+
     def test_enabled_dev_auth_without_session_or_csrf_blocks_preview_http_request(
         self,
     ) -> None:
@@ -410,6 +440,7 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
 
     def test_production_default_dev_auth_blocks_preview_http_request(self) -> None:
         os.environ["SAFEQUERY_ENVIRONMENT"] = "production"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "false"
 
         response = self._client().post(
             "/requests/preview",
@@ -434,6 +465,7 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
         self,
     ) -> None:
         os.environ["SAFEQUERY_ENVIRONMENT"] = "production"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "false"
 
         response = self._client().get("/operator/workflow")
 
@@ -461,6 +493,7 @@ class DevAuthPreviewApiTestCase(unittest.TestCase):
 
     def test_production_default_dev_auth_blocks_support_bundle_http_request(self) -> None:
         os.environ["SAFEQUERY_ENVIRONMENT"] = "production"
+        os.environ["SAFEQUERY_DEV_AUTH_ENABLED"] = "false"
 
         response = self._client().get("/support/bundle")
 
