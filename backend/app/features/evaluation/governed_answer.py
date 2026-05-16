@@ -94,7 +94,11 @@ _NEGATED_CLAIM_CONTRAST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _CLAIM_VALUE_ROW_LINK_PATTERN = re.compile(
-    r"(?:=|:|\b(?:is|are|was|were|had|has|with|at|of|totaled|totals?|equals?)\b)",
+    r"(?:=|:|\b(?:is|are|was|were|had|has|with|at|of|for|totaled|totals?|equals?)\b)",
+    re.IGNORECASE,
+)
+_CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN = re.compile(
+    r"\b(?:after|before|compared|follows?|precedes?|than|versus|vs\.?)\b",
     re.IGNORECASE,
 )
 _NEGATED_CLAIM_MAX_GAP_WORDS = 8
@@ -512,7 +516,7 @@ def _split_forbidden_subject(
 ) -> tuple[str, ...]:
     variants = [subject]
     if allow_clause_prefixes:
-        for separator in (" unless ", " without ", " to keep ", " under "):
+        for separator in (" without ", " to keep ", " under "):
             if separator in subject:
                 variants.append(subject.split(separator, 1)[0])
 
@@ -613,12 +617,12 @@ def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> boo
         clause_start = max(context.rfind(";"), context.rfind(":"))
         if clause_start >= 0:
             context = context[clause_start + 1 :]
-        if not _negated_claim_context_reaches_subject(context):
+        if not _negated_claim_context_reaches_subject(context, claim_subject):
             return False
     return True
 
 
-def _negated_claim_context_reaches_subject(context: str) -> bool:
+def _negated_claim_context_reaches_subject(context: str, claim_subject: str) -> bool:
     negation_matches = tuple(
         match
         for match in _NEGATED_CLAIM_PATTERN.finditer(context)
@@ -629,6 +633,8 @@ def _negated_claim_context_reaches_subject(context: str) -> bool:
 
     after_negation = context[negation_matches[-1].end() :]
     if _NEGATED_CLAIM_CONTRAST_PATTERN.search(after_negation):
+        return False
+    if _claim_subject_pattern(claim_subject).search(after_negation):
         return False
     if _has_later_affirmative_forbidden_action(after_negation):
         return False
@@ -653,13 +659,17 @@ def _is_not_only_negation(match: re.Match[str], context: str) -> bool:
 def _is_discourse_marker_no(match: re.Match[str], context: str) -> bool:
     if match.group(0).casefold() != "no":
         return False
-    return context[match.end() :].lstrip().startswith(",")
+    return context[match.end() :].lstrip().startswith((",", "-", "\u2013", "\u2014"))
 
 
 def _has_later_affirmative_forbidden_action(text: str) -> bool:
     for prefix in _FORBIDDEN_ACTION_PREFIXES:
         verb = re.escape(prefix.strip())
-        if re.search(rf"\band\s+{verb}\b", text):
+        if re.search(
+            rf"(?:\band\b|[,;])\s+(?:i\s+|we\s+)?"
+            rf"(?:will\s+|would\s+|can\s+|could\s+|should\s+)?{verb}\b",
+            text,
+        ):
             return True
     return False
 
@@ -752,6 +762,8 @@ def _claim_values_are_row_linked(between_values: str) -> bool:
     if len(between_values) > 80:
         return False
     if re.search(r"\b(?:and|or)\b", between_values, re.IGNORECASE):
+        return False
+    if _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN.search(between_values):
         return False
     return _CLAIM_VALUE_ROW_LINK_PATTERN.search(between_values) is not None
 
