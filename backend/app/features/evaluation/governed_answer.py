@@ -117,6 +117,9 @@ _NEGATED_CLAIM_CONTRAST_PATTERN = re.compile(
     r"\b(?:but|however|though|although|except)\b",
     re.IGNORECASE,
 )
+_FORBIDDEN_SUBJECT_MODIFIER_PATTERN = (
+    r"(?:(?:actually|certainly|clearly|definitely|indeed|really|in\s+fact)\s+)?"
+)
 _CLAIM_VALUE_ROW_LINK_PATTERN = re.compile(
     r"(?:=|:|\b(?:"
     r"is|are|was|were|had|has|at|of|for|"
@@ -427,7 +430,9 @@ def _check_row_count_and_truncation(
 ) -> None:
     known_rows = expected_result_shape.get("known_result_rows")
     expected_row_count = len(known_rows) if isinstance(known_rows, list) else None
-    observed_row_count = result_metadata.get("row_count", len(result_rows))
+    observed_row_count = result_metadata.get("row_count")
+    if type(observed_row_count) is not int:
+        observed_row_count = len(result_rows)
     if expected_row_count is not None and observed_row_count != expected_row_count:
         categories.append("row_count_mismatch")
         unsupported_claims.append(
@@ -677,7 +682,7 @@ def _claim_subject_pattern(claim_subject: str) -> re.Pattern[str]:
     ]
     if not tokens:
         return re.compile(r"(?!x)x")
-    separator = r"[\s\-\u2010-\u2015]+"
+    separator = rf"[\s\-\u2010-\u2015]+{_FORBIDDEN_SUBJECT_MODIFIER_PATTERN}"
     subject_pattern = separator.join(re.escape(token) for token in tokens)
     return re.compile(rf"(?<!\w){subject_pattern}(?!\w)")
 
@@ -729,11 +734,26 @@ def _claim_subject_has_following_safety_denial(
     ]
     if clause_end_candidates:
         after_subject = after_subject[: min(clause_end_candidates)]
+    if not _claim_subject_allows_following_safety_denial(claim_subject):
+        return False
+    if _NEGATED_CLAIM_CONTRAST_PATTERN.search(after_subject):
+        return False
     return bool(
         re.search(
             r"\b(?:cannot|can't|will\s+not|must\s+not|should\s+not|do\s+not|don't)"
             r"\s+(?:be\s+)?(?:shared|revealed|exposed|provided|returned|disclosed)\b",
             after_subject,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _claim_subject_allows_following_safety_denial(claim_subject: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:instruction|instructions|sql|dump|row|rows|source|sources|"
+            r"record|records|account|identifier|identifiers)\b",
+            claim_subject,
             re.IGNORECASE,
         )
     )
