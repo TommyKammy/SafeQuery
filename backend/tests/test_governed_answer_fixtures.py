@@ -9,7 +9,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.features.evaluation import validate_governed_answer_fixture_set
+from app.features.evaluation import (
+    score_governed_answer_consistency,
+    validate_governed_answer_fixture_set,
+)
 from app.features.guard.deny_taxonomy import GUARD_DENY_CODES
 
 
@@ -350,6 +353,62 @@ def test_governed_answer_fixture_set_exports_machine_readable_schema() -> None:
         "governed_answer_assurance.v1"
     )
     assert "expected_semantic_mapping" in json.dumps(schema)
+
+
+def test_governed_answer_consistency_scoring_accepts_supported_answer() -> None:
+    fixtures_by_id = _fixtures_by_scenario_id(_load_fixture_set())
+    fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
+    assert (
+        fixtures_by_id[fixture.metadata.scenario_id]["metadata"]["scenario_id"]
+        == "gavsf-002-vendor-spend-by-quarter"
+    )
+
+    result_rows = fixture.expected_result_shape["known_result_rows"]
+    result_metadata = {
+        "columns": ["fiscal_quarter", "approved_spend"],
+        "row_count": 2,
+        "truncated": False,
+    }
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=(
+            "FY2025-Q1 approved spend is 125000.00. "
+            "FY2025-Q2 approved spend is 98000.00."
+        ),
+        result_rows=result_rows,
+        result_metadata=result_metadata,
+    )
+
+    assert score.passed is True
+    assert score.score == 1.0
+    assert score.unsupported_claim_categories == ()
+
+
+def test_governed_answer_consistency_scoring_names_unsupported_claim_category() -> None:
+    fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
+    result_rows = fixture.expected_result_shape["known_result_rows"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=(
+            "FY2025-Q1 approved spend is 125000.00. "
+            "FY2025-Q2 approved spend is 98000.00. "
+            "FY2025-Q3 approved spend is 42000.00."
+        ),
+        result_rows=result_rows,
+        result_metadata={
+            "columns": ["fiscal_quarter", "approved_spend"],
+            "row_count": 2,
+            "truncated": False,
+        },
+    )
+
+    assert score.passed is False
+    assert score.score == 0.0
+    assert "unsupported_result_value" in score.unsupported_claim_categories
+    assert "FY2025-Q3" in score.unsupported_claims
+    assert "42000.00" in score.unsupported_claims
 
 
 @pytest.mark.parametrize(

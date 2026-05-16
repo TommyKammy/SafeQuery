@@ -31,6 +31,9 @@ from app.features.evaluation.governed_answer import (
     GovernedAnswerSemanticMapping,
     GovernedAnswerSourceBinding,
     GovernedAnswerSourceProfile,
+    GovernedAnswerConsistencyScore,
+    GovernedAnswerUnsupportedClaimCategory,
+    score_governed_answer_consistency,
     validate_governed_answer_fixture_set,
 )
 from app.features.evaluation.release_gate import (
@@ -62,6 +65,8 @@ __all__ = [
     "GovernedAnswerSemanticMapping",
     "GovernedAnswerSourceBinding",
     "GovernedAnswerSourceProfile",
+    "GovernedAnswerConsistencyScore",
+    "GovernedAnswerUnsupportedClaimCategory",
     "MSSQLEvaluationScenario",
     "PostgreSQLEvaluationScenario",
     "ReleaseGateAuditArtifact",
@@ -75,5 +80,6 @@ __all__ = [
     "list_postgresql_evaluation_scenarios",
     "list_source_regression_matrix",
     "reconstruct_release_gate",
+    "score_governed_answer_consistency",
     "validate_governed_answer_fixture_set",
 ]

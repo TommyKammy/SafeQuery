@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Optional
+import re
+from decimal import Decimal, InvalidOperation
+from typing import Annotated, Any, Literal, Mapping, Optional, Sequence
 
 from pydantic import (
     BaseModel,
@@ -32,6 +34,18 @@ GovernedAnswerFailureMode = Literal[
     "unsupported_answer_denial_required",
 ]
 GovernedAnswerSemanticContractVersion = Literal["governed_answer_assurance.v1"]
+GovernedAnswerUnsupportedClaimCategory = Literal[
+    "expected_columns_mismatch",
+    "row_count_mismatch",
+    "truncation_mismatch",
+    "forbidden_answer_claim",
+    "unsupported_result_value",
+]
+
+_RESULT_VALUE_PATTERN = re.compile(
+    r"\bFY\d{4}-Q[1-4]\b|\b\d+(?:,\d{3})*(?:\.\d+)?\b",
+    re.IGNORECASE,
+)
 
 
 class GovernedAnswerSourceProfile(BaseModel):
@@ -214,7 +228,172 @@ class GovernedAnswerFixtureSet(BaseModel):
         return self
 
 
+class GovernedAnswerConsistencyScore(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    passed: bool
+    score: float
+    unsupported_claim_categories: tuple[GovernedAnswerUnsupportedClaimCategory, ...]
+    unsupported_claims: tuple[NonEmptyString, ...] = Field(default_factory=tuple)
+
+
 def validate_governed_answer_fixture_set(
     fixture_set: dict[str, Any],
 ) -> GovernedAnswerFixtureSet:
     return GovernedAnswerFixtureSet.model_validate(fixture_set)
+
+
+def score_governed_answer_consistency(
+    *,
+    fixture: GovernedAnswerFixture,
+    answer_text: str,
+    result_rows: Sequence[Mapping[str, Any]],
+    result_metadata: Mapping[str, Any],
+) -> GovernedAnswerConsistencyScore:
+    """Score whether an answer only claims facts present in the result evidence."""
+
+    categories: list[GovernedAnswerUnsupportedClaimCategory] = []
+    unsupported_claims: list[str] = []
+    expected_result_shape = fixture.expected_result_shape
+
+    _check_expected_columns(
+        expected_result_shape=expected_result_shape,
+        result_metadata=result_metadata,
+        categories=categories,
+        unsupported_claims=unsupported_claims,
+    )
+    _check_row_count_and_truncation(
+        expected_result_shape=expected_result_shape,
+        result_rows=result_rows,
+        result_metadata=result_metadata,
+        categories=categories,
+        unsupported_claims=unsupported_claims,
+    )
+    _check_forbidden_answer_claims(
+        fixture=fixture,
+        answer_text=answer_text,
+        categories=categories,
+        unsupported_claims=unsupported_claims,
+    )
+    _check_deterministic_result_values(
+        answer_text=answer_text,
+        result_rows=result_rows,
+        categories=categories,
+        unsupported_claims=unsupported_claims,
+    )
+
+    unsupported_claim_categories = tuple(dict.fromkeys(categories))
+    passed = not unsupported_claim_categories
+    return GovernedAnswerConsistencyScore(
+        passed=passed,
+        score=1.0 if passed else 0.0,
+        unsupported_claim_categories=unsupported_claim_categories,
+        unsupported_claims=tuple(dict.fromkeys(unsupported_claims)),
+    )
+
+
+def _check_expected_columns(
+    *,
+    expected_result_shape: Mapping[str, Any],
+    result_metadata: Mapping[str, Any],
+    categories: list[GovernedAnswerUnsupportedClaimCategory],
+    unsupported_claims: list[str],
+) -> None:
+    expected_columns = tuple(expected_result_shape.get("columns") or ())
+    if not expected_columns:
+        return
+
+    observed_columns = tuple(result_metadata.get("columns") or ())
+    if observed_columns != expected_columns:
+        categories.append("expected_columns_mismatch")
+        unsupported_claims.append(
+            f"expected columns {expected_columns}; observed columns {observed_columns}"
+        )
+
+
+def _check_row_count_and_truncation(
+    *,
+    expected_result_shape: Mapping[str, Any],
+    result_rows: Sequence[Mapping[str, Any]],
+    result_metadata: Mapping[str, Any],
+    categories: list[GovernedAnswerUnsupportedClaimCategory],
+    unsupported_claims: list[str],
+) -> None:
+    known_rows = expected_result_shape.get("known_result_rows")
+    expected_row_count = len(known_rows) if isinstance(known_rows, list) else None
+    observed_row_count = result_metadata.get("row_count", len(result_rows))
+    if expected_row_count is not None and observed_row_count != expected_row_count:
+        categories.append("row_count_mismatch")
+        unsupported_claims.append(
+            f"expected row count {expected_row_count}; observed row count {observed_row_count}"
+        )
+
+    if (
+        result_metadata.get("truncated") is True
+        or result_metadata.get("is_truncated") is True
+    ):
+        categories.append("truncation_mismatch")
+        unsupported_claims.append("result metadata reports truncated output")
+
+
+def _check_forbidden_answer_claims(
+    *,
+    fixture: GovernedAnswerFixture,
+    answer_text: str,
+    categories: list[GovernedAnswerUnsupportedClaimCategory],
+    unsupported_claims: list[str],
+) -> None:
+    normalized_answer = answer_text.casefold()
+    for forbidden_claim in fixture.forbidden_answer_claims:
+        claim_subject = _forbidden_claim_subject(forbidden_claim)
+        if claim_subject and claim_subject in normalized_answer:
+            categories.append("forbidden_answer_claim")
+            unsupported_claims.append(claim_subject)
+
+
+def _check_deterministic_result_values(
+    *,
+    answer_text: str,
+    result_rows: Sequence[Mapping[str, Any]],
+    categories: list[GovernedAnswerUnsupportedClaimCategory],
+    unsupported_claims: list[str],
+) -> None:
+    supported_values = _supported_result_values(result_rows)
+    for claim_value in _claimed_result_values(answer_text):
+        if claim_value not in supported_values:
+            categories.append("unsupported_result_value")
+            unsupported_claims.append(claim_value)
+
+
+def _forbidden_claim_subject(forbidden_claim: str) -> str:
+    normalized = forbidden_claim.casefold()
+    prefixes = ("do not include ", "do not report ", "do not cite ", "do not label ")
+    for prefix in prefixes:
+        if normalized.startswith(prefix):
+            return normalized.removeprefix(prefix).split(" as ")[0].rstrip(".")
+    return ""
+
+
+def _claimed_result_values(answer_text: str) -> tuple[str, ...]:
+    return tuple(match.group(0) for match in _RESULT_VALUE_PATTERN.finditer(answer_text))
+
+
+def _supported_result_values(result_rows: Sequence[Mapping[str, Any]]) -> set[str]:
+    supported: set[str] = set()
+    for row in result_rows:
+        for value in row.values():
+            supported.update(_value_forms(value))
+    return supported
+
+
+def _value_forms(value: Any) -> set[str]:
+    text = str(value)
+    forms = {text}
+    try:
+        normalized_decimal = Decimal(text.replace(",", "")).normalize()
+    except (InvalidOperation, ValueError):
+        return forms
+    forms.add(format(normalized_decimal, "f"))
+    if normalized_decimal == normalized_decimal.to_integral():
+        forms.add(str(int(normalized_decimal)))
+    return forms
