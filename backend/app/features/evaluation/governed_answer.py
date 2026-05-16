@@ -92,6 +92,7 @@ _FORBIDDEN_DIRECTIVE_PREFIXES = (
     "should not ",
     "should never ",
 )
+_FORBIDDEN_ACTIONLESS_CLAIM_PREFIXES = ("claim ", "label ", "report ", "say ")
 _FORBIDDEN_CLAIM_FRAGMENT_PATTERN = re.compile(
     r"\b(?:"
     r"is|are|was|were|be|been|being|has|have|had|"
@@ -117,7 +118,10 @@ _NEGATED_CLAIM_CONTRAST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _CLAIM_VALUE_ROW_LINK_PATTERN = re.compile(
-    r"(?:=|:|\b(?:is|are|was|were|had|has|at|of|for|totaled|totals?|equals?)\b)",
+    r"(?:=|:|\b(?:"
+    r"is|are|was|were|had|has|at|of|for|"
+    r"totaled|totals?|equals?|corresponds?\s+to"
+    r")\b)",
     re.IGNORECASE,
 )
 _CLAIM_VALUE_NEGATED_COPULA_PATTERN = re.compile(
@@ -543,7 +547,10 @@ def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
         subjects.extend(action_subjects)
     else:
         subjects.extend(action_subjects)
-        subjects.extend(prefix_subjects)
+        if matched_action_subject and action.startswith(
+            _FORBIDDEN_ACTIONLESS_CLAIM_PREFIXES
+        ):
+            subjects.extend(prefix_subjects)
 
     return tuple(
         dict.fromkeys(subject for subject in subjects if len(subject) >= 3)
@@ -684,6 +691,12 @@ def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> boo
         return False
 
     for start in starts:
+        if _claim_subject_has_following_safety_denial(
+            normalized_answer=normalized_answer,
+            subject_start=start,
+            claim_subject=claim_subject,
+        ):
+            continue
         context = normalized_answer[max(0, start - 128) : start]
         sentence_start = max(context.rfind("."), context.rfind("?"), context.rfind("!"))
         if sentence_start >= 0:
@@ -694,6 +707,36 @@ def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> boo
         if not _negated_claim_context_reaches_subject(context, claim_subject):
             return False
     return True
+
+
+def _claim_subject_has_following_safety_denial(
+    *,
+    normalized_answer: str,
+    subject_start: int,
+    claim_subject: str,
+) -> bool:
+    subject_match = _claim_subject_pattern(claim_subject).match(
+        normalized_answer,
+        subject_start,
+    )
+    if subject_match is None:
+        return False
+    after_subject = normalized_answer[subject_match.end() : subject_match.end() + 96]
+    clause_end_candidates = [
+        index
+        for index in (after_subject.find("."), after_subject.find(";"))
+        if index >= 0
+    ]
+    if clause_end_candidates:
+        after_subject = after_subject[: min(clause_end_candidates)]
+    return bool(
+        re.search(
+            r"\b(?:cannot|can't|will\s+not|must\s+not|should\s+not|do\s+not|don't)"
+            r"\s+(?:be\s+)?(?:shared|revealed|exposed|provided|returned|disclosed)\b",
+            after_subject,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _negated_claim_context_reaches_subject(context: str, claim_subject: str) -> bool:
@@ -761,7 +804,7 @@ def _is_not_only_negation(match: re.Match[str], context: str) -> bool:
 def _is_discourse_marker_no(match: re.Match[str], context: str) -> bool:
     if match.group(0).casefold() != "no":
         return False
-    return context[match.end() :].lstrip().startswith((",", "-", "\u2013", "\u2014"))
+    return context[match.end() :].lstrip().startswith((",", "/", "-", "\u2013", "\u2014"))
 
 
 def _has_later_affirmative_forbidden_action(text: str) -> bool:
