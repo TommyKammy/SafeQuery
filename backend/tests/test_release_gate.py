@@ -247,8 +247,11 @@ def test_release_gate_assurance_report_fails_on_non_positive_observed_fixture() 
     )
 
     assert report.status == "fail"
-    assert report.levels[3].status == "fail"
-    assert report.levels[3].covered_fixture_count == 1
+    assert report.levels[0].status == "fail"
+    assert report.levels[0].failure_count == 1
+    assert report.levels[3].status == "not_covered"
+    assert report.levels[3].covered_fixture_count == 0
+    assert report.levels[3].failure_count == 0
     assert report.failures[0].deny_code == "DENY_UNSUPPORTED_ASSURANCE_FIXTURE_COVERAGE"
     assert report.failures[0].scenario_id == "gavsf-003-approved-vs-unapproved-distinction"
 

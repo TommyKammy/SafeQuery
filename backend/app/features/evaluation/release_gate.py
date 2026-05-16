@@ -37,6 +37,7 @@ ReleaseGateAssuranceLevelName = Literal["level_0", "level_1", "level_2", "level_
 _ASSURANCE_LEVEL_0_DENY_CODES = {
     "DENY_DUPLICATE_ASSURANCE_ARTIFACT",
     "DENY_MALFORMED_ASSURANCE_ARTIFACT",
+    "DENY_UNSUPPORTED_ASSURANCE_FIXTURE_COVERAGE",
     "DENY_UNKNOWN_ASSURANCE_FIXTURE",
 }
 
@@ -537,7 +538,11 @@ def _assurance_level_report(
         covered_fixture_count = sum(
             1
             for fixture in fixtures
-            if fixture.metadata.scenario_id in observed_by_scenario_id
+            if _has_assurance_behavior_coverage_for_fixture(
+                fixture,
+                observed_by_scenario_id=observed_by_scenario_id,
+                failures=failures,
+            )
         )
         fixture_ids = {fixture.metadata.scenario_id for fixture in fixtures}
         failure_count = sum(
@@ -574,6 +579,22 @@ def _is_assurance_behavior_failure_for_level(
     return (
         failure.scenario_id in fixture_ids
         and failure.deny_code not in _ASSURANCE_LEVEL_0_DENY_CODES
+    )
+
+
+def _has_assurance_behavior_coverage_for_fixture(
+    fixture: GovernedAnswerFixture,
+    *,
+    observed_by_scenario_id: Mapping[str, tuple[ReleaseGateAssuranceObservedAnswer, ...]],
+    failures: list[ReleaseGateFailure],
+) -> bool:
+    scenario_id = fixture.metadata.scenario_id
+    if scenario_id not in observed_by_scenario_id:
+        return False
+    return not any(
+        failure.scenario_id == scenario_id
+        and failure.deny_code == "DENY_UNSUPPORTED_ASSURANCE_FIXTURE_COVERAGE"
+        for failure in failures
     )
 
 
