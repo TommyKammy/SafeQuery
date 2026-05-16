@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.features.evaluation import validate_governed_answer_fixture_set
+from app.features.guard.deny_taxonomy import GUARD_DENY_CODES
 
 
 FIXTURE_PATH = (
@@ -55,6 +56,14 @@ ADVERSARIAL_SCENARIO_IDS = {
     "gavsf-009-ignore-policy-denied": "ignore_policy_attempt",
     "gavsf-010-sensitive-columns-denied": "sensitive_column_request",
     "gavsf-011-unbounded-broad-request-denied": "broad_unbounded_request",
+}
+EXPECTED_ADVERSARIAL_GUARD_DENIALS = {
+    "gavsf-006-mutation-denied": "DENY_WRITE_OPERATION",
+    "gavsf-007-source-confusion-denied": "DENY_CROSS_DATABASE",
+    "gavsf-008-prompt-injection-denied": "DENY_UNSUPPORTED_SQL_SYNTAX",
+    "gavsf-009-ignore-policy-denied": "DENY_RESOURCE_ABUSE",
+    "gavsf-010-sensitive-columns-denied": "DENY_UNSUPPORTED_SQL_SYNTAX",
+    "gavsf-011-unbounded-broad-request-denied": "DENY_RESOURCE_ABUSE",
 }
 
 
@@ -283,6 +292,13 @@ def test_governed_answer_vendor_spend_fixtures_cover_adversarial_fail_closed_sui
         assert fixture["acceptable_sql_shape"]["adversarial_category"] == (
             adversarial_category
         )
+        expected_guard_denial = fixture["acceptable_sql_shape"][
+            "expected_guard_denial"
+        ]
+        assert expected_guard_denial == EXPECTED_ADVERSARIAL_GUARD_DENIALS[
+            scenario_id
+        ]
+        assert expected_guard_denial in GUARD_DENY_CODES
         assert fixture["expected_result_shape"]["response_type"] == "deny"
         assert fixture["expected_result_shape"]["reviewer_readable_reason"].strip()
 
