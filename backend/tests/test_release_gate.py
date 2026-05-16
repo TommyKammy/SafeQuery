@@ -299,6 +299,8 @@ def test_release_gate_assurance_report_preserves_duplicate_observed_artifacts() 
 
     assert report.status == "fail"
     assert report.fixture_coverage_count["covered"] == 1
+    assert report.levels[0].failure_count == 1
+    assert report.levels[1].failure_count == 1
     assert {
         failure.deny_code for failure in report.failures
     } == {
@@ -326,6 +328,8 @@ def test_release_gate_assurance_report_structures_malformed_artifact_failure() -
     assert report.status == "fail"
     assert report.levels[0].status == "fail"
     assert report.levels[0].failure_count == 1
+    assert report.levels[1].status == "not_covered"
+    assert report.levels[1].failure_count == 0
     assert report.failures[0].deny_code == "DENY_MALFORMED_ASSURANCE_ARTIFACT"
     assert report.failures[0].scenario_id == "gavsf-002-vendor-spend-by-quarter"
     assert "answer_text" in report.failures[0].detail
@@ -400,6 +404,28 @@ def test_release_gate_cli_handles_fixture_set_validation_error_as_parser_failure
     assert captured.out == ""
     assert "error:" in captured.err
     assert "fixture_set" in captured.err
+
+
+def test_release_gate_cli_handles_fixture_set_unicode_error_as_parser_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    invalid_fixture_path = tmp_path / "invalid-utf8-fixture-set.json"
+    invalid_fixture_path.write_bytes(b"\xff")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["release-gate", "--fixture-set", str(invalid_fixture_path)],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        release_gate_cli_main()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "can't decode" in captured.err
 
 
 def test_release_gate_accepts_scenario_id_from_shared_audit_metadata() -> None:

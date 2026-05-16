@@ -46,7 +46,7 @@ def main() -> None:
             fixture_set_path=args.fixture_set,
             observed_answer_artifacts=observed_answer_artifacts,
         )
-    except (OSError, json.JSONDecodeError, ValidationError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
         parser.error(str(exc))
     print(json.dumps(report.model_dump(mode="json"), sort_keys=True))
     if report.status == "fail":

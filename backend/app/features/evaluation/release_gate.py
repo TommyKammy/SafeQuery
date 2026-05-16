@@ -541,7 +541,10 @@ def _assurance_level_report(
         )
         fixture_ids = {fixture.metadata.scenario_id for fixture in fixtures}
         failure_count = sum(
-            1 for failure in failures if failure.scenario_id in fixture_ids
+            1
+            for failure in failures
+            if failure.scenario_id in fixture_ids
+            and failure.deny_code not in _ASSURANCE_LEVEL_0_DENY_CODES
         )
     if failure_count:
         status: ReleaseGateAssuranceStatus = "fail"
