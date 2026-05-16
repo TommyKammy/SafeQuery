@@ -411,6 +411,40 @@ def test_governed_answer_consistency_scoring_names_unsupported_claim_category() 
     assert "42000.00" in score.unsupported_claims
 
 
+@pytest.mark.parametrize(
+    "unsupported_claim",
+    [
+        "-125000.00",
+        "125,000.99",
+        "42000",
+    ],
+)
+def test_governed_answer_consistency_scoring_rejects_unsupported_numeric_forms(
+    unsupported_claim: str,
+) -> None:
+    fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
+    result_rows = fixture.expected_result_shape["known_result_rows"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=(
+            "FY2025-Q1 approved spend is 125000.00. "
+            f"FY2025-Q3 approved spend is {unsupported_claim}."
+        ),
+        result_rows=result_rows,
+        result_metadata={
+            "columns": ["fiscal_quarter", "approved_spend"],
+            "row_count": 2,
+            "truncated": False,
+        },
+    )
+
+    assert score.passed is False
+    assert "unsupported_result_value" in score.unsupported_claim_categories
+    assert "FY2025-Q3" in score.unsupported_claims
+    assert unsupported_claim in score.unsupported_claims
+
+
 def test_governed_answer_consistency_scoring_falls_back_to_row_keys() -> None:
     fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
     result_rows = fixture.expected_result_shape["known_result_rows"]
@@ -495,6 +529,23 @@ def test_governed_answer_consistency_scoring_ignores_incidental_integers() -> No
     assert "2" not in score.unsupported_claims
 
 
+def test_governed_answer_consistency_scoring_skips_values_without_result_evidence() -> None:
+    fixture_set = validate_governed_answer_fixture_set(_load_fixture_set())
+    fixture = {
+        fixture.metadata.scenario_id: fixture for fixture in fixture_set.fixtures
+    }["gavsf-005-calendar-vs-fiscal-quarter-ambiguity"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text="Do you mean FY2025-Q1 as a calendar quarter or fiscal quarter?",
+        result_rows=[],
+        result_metadata={"row_count": 0, "truncated": False},
+    )
+
+    assert score.passed is True
+    assert "unsupported_result_value" not in score.unsupported_claim_categories
+
+
 @pytest.mark.parametrize(
     ("scenario_id", "answer_text", "expected_claim"),
     [
@@ -529,12 +580,17 @@ def test_governed_answer_consistency_scoring_handles_forbidden_claim_prefixes(
     fixture = {
         fixture.metadata.scenario_id: fixture for fixture in fixture_set.fixtures
     }[scenario_id]
+    result_rows = fixture.expected_result_shape.get("known_result_rows") or []
 
     score = score_governed_answer_consistency(
         fixture=fixture,
         answer_text=answer_text,
-        result_rows=[],
-        result_metadata={"row_count": 0, "truncated": False},
+        result_rows=result_rows,
+        result_metadata={
+            "columns": list(fixture.expected_result_shape.get("columns") or ()),
+            "row_count": len(result_rows),
+            "truncated": False,
+        },
     )
 
     assert score.passed is False
@@ -559,6 +615,44 @@ def test_governed_answer_consistency_scoring_allows_negated_safety_statement() -
     assert "forbidden_answer_claim" not in score.unsupported_claim_categories
 
 
+@pytest.mark.parametrize(
+    ("scenario_id", "answer_text"),
+    [
+        (
+            "gavsf-002-vendor-spend-by-quarter",
+            "Unapproved spend is excluded from approved spend.",
+        ),
+        (
+            "gavsf-005-calendar-vs-fiscal-quarter-ambiguity",
+            "The current year is not specified; please confirm the period.",
+        ),
+    ],
+)
+def test_governed_answer_consistency_scoring_avoids_broad_forbidden_subjects(
+    scenario_id: str,
+    answer_text: str,
+) -> None:
+    fixture_set = validate_governed_answer_fixture_set(_load_fixture_set())
+    fixture = {
+        fixture.metadata.scenario_id: fixture for fixture in fixture_set.fixtures
+    }[scenario_id]
+    result_rows = fixture.expected_result_shape.get("known_result_rows") or []
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=answer_text,
+        result_rows=result_rows,
+        result_metadata={
+            "columns": list(fixture.expected_result_shape.get("columns") or ()),
+            "row_count": len(result_rows),
+            "truncated": False,
+        },
+    )
+
+    assert score.passed is True
+    assert "forbidden_answer_claim" not in score.unsupported_claim_categories
+
+
 def test_governed_answer_consistency_scoring_flags_unnegated_forbidden_claim() -> None:
     fixture_set = validate_governed_answer_fixture_set(_load_fixture_set())
     fixture = {
@@ -576,6 +670,24 @@ def test_governed_answer_consistency_scoring_flags_unnegated_forbidden_claim() -
     )
 
     assert score.passed is False
+    assert "cleanup was performed" in score.unsupported_claims
+
+
+def test_governed_answer_consistency_scoring_requires_local_negation() -> None:
+    fixture_set = validate_governed_answer_fixture_set(_load_fixture_set())
+    fixture = {
+        fixture.metadata.scenario_id: fixture for fixture in fixture_set.fixtures
+    }["gavsf-006-mutation-denied"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text="I am not sure, but cleanup was performed.",
+        result_rows=[],
+        result_metadata={"row_count": 0, "truncated": False},
+    )
+
+    assert score.passed is False
+    assert "forbidden_answer_claim" in score.unsupported_claim_categories
     assert "cleanup was performed" in score.unsupported_claims
 
 

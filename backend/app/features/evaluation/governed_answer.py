@@ -43,7 +43,11 @@ GovernedAnswerUnsupportedClaimCategory = Literal[
 ]
 
 _RESULT_VALUE_PATTERN = re.compile(
-    r"\bFY\d{4}-Q[1-4]\b|\b(?:\d{1,3}(?:,\d{3})+|\d+\.\d+)\b",
+    r"\bFY\d{4}-Q[1-4]\b|(?<![\w.-])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w-])",
+    re.IGNORECASE,
+)
+_INCIDENTAL_INTEGER_PREFIX_PATTERN = re.compile(
+    r"(?:^|\b)(?:top|rank|first|last)\s+$",
     re.IGNORECASE,
 )
 _FORBIDDEN_ACTION_PREFIXES = (
@@ -70,23 +74,13 @@ _FORBIDDEN_ACTION_PREFIXES = (
     "expose ",
     "return ",
 )
-_NEGATED_CLAIM_CONTEXTS = (
-    "not ",
-    "no ",
-    "never ",
-    "cannot ",
-    "can't ",
-    "didn't ",
-    "doesn't ",
-    "won't ",
-    "did not ",
-    "does not ",
-    "do not ",
-    "will not ",
-    "was not ",
-    "were not ",
-    "is not ",
-    "are not ",
+_NEGATED_CLAIM_CONTEXT_PATTERN = re.compile(
+    r"(?:^|\b)(?:"
+    r"not|no|never|cannot|can't|didn't|doesn't|won't|"
+    r"did\s+not|does\s+not|do\s+not|will\s+not|"
+    r"was\s+not|were\s+not|is\s+not|are\s+not"
+    r")\s+(?:\w+\s+){0,3}$",
+    re.IGNORECASE,
 )
 
 
@@ -318,12 +312,13 @@ def score_governed_answer_consistency(
         categories=categories,
         unsupported_claims=unsupported_claims,
     )
-    _check_deterministic_result_values(
-        answer_text=answer_text,
-        result_rows=result_rows,
-        categories=categories,
-        unsupported_claims=unsupported_claims,
-    )
+    if result_rows:
+        _check_deterministic_result_values(
+            answer_text=answer_text,
+            result_rows=result_rows,
+            categories=categories,
+            unsupported_claims=unsupported_claims,
+        )
 
     unsupported_claim_categories = tuple(dict.fromkeys(categories))
     passed = not unsupported_claim_categories
@@ -441,18 +436,20 @@ def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
         return ()
 
     action = _clean_claim_text(normalized.removeprefix("do not "))
-    subjects: list[str] = [action]
+    subjects: list[str] = []
+    subjects.extend(_split_forbidden_subject(action, allow_clause_prefixes=True))
     for prefix in _FORBIDDEN_ACTION_PREFIXES:
         if action.startswith(prefix):
-            subjects.append(action.removeprefix(prefix))
+            subjects.extend(
+                _split_forbidden_subject(
+                    action.removeprefix(prefix),
+                    allow_clause_prefixes=False,
+                )
+            )
             break
 
-    expanded_subjects: list[str] = []
-    for subject in subjects:
-        expanded_subjects.extend(_split_forbidden_subject(subject))
-
     return tuple(
-        dict.fromkeys(subject for subject in expanded_subjects if len(subject) >= 3)
+        dict.fromkeys(subject for subject in subjects if len(subject) >= 3)
     )
 
 
@@ -460,20 +457,24 @@ def _clean_claim_text(text: str) -> str:
     return text.strip().rstrip(".").strip()
 
 
-def _split_forbidden_subject(subject: str) -> tuple[str, ...]:
+def _split_forbidden_subject(
+    subject: str,
+    *,
+    allow_clause_prefixes: bool,
+) -> tuple[str, ...]:
     variants = [subject]
-    for separator in (" unless ", " without ", " to keep ", " under "):
-        if separator in subject:
-            variants.append(subject.split(separator, 1)[0])
+    if allow_clause_prefixes:
+        for separator in (" unless ", " without ", " to keep ", " under "):
+            if separator in subject:
+                variants.append(subject.split(separator, 1)[0])
 
     split_variants: list[str] = []
     for variant in variants:
         split_variants.append(variant)
-        if " as " in variant:
-            split_variants.append(variant.split(" as ", 1)[0])
         if " or claim " in variant:
-            before, after = variant.split(" or claim ", 1)
-            split_variants.extend((before, after))
+            _, after = variant.split(" or claim ", 1)
+            split_variants.append(f"claim {after}")
+            split_variants.append(after)
 
     return tuple(_clean_claim_text(variant) for variant in split_variants)
 
@@ -481,20 +482,35 @@ def _split_forbidden_subject(subject: str) -> tuple[str, ...]:
 def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> bool:
     start = normalized_answer.find(claim_subject)
     while start >= 0:
-        context = normalized_answer[max(0, start - 48) : start]
+        context = normalized_answer[max(0, start - 64) : start]
         sentence_start = max(context.rfind("."), context.rfind("?"), context.rfind("!"))
         if sentence_start >= 0:
             context = context[sentence_start + 1 :]
-        if not any(
-            negated_context in context for negated_context in _NEGATED_CLAIM_CONTEXTS
-        ):
+        clause_start = max(context.rfind(","), context.rfind(";"), context.rfind(":"))
+        if clause_start >= 0:
+            context = context[clause_start + 1 :]
+        if not _NEGATED_CLAIM_CONTEXT_PATTERN.search(context):
             return False
         start = normalized_answer.find(claim_subject, start + len(claim_subject))
     return True
 
 
 def _claimed_result_values(answer_text: str) -> tuple[str, ...]:
-    return tuple(match.group(0) for match in _RESULT_VALUE_PATTERN.finditer(answer_text))
+    claimed_values: list[str] = []
+    for match in _RESULT_VALUE_PATTERN.finditer(answer_text):
+        value = match.group(0)
+        if _is_incidental_integer_claim(answer_text, match):
+            continue
+        claimed_values.append(value)
+    return tuple(claimed_values)
+
+
+def _is_incidental_integer_claim(answer_text: str, match: re.Match[str]) -> bool:
+    value = match.group(0)
+    if not value.isdigit():
+        return False
+    context = answer_text[max(0, match.start() - 16) : match.start()]
+    return bool(_INCIDENTAL_INTEGER_PREFIX_PATTERN.search(context))
 
 
 def _supported_result_values(result_rows: Sequence[Mapping[str, Any]]) -> set[str]:
