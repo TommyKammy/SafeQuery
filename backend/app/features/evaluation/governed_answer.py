@@ -402,11 +402,9 @@ def _check_deterministic_result_values(
     categories: list[GovernedAnswerUnsupportedClaimCategory],
     unsupported_claims: list[str],
 ) -> None:
-    supported_values = _supported_result_values(result_rows)
-    for claim_value in _claimed_result_values(answer_text):
-        if not _claim_value_is_supported(claim_value, supported_values):
-            categories.append("unsupported_result_value")
-            unsupported_claims.append(claim_value)
+    for claim_value in _unsupported_claimed_result_values(answer_text, result_rows):
+        categories.append("unsupported_result_value")
+        unsupported_claims.append(claim_value)
 
 
 def _observed_result_columns(
@@ -522,8 +520,16 @@ def _supported_result_values(result_rows: Sequence[Mapping[str, Any]]) -> set[st
     return supported
 
 
-def _claim_value_is_supported(claim_value: str, supported_values: set[str]) -> bool:
-    return not _value_forms(claim_value).isdisjoint(supported_values)
+def _unsupported_claimed_result_values(
+    answer_text: str,
+    result_rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    supported_values = _supported_result_values(result_rows)
+    return tuple(
+        claim_value
+        for claim_value in _claimed_result_values(answer_text)
+        if _value_forms(claim_value).isdisjoint(supported_values)
+    )
 
 
 def _value_forms(value: Any) -> set[str]:
