@@ -20,6 +20,19 @@ from app.features.evaluation.harness import (
     list_postgresql_evaluation_scenarios,
     list_source_regression_matrix,
 )
+from app.features.evaluation.governed_answer import (
+    GovernedAnswerAuthoringSummary,
+    GovernedAnswerCaseType,
+    GovernedAnswerCorrectnessLevel,
+    GovernedAnswerFailureMode,
+    GovernedAnswerFixture,
+    GovernedAnswerFixtureMetadata,
+    GovernedAnswerFixtureSet,
+    GovernedAnswerSemanticMapping,
+    GovernedAnswerSourceBinding,
+    GovernedAnswerSourceProfile,
+    validate_governed_answer_fixture_set,
+)
 from app.features.evaluation.release_gate import (
     ReleaseGateAuditArtifact,
     ReleaseGateDecision,
@@ -39,6 +52,16 @@ __all__ = [
     "EvaluationOutcomeRecord",
     "EvaluationOutcomeSnapshot",
     "EvaluationSourceProfile",
+    "GovernedAnswerAuthoringSummary",
+    "GovernedAnswerCaseType",
+    "GovernedAnswerCorrectnessLevel",
+    "GovernedAnswerFailureMode",
+    "GovernedAnswerFixture",
+    "GovernedAnswerFixtureMetadata",
+    "GovernedAnswerFixtureSet",
+    "GovernedAnswerSemanticMapping",
+    "GovernedAnswerSourceBinding",
+    "GovernedAnswerSourceProfile",
     "MSSQLEvaluationScenario",
     "PostgreSQLEvaluationScenario",
     "ReleaseGateAuditArtifact",
@@ -52,4 +75,5 @@ __all__ = [
     "list_postgresql_evaluation_scenarios",
     "list_source_regression_matrix",
     "reconstruct_release_gate",
+    "validate_governed_answer_fixture_set",
 ]

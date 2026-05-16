@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from app.features.evaluation import validate_governed_answer_fixture_set
 
 
 FIXTURE_PATH = (
@@ -29,17 +35,14 @@ HOME_PATH_PATTERN = re.compile(
     re.IGNORECASE,
 )
 REQUIRED_FIXTURE_FIELDS = {
-    "id",
+    "metadata",
     "question",
     "case_type",
     "source_binding",
     "expected_intent",
-    "metric",
-    "dimensions",
-    "filters",
+    "expected_semantic_mapping",
     "acceptable_sql_shape",
     "expected_result_shape",
-    "ambiguity_status",
     "forbidden_answer_claims",
     "expected_correctness_level",
     "human_authoring_minutes",
@@ -53,9 +56,12 @@ def _load_fixture_set() -> dict[str, Any]:
 
 def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     fixture_set = _load_fixture_set()
+    validated = validate_governed_answer_fixture_set(fixture_set)
 
     assert fixture_set["fixture_set"] == "governed_answer_vendor_spend.v0"
     assert fixture_set["domain"] == "approved_vendor_spend"
+    assert fixture_set["format_status"] == "governed_answer_assurance.v1"
+    assert fixture_set["semantic_contract_version"] == "governed_answer_assurance.v1"
     assert fixture_set["source_profile"]["source_id"] == "business-postgres-source"
     assert fixture_set["source_profile"]["source_family"] == "postgresql"
     assert fixture_set["source_profile"]["source_flavor"] == "warehouse"
@@ -66,7 +72,7 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     fixtures = fixture_set["fixtures"]
     assert 5 <= len(fixtures) <= 10
     assert fixture_set["authoring_summary"]["fixture_count"] == len(fixtures)
-    fixture_ids = {fixture["id"] for fixture in fixtures}
+    fixture_ids = {fixture["metadata"]["scenario_id"] for fixture in fixtures}
     assert len(fixture_ids) == len(fixtures)
 
     ambiguity_cases = 0
@@ -76,17 +82,23 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
 
     for fixture in fixtures:
         assert REQUIRED_FIXTURE_FIELDS <= fixture.keys()
+        metadata = fixture["metadata"]
+        assert metadata["scenario_id"].startswith("gavsf-")
+        assert metadata["source_id"] == fixture_set["source_profile"]["source_id"]
+        assert (
+            metadata["schema_snapshot_version"]
+            == fixture_set["source_profile"]["schema_snapshot_version"]
+        )
+        assert (
+            metadata["semantic_contract_version"]
+            == fixture_set["semantic_contract_version"]
+        )
         assert fixture["question"].strip()
         assert fixture["case_type"] in {
             "positive",
-            "ambiguity",
-            "negative",
-            "adversarial",
-        }
-        assert fixture["ambiguity_status"] in {
-            "unambiguous",
-            "ambiguous_requires_clarification",
-            "unsafe_or_out_of_scope",
+            "ambiguous",
+            "unsafe",
+            "unsupported_answer",
         }
         assert fixture["expected_correctness_level"] in {
             "exact_result_required",
@@ -99,21 +111,31 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
         assert fixture["human_authoring_minutes"] > 0
         assert isinstance(fixture["domain_expert_review_required"], bool)
 
+        semantic_mapping = fixture["expected_semantic_mapping"]
+        assert semantic_mapping["metric"].strip()
+        assert isinstance(semantic_mapping["dimensions"], list)
+        assert isinstance(semantic_mapping["filters"], list)
+
         source_binding = fixture["source_binding"]
         assert source_binding["source_id"] == fixture_set["source_profile"]["source_id"]
         assert source_binding["schema"] == "finance"
         assert source_binding["table"] == "approved_vendor_spend"
         source_bound_cases += 1
 
-        if fixture["case_type"] == "ambiguity":
+        if fixture["case_type"] == "ambiguous":
             ambiguity_cases += 1
             assert (
                 fixture["expected_correctness_level"]
                 == "ambiguity_clarification_required"
             )
-        if fixture["case_type"] in {"negative", "adversarial"}:
+            assert fixture["expected_failure_mode"] == "clarification_required"
+        if fixture["case_type"] in {"unsafe", "unsupported_answer"}:
             negative_or_adversarial_cases += 1
             assert fixture["expected_correctness_level"] == "deny_required"
+            assert fixture["expected_failure_mode"] in {
+                "guard_denial_required",
+                "unsupported_answer_denial_required",
+            }
 
         total_authoring_minutes += fixture["human_authoring_minutes"]
 
@@ -124,6 +146,60 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
         total_authoring_minutes
     )
     assert fixture_set["authoring_summary"]["estimated_review_minutes"] > 0
+    assert len(validated.fixtures) == len(fixtures)
+
+
+def test_governed_answer_fixture_set_exports_machine_readable_schema() -> None:
+    schema = validate_governed_answer_fixture_set(_load_fixture_set()).model_json_schema()
+
+    assert schema["title"] == "GovernedAnswerFixtureSet"
+    assert schema["properties"]["format_status"]["const"] == (
+        "governed_answer_assurance.v1"
+    )
+    assert "expected_semantic_mapping" in json.dumps(schema)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        (
+            lambda data: data["fixtures"][0].pop("expected_semantic_mapping"),
+            "expected_semantic_mapping",
+        ),
+        (
+            lambda data: data["fixtures"][1].__setitem__("case_type", "unknown"),
+            "Input should be",
+        ),
+        (
+            lambda data: data["fixtures"][2].pop("expected_failure_mode"),
+            "Non-positive fixtures must define an expected failure mode.",
+        ),
+        (
+            lambda data: data["fixtures"][0]["metadata"].__setitem__(
+                "source_id", "unbound-source"
+            ),
+            "Fixture metadata source id must match source profile.",
+        ),
+        (
+            lambda data: data["fixtures"][0].__setitem__(
+                "operator_local_path", "/workspace-only/path"
+            ),
+            "Extra inputs are not permitted",
+        ),
+    ],
+)
+def test_governed_answer_fixture_schema_rejects_malformed_fixtures(
+    mutation: Any,
+    expected_error: str,
+) -> None:
+    fixture_set = deepcopy(_load_fixture_set())
+
+    mutation(fixture_set)
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_governed_answer_fixture_set(fixture_set)
+
+    assert expected_error in str(exc_info.value)
 
 
 def test_governed_answer_vendor_spend_fixtures_avoid_workstation_paths() -> None:
