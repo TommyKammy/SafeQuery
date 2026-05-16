@@ -99,6 +99,10 @@ _CLAIM_VALUE_ROW_LINK_PATTERN = re.compile(
     r"(?:=|:|\b(?:is|are|was|were|had|has|with|at|of|for|totaled|totals?|equals?)\b)",
     re.IGNORECASE,
 )
+_CLAIM_VALUE_NEGATED_COPULA_PATTERN = re.compile(
+    r"\b(?:is|are|was|were)\s+not\b|\b(?:isn't|aren't|wasn't|weren't)\b",
+    re.IGNORECASE,
+)
 _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN = re.compile(
     r"\b(?:after|before|compared|follows?|precedes?|than|versus|vs\.?)\b",
     re.IGNORECASE,
@@ -348,13 +352,12 @@ def score_governed_answer_consistency(
         expected_result_shape=expected_result_shape,
         result_rows=result_rows,
     )
-    if value_evidence_rows:
-        _check_deterministic_result_values(
-            answer_text=answer_text,
-            result_rows=value_evidence_rows,
-            categories=categories,
-            unsupported_claims=unsupported_claims,
-        )
+    _check_deterministic_result_values(
+        answer_text=answer_text,
+        result_rows=value_evidence_rows,
+        categories=categories,
+        unsupported_claims=unsupported_claims,
+    )
 
     unsupported_claim_categories = tuple(dict.fromkeys(categories))
     passed = not unsupported_claim_categories
@@ -437,6 +440,12 @@ def _check_deterministic_result_values(
     categories: list[GovernedAnswerUnsupportedClaimCategory],
     unsupported_claims: list[str],
 ) -> None:
+    if not result_rows:
+        for claim_value in _unsupported_no_evidence_result_value_claims(answer_text):
+            categories.append("unsupported_result_value")
+            unsupported_claims.append(claim_value)
+        return
+
     for claim_value in _unsupported_claimed_result_values(answer_text, result_rows):
         categories.append("unsupported_result_value")
         unsupported_claims.append(claim_value)
@@ -662,6 +671,9 @@ def _negated_claim_context_reaches_subject(context: str, claim_subject: str) -> 
     if not negation_matches:
         return False
 
+    if _has_uncoordinated_double_negation(negation_matches, context):
+        return False
+
     after_negation = context[negation_matches[-1].end() :]
     if _NEGATED_CLAIM_CONTRAST_PATTERN.search(after_negation):
         return False
@@ -676,6 +688,19 @@ def _negated_claim_context_reaches_subject(context: str, claim_subject: str) -> 
 
     gap_words = re.findall(r"\b\w+\b", after_negation)
     return len(gap_words) <= _NEGATED_CLAIM_MAX_GAP_WORDS
+
+
+def _has_uncoordinated_double_negation(
+    negation_matches: Sequence[re.Match[str]],
+    context: str,
+) -> bool:
+    if len(negation_matches) < 2:
+        return False
+
+    previous_match = negation_matches[-2]
+    latest_match = negation_matches[-1]
+    between_negations = context[previous_match.end() : latest_match.start()]
+    return re.search(r"\b(?:and|or|nor)\b", between_negations) is None
 
 
 def _has_uncoordinated_clause_boundary(after_negation: str) -> bool:
@@ -793,6 +818,17 @@ def _unsupported_claimed_result_row_combinations(
     return tuple(unsupported)
 
 
+def _unsupported_no_evidence_result_value_claims(answer_text: str) -> tuple[str, ...]:
+    unsupported: list[str] = []
+    claimed_values = _claimed_result_value_matches(answer_text)
+    for left, right in zip(claimed_values, claimed_values[1:]):
+        left_value, _, left_end = left
+        right_value, right_start, _ = right
+        if _claim_values_are_row_linked(answer_text[left_end:right_start]):
+            unsupported.append(f"{left_value} with {right_value}")
+    return tuple(unsupported)
+
+
 def _row_value_forms(row: Mapping[str, Any]) -> set[str]:
     forms: set[str] = set()
     for value in row.values():
@@ -806,6 +842,8 @@ def _claim_values_are_row_linked(between_values: str) -> bool:
     if re.search(r"\b(?:and|or)\b", between_values, re.IGNORECASE):
         return False
     if _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN.search(between_values):
+        return False
+    if _CLAIM_VALUE_NEGATED_COPULA_PATTERN.search(between_values):
         return False
     return _CLAIM_VALUE_ROW_LINK_PATTERN.search(between_values) is not None
 
