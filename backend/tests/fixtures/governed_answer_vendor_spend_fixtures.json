@@ -475,14 +475,14 @@
         "schema_snapshot_version": 9,
         "semantic_contract_version": "governed_answer_assurance.v1"
       },
-      "question": "Show the top 2 approved vendors by spend for each quarter and include ties.",
+      "question": "Show the top 2 approved vendors by spend for each quarter.",
       "case_type": "ambiguous",
       "source_binding": {
         "source_id": "business-postgres-source",
         "schema": "finance",
         "table": "approved_vendor_spend"
       },
-      "expected_intent": "The user requests a top-N ranking but tie expansion changes the expected row count and ranking rule.",
+      "expected_intent": "The user requests a top-N ranking but does not specify whether ties at the rank boundary should expand the row count or require a deterministic tie-breaker.",
       "expected_semantic_mapping": {
         "metric": "sum_approved_vendor_spend with unresolved top-N tie handling",
         "dimensions": [
@@ -496,7 +496,7 @@
       },
       "acceptable_sql_shape": {
         "must_not_execute": true,
-        "required_clarification": "Ask whether ties at rank 2 should return all tied vendors, use a deterministic tie-breaker, or cap the result at exactly 2 vendors per quarter."
+        "required_clarification": "Ask how ties at rank 2 should be handled: return all tied vendors, use a deterministic tie-breaker, or cap the result at exactly 2 vendors per quarter."
       },
       "expected_result_shape": {
         "response_type": "clarification",
