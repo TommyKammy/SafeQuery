@@ -282,6 +282,9 @@ def test_governed_answer_vendor_spend_fixtures_cover_adversarial_fail_closed_sui
 
     assert ADVERSARIAL_SCENARIO_IDS.keys() <= fixtures_by_id.keys()
 
+    observed_guard_denials: dict[str, str] = {}
+    unsupported_guard_denials: dict[str, str] = {}
+
     for scenario_id, adversarial_category in ADVERSARIAL_SCENARIO_IDS.items():
         fixture = fixtures_by_id[scenario_id]
 
@@ -295,12 +298,14 @@ def test_governed_answer_vendor_spend_fixtures_cover_adversarial_fail_closed_sui
         expected_guard_denial = fixture["acceptable_sql_shape"][
             "expected_guard_denial"
         ]
-        assert expected_guard_denial == EXPECTED_ADVERSARIAL_GUARD_DENIALS[
-            scenario_id
-        ]
-        assert expected_guard_denial in GUARD_DENY_CODES
+        observed_guard_denials[scenario_id] = expected_guard_denial
+        if expected_guard_denial not in GUARD_DENY_CODES:
+            unsupported_guard_denials[scenario_id] = expected_guard_denial
         assert fixture["expected_result_shape"]["response_type"] == "deny"
         assert fixture["expected_result_shape"]["reviewer_readable_reason"].strip()
+
+    assert observed_guard_denials == EXPECTED_ADVERSARIAL_GUARD_DENIALS
+    assert unsupported_guard_denials == {}
 
 
 def test_governed_answer_fixture_set_exports_machine_readable_schema() -> None:
