@@ -69,6 +69,7 @@ _FORBIDDEN_ACTION_PREFIXES = (
     "provide ",
     "execute ",
     "cite ",
+    "reveal ",
     "say ",
     "produce ",
     "expose ",
@@ -76,13 +77,21 @@ _FORBIDDEN_ACTION_PREFIXES = (
 )
 _NEGATED_CLAIM_CONTEXT_PATTERN = re.compile(
     r"(?:^|\b)(?:"
-    r"not|no|never|cannot|can't|didn't|doesn't|won't|"
+    r"not|no|never|cannot|can't|don't|didn't|doesn't|won't|"
     r"did\s+not|does\s+not|do\s+not|will\s+not|"
     r"was\s+not|were\s+not|is\s+not|are\s+not"
     r")\s+(?:\w+\s+){0,3}$",
     re.IGNORECASE,
 )
 _TRUNCATION_METADATA_FLAGS = ("truncated", "is_truncated", "result_truncated")
+_APOSTROPHE_TRANSLATION = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201b": "'",
+        "\uff07": "'",
+    }
+)
 
 
 class GovernedAnswerSourceProfile(BaseModel):
@@ -383,7 +392,7 @@ def _check_forbidden_answer_claims(
     categories: list[GovernedAnswerUnsupportedClaimCategory],
     unsupported_claims: list[str],
 ) -> None:
-    normalized_answer = answer_text.casefold()
+    normalized_answer = _normalize_forbidden_claim_text(answer_text).casefold()
     for forbidden_claim in fixture.forbidden_answer_claims:
         for claim_subject in _forbidden_claim_subjects(forbidden_claim):
             if (
@@ -430,22 +439,37 @@ def _result_metadata_reports_truncation(result_metadata: Mapping[str, Any]) -> b
 
 
 def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
-    normalized = _clean_claim_text(forbidden_claim.casefold())
+    normalized = _clean_claim_text(
+        _normalize_forbidden_claim_text(forbidden_claim).casefold()
+    )
     if not normalized.startswith("do not "):
         return ()
 
     action = _clean_claim_text(normalized.removeprefix("do not "))
-    subjects: list[str] = []
-    subjects.extend(_split_forbidden_subject(action, allow_clause_prefixes=True))
+    prefix_subjects: list[str] = []
+    action_subjects = _split_forbidden_subject(
+        action,
+        allow_clause_prefixes=True,
+    )
+    matched_action_subject = ""
     for prefix in _FORBIDDEN_ACTION_PREFIXES:
         if action.startswith(prefix):
-            subjects.extend(
+            matched_action_subject = action.removeprefix(prefix)
+            prefix_subjects.extend(
                 _split_forbidden_subject(
-                    action.removeprefix(prefix),
+                    matched_action_subject,
                     allow_clause_prefixes=False,
                 )
             )
             break
+
+    subjects: list[str] = []
+    if matched_action_subject and _has_subject_disjunction(matched_action_subject):
+        subjects.extend(prefix_subjects)
+        subjects.extend(action_subjects)
+    else:
+        subjects.extend(action_subjects)
+        subjects.extend(prefix_subjects)
 
     return tuple(
         dict.fromkeys(subject for subject in subjects if len(subject) >= 3)
@@ -454,6 +478,10 @@ def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
 
 def _clean_claim_text(text: str) -> str:
     return text.strip().rstrip(".").strip()
+
+
+def _normalize_forbidden_claim_text(text: str) -> str:
+    return text.translate(_APOSTROPHE_TRANSLATION)
 
 
 def _split_forbidden_subject(
@@ -471,11 +499,47 @@ def _split_forbidden_subject(
     for variant in variants:
         split_variants.append(variant)
         if " or claim " in variant:
-            _, after = variant.split(" or claim ", 1)
+            before, after = variant.split(" or claim ", 1)
+            split_variants.append(before)
             split_variants.append(f"claim {after}")
             split_variants.append(after)
+        split_variants.extend(_disjunctive_subject_parts(variant))
 
     return tuple(_clean_claim_text(variant) for variant in split_variants)
+
+
+def _disjunctive_subject_parts(subject: str) -> tuple[str, ...]:
+    normalized = re.sub(r",\s*or\s+", ", ", subject)
+    parts = [
+        _clean_claim_text(part)
+        for part in re.split(r"\s*,\s*|\s+or\s+", normalized)
+        if _clean_claim_text(part)
+    ]
+    if len(parts) < 2:
+        return ()
+
+    suffix = _shared_disjunction_suffix(parts)
+    expanded_parts: list[str] = []
+    for part in parts:
+        if suffix and " " not in part and part != suffix:
+            expanded_parts.append(f"{part} {suffix}")
+        else:
+            expanded_parts.append(part)
+    return tuple(expanded_parts)
+
+
+def _has_subject_disjunction(subject: str) -> bool:
+    return "," in subject or bool(re.search(r"\bor\b", subject))
+
+
+def _shared_disjunction_suffix(parts: Sequence[str]) -> str | None:
+    final_words = parts[-1].split()
+    if len(final_words) < 2:
+        return None
+    suffix = final_words[-1]
+    if any(" " in part for part in parts[:-1]):
+        return None
+    return suffix
 
 
 def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> bool:

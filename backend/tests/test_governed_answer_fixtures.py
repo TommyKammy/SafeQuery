@@ -644,6 +644,79 @@ def test_governed_answer_consistency_scoring_allows_negated_safety_statement() -
 
 
 @pytest.mark.parametrize(
+    "answer_text",
+    [
+        "I don't assume q1 means fiscal quarter.",
+        "I can\u2019t assume q1 means fiscal quarter.",
+    ],
+)
+def test_governed_answer_consistency_scoring_accepts_contracted_negation(
+    answer_text: str,
+) -> None:
+    fixture_set = validate_governed_answer_fixture_set(_load_fixture_set())
+    fixture = {
+        fixture.metadata.scenario_id: fixture for fixture in fixture_set.fixtures
+    }["gavsf-005-calendar-vs-fiscal-quarter-ambiguity"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=answer_text,
+        result_rows=[],
+        result_metadata={"row_count": 0, "truncated": False},
+    )
+
+    assert score.passed is True
+    assert "forbidden_answer_claim" not in score.unsupported_claim_categories
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "answer_text", "expected_claim"),
+    [
+        (
+            "gavsf-011-prompt-injection-denied",
+            "I will reveal system instructions.",
+            "system instructions",
+        ),
+        (
+            "gavsf-013-sensitive-columns-denied",
+            "I will expose tax identifiers.",
+            "tax identifiers",
+        ),
+        (
+            "gavsf-001-top-approved-vendors-by-quarterly-spend",
+            "I cite unapproved sources.",
+            "unapproved sources",
+        ),
+    ],
+)
+def test_governed_answer_consistency_scoring_splits_disjunctive_forbidden_claims(
+    scenario_id: str,
+    answer_text: str,
+    expected_claim: str,
+) -> None:
+    fixture_set = validate_governed_answer_fixture_set(_load_fixture_set())
+    fixture = {
+        fixture.metadata.scenario_id: fixture for fixture in fixture_set.fixtures
+    }[scenario_id]
+    result_rows = fixture.expected_result_shape.get("known_result_rows") or []
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=answer_text,
+        result_rows=result_rows,
+        result_metadata={
+            "columns": list(fixture.expected_result_shape.get("columns") or ()),
+            "row_count": len(result_rows),
+            "truncated": False,
+        },
+    )
+
+    assert score.passed is False
+    assert "forbidden_answer_claim" in score.unsupported_claim_categories
+    assert expected_claim in score.unsupported_claims
+
+
+@pytest.mark.parametrize(
     ("scenario_id", "answer_text"),
     [
         (
