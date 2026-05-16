@@ -112,7 +112,10 @@
           "fiscal_quarter ASC",
           "approved_spend DESC"
         ],
-        "must_limit_rows": true,
+        "must_rank_within_each": [
+          "fiscal_quarter"
+        ],
+        "must_not_limit_globally": true,
         "must_not_reference": [
           "unapproved_vendor_spend",
           "application persistence tables",
@@ -137,6 +140,16 @@
             "vendor_name": "Northstar Logistics",
             "fiscal_quarter": "FY2025-Q1",
             "approved_spend": "50000.00"
+          },
+          {
+            "vendor_name": "Apex Office Supply",
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "61000.00"
+          },
+          {
+            "vendor_name": "Summit Software",
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "37000.00"
           }
         ]
       },

@@ -189,6 +189,33 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
     assert "unapproved_vendor_spend" in top_vendors["acceptable_sql_shape"][
         "must_not_reference"
     ]
+    assert "must_limit_rows" not in top_vendors["acceptable_sql_shape"]
+    assert top_vendors["acceptable_sql_shape"]["must_rank_within_each"] == [
+        "fiscal_quarter"
+    ]
+    assert top_vendors["acceptable_sql_shape"]["must_not_limit_globally"] is True
+    assert top_vendors["expected_result_shape"]["known_result_rows"] == [
+        {
+            "vendor_name": "Apex Office Supply",
+            "fiscal_quarter": "FY2025-Q1",
+            "approved_spend": "75000.00",
+        },
+        {
+            "vendor_name": "Northstar Logistics",
+            "fiscal_quarter": "FY2025-Q1",
+            "approved_spend": "50000.00",
+        },
+        {
+            "vendor_name": "Apex Office Supply",
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "61000.00",
+        },
+        {
+            "vendor_name": "Summit Software",
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "37000.00",
+        },
+    ]
 
     by_quarter = fixtures_by_id["gavsf-002-vendor-spend-by-quarter"]
     assert by_quarter["case_type"] == "positive"
