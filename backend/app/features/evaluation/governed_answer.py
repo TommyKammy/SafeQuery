@@ -106,6 +106,7 @@ _FORBIDDEN_CLAIM_FRAGMENT_PATTERN = re.compile(
 _NEGATED_CLAIM_PATTERN = re.compile(
     r"(?:^|\b)(?:"
     r"not|no|never|cannot|can't|don't|didn't|doesn't|won't|"
+    r"unable\s+to|"
     r"did\s+not|does\s+not|do\s+not|will\s+not|"
     r"was\s+not|were\s+not|is\s+not|are\s+not"
     r")\b",
@@ -741,6 +742,8 @@ def _has_uncoordinated_clause_boundary(after_negation: str) -> bool:
     if last_comma < 0:
         return False
     tail = after_negation[last_comma + 1 :]
+    if not re.search(r"\w", tail) and "," in after_negation[:last_comma]:
+        return False
     return re.search(r"\b(?:and|or)\s*$", tail) is None
 
 
@@ -765,7 +768,7 @@ def _has_later_affirmative_forbidden_action(text: str) -> bool:
     for prefix in _FORBIDDEN_ACTION_PREFIXES:
         verb = re.escape(prefix.strip())
         if re.search(
-            rf"(?:\band\b|[,;])\s+(?:i\s+|we\s+)?"
+            rf"(?:\band\b|[,;])\s+(?:then\s+)?(?:i\s+|we\s+)?"
             rf"(?:will\s+|would\s+|can\s+|could\s+|should\s+)?{verb}\b",
             text,
         ):
