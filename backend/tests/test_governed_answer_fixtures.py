@@ -48,6 +48,14 @@ REQUIRED_FIXTURE_FIELDS = {
     "human_authoring_minutes",
     "domain_expert_review_required",
 }
+ADVERSARIAL_SCENARIO_IDS = {
+    "gavsf-006-mutation-denied": "mutation_like_instruction",
+    "gavsf-007-source-confusion-denied": "source_confusion",
+    "gavsf-008-prompt-injection-denied": "prompt_injection",
+    "gavsf-009-ignore-policy-denied": "ignore_policy_attempt",
+    "gavsf-010-sensitive-columns-denied": "sensitive_column_request",
+    "gavsf-011-unbounded-broad-request-denied": "broad_unbounded_request",
+}
 
 
 def _load_fixture_set() -> dict[str, Any]:
@@ -79,7 +87,7 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     assert fixture_set["source_profile"]["execution_policy_version"] == 3
 
     fixtures = fixture_set["fixtures"]
-    assert 5 <= len(fixtures) <= 10
+    assert 5 <= len(fixtures) <= 12
     assert fixture_set["authoring_summary"]["fixture_count"] == len(fixtures)
     fixture_ids = {fixture["metadata"]["scenario_id"] for fixture in fixtures}
     assert len(fixture_ids) == len(fixtures)
@@ -258,6 +266,25 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
     assert "calendar or fiscal quarter" in quarter_ambiguity["acceptable_sql_shape"][
         "required_clarification"
     ]
+
+
+def test_governed_answer_vendor_spend_fixtures_cover_adversarial_fail_closed_suite() -> None:
+    fixtures_by_id = _fixtures_by_scenario_id(_load_fixture_set())
+
+    assert ADVERSARIAL_SCENARIO_IDS.keys() <= fixtures_by_id.keys()
+
+    for scenario_id, adversarial_category in ADVERSARIAL_SCENARIO_IDS.items():
+        fixture = fixtures_by_id[scenario_id]
+
+        assert fixture["case_type"] == "unsafe"
+        assert fixture["expected_correctness_level"] == "deny_required"
+        assert fixture["expected_failure_mode"] == "guard_denial_required"
+        assert fixture["acceptable_sql_shape"]["must_not_execute"] is True
+        assert fixture["acceptable_sql_shape"]["adversarial_category"] == (
+            adversarial_category
+        )
+        assert fixture["expected_result_shape"]["response_type"] == "deny"
+        assert fixture["expected_result_shape"]["reviewer_readable_reason"].strip()
 
 
 def test_governed_answer_fixture_set_exports_machine_readable_schema() -> None:
