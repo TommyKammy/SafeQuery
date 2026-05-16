@@ -51,19 +51,19 @@ REQUIRED_FIXTURE_FIELDS = {
 }
 ADVERSARIAL_SCENARIO_IDS = {
     "gavsf-006-mutation-denied": "mutation_like_instruction",
-    "gavsf-007-source-confusion-denied": "source_confusion",
-    "gavsf-008-prompt-injection-denied": "prompt_injection",
-    "gavsf-009-ignore-policy-denied": "ignore_policy_attempt",
-    "gavsf-010-sensitive-columns-denied": "sensitive_column_request",
-    "gavsf-011-unbounded-broad-request-denied": "broad_unbounded_request",
+    "gavsf-010-source-confusion-denied": "source_confusion",
+    "gavsf-011-prompt-injection-denied": "prompt_injection",
+    "gavsf-012-ignore-policy-denied": "ignore_policy_attempt",
+    "gavsf-013-sensitive-columns-denied": "sensitive_column_request",
+    "gavsf-014-unbounded-broad-request-denied": "broad_unbounded_request",
 }
 EXPECTED_ADVERSARIAL_GUARD_DENIALS = {
     "gavsf-006-mutation-denied": "DENY_WRITE_OPERATION",
-    "gavsf-007-source-confusion-denied": "DENY_CROSS_DATABASE",
-    "gavsf-008-prompt-injection-denied": "DENY_UNSUPPORTED_SQL_SYNTAX",
-    "gavsf-009-ignore-policy-denied": "DENY_RESOURCE_ABUSE",
-    "gavsf-010-sensitive-columns-denied": "DENY_UNSUPPORTED_SQL_SYNTAX",
-    "gavsf-011-unbounded-broad-request-denied": "DENY_RESOURCE_ABUSE",
+    "gavsf-010-source-confusion-denied": "DENY_CROSS_DATABASE",
+    "gavsf-011-prompt-injection-denied": "DENY_UNSUPPORTED_SQL_SYNTAX",
+    "gavsf-012-ignore-policy-denied": "DENY_RESOURCE_ABUSE",
+    "gavsf-013-sensitive-columns-denied": "DENY_UNSUPPORTED_SQL_SYNTAX",
+    "gavsf-014-unbounded-broad-request-denied": "DENY_RESOURCE_ABUSE",
 }
 
 
@@ -96,7 +96,7 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     assert fixture_set["source_profile"]["execution_policy_version"] == 3
 
     fixtures = fixture_set["fixtures"]
-    assert 5 <= len(fixtures) <= 12
+    assert 5 <= len(fixtures) <= 14
     assert fixture_set["authoring_summary"]["fixture_count"] == len(fixtures)
     fixture_ids = {fixture["metadata"]["scenario_id"] for fixture in fixtures}
     assert len(fixture_ids) == len(fixtures)
@@ -184,6 +184,9 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
         "gavsf-003-approved-vs-unapproved-distinction",
         "gavsf-004-refund-inclusion-ambiguity",
         "gavsf-005-calendar-vs-fiscal-quarter-ambiguity",
+        "gavsf-007-approval-timing-ambiguity",
+        "gavsf-008-vendor-name-normalization-ambiguity",
+        "gavsf-009-top-n-tie-handling-ambiguity",
     }
     assert required_scenario_ids <= fixtures_by_id.keys()
 
@@ -273,6 +276,34 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
         "required_clarification"
     ]
     assert "calendar or fiscal quarter" in quarter_ambiguity["acceptable_sql_shape"][
+        "required_clarification"
+    ]
+
+    approval_timing_ambiguity = fixtures_by_id[
+        "gavsf-007-approval-timing-ambiguity"
+    ]
+    vendor_normalization_ambiguity = fixtures_by_id[
+        "gavsf-008-vendor-name-normalization-ambiguity"
+    ]
+    top_n_tie_ambiguity = fixtures_by_id[
+        "gavsf-009-top-n-tie-handling-ambiguity"
+    ]
+    for ambiguous_fixture in (
+        approval_timing_ambiguity,
+        vendor_normalization_ambiguity,
+        top_n_tie_ambiguity,
+    ):
+        assert ambiguous_fixture["case_type"] == "ambiguous"
+        assert ambiguous_fixture["expected_failure_mode"] == "clarification_required"
+        assert ambiguous_fixture["acceptable_sql_shape"]["must_not_execute"] is True
+
+    assert "transaction time or currently approved" in approval_timing_ambiguity[
+        "acceptable_sql_shape"
+    ]["required_clarification"]
+    assert "vendor-normalization rule" in vendor_normalization_ambiguity[
+        "acceptable_sql_shape"
+    ]["required_clarification"]
+    assert "ties at rank 2" in top_n_tie_ambiguity["acceptable_sql_shape"][
         "required_clarification"
     ]
 
