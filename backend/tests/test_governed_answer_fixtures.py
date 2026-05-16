@@ -167,6 +167,9 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
         "gavsf-003-approved-vs-unapproved-distinction",
         "gavsf-004-refund-inclusion-ambiguity",
         "gavsf-005-calendar-vs-fiscal-quarter-ambiguity",
+        "gavsf-007-approval-timing-ambiguity",
+        "gavsf-008-vendor-name-normalization-ambiguity",
+        "gavsf-009-top-n-tie-handling-ambiguity",
     }
     assert required_scenario_ids <= fixtures_by_id.keys()
 
@@ -256,6 +259,34 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
         "required_clarification"
     ]
     assert "calendar or fiscal quarter" in quarter_ambiguity["acceptable_sql_shape"][
+        "required_clarification"
+    ]
+
+    approval_timing_ambiguity = fixtures_by_id[
+        "gavsf-007-approval-timing-ambiguity"
+    ]
+    vendor_normalization_ambiguity = fixtures_by_id[
+        "gavsf-008-vendor-name-normalization-ambiguity"
+    ]
+    top_n_tie_ambiguity = fixtures_by_id[
+        "gavsf-009-top-n-tie-handling-ambiguity"
+    ]
+    for ambiguous_fixture in (
+        approval_timing_ambiguity,
+        vendor_normalization_ambiguity,
+        top_n_tie_ambiguity,
+    ):
+        assert ambiguous_fixture["case_type"] == "ambiguous"
+        assert ambiguous_fixture["expected_failure_mode"] == "clarification_required"
+        assert ambiguous_fixture["acceptable_sql_shape"]["must_not_execute"] is True
+
+    assert "transaction time or currently approved" in approval_timing_ambiguity[
+        "acceptable_sql_shape"
+    ]["required_clarification"]
+    assert "vendor-normalization rule" in vendor_normalization_ambiguity[
+        "acceptable_sql_shape"
+    ]["required_clarification"]
+    assert "ties at rank 2" in top_n_tie_ambiguity["acceptable_sql_shape"][
         "required_clarification"
     ]
 
