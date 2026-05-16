@@ -93,6 +93,10 @@ _NEGATED_CLAIM_CONTRAST_PATTERN = re.compile(
     r"\b(?:but|however|though|although|except)\b",
     re.IGNORECASE,
 )
+_CLAIM_VALUE_ROW_LINK_PATTERN = re.compile(
+    r"(?:=|:|\b(?:is|are|was|were|had|has|with|at|of|totaled|totals?|equals?)\b)",
+    re.IGNORECASE,
+)
 _NEGATED_CLAIM_MAX_GAP_WORDS = 8
 _TRUNCATION_METADATA_FLAGS = ("truncated", "is_truncated", "result_truncated")
 _APOSTROPHE_TRANSLATION = str.maketrans(
@@ -425,6 +429,12 @@ def _check_deterministic_result_values(
     for claim_value in _unsupported_claimed_result_values(answer_text, result_rows):
         categories.append("unsupported_result_value")
         unsupported_claims.append(claim_value)
+    for claim_value in _unsupported_claimed_result_row_combinations(
+        answer_text,
+        result_rows,
+    ):
+        categories.append("unsupported_result_value")
+        unsupported_claims.append(claim_value)
 
 
 def _observed_result_columns(
@@ -548,9 +558,21 @@ def _disjunctive_subject_parts(subject: str) -> tuple[str, ...]:
     for part in parts:
         if suffix and " " not in part and part != suffix:
             expanded_parts.append(f"{part} {suffix}")
-        elif " " in part:
+        elif " " in part and not _is_partial_disjunctive_action_part(part, parts):
             expanded_parts.append(part)
     return tuple(expanded_parts)
+
+
+def _is_partial_disjunctive_action_part(part: str, parts: Sequence[str]) -> bool:
+    final_words = parts[-1].split()
+    if len(final_words) < 2:
+        return False
+    suffix = final_words[-1]
+    return any(
+        part.startswith(prefix)
+        and not part.endswith(f" {suffix}")
+        for prefix in _FORBIDDEN_ACTION_PREFIXES
+    )
 
 
 def _has_subject_disjunction(subject: str) -> bool:
@@ -600,13 +622,15 @@ def _negated_claim_context_reaches_subject(context: str) -> bool:
     negation_matches = tuple(
         match
         for match in _NEGATED_CLAIM_PATTERN.finditer(context)
-        if not _is_not_only_negation(match, context)
+        if not _is_ignored_negation_match(match, context)
     )
     if not negation_matches:
         return False
 
     after_negation = context[negation_matches[-1].end() :]
     if _NEGATED_CLAIM_CONTRAST_PATTERN.search(after_negation):
+        return False
+    if _has_later_affirmative_forbidden_action(after_negation):
         return False
     if "," in after_negation and not re.search(r"\w", after_negation):
         return False
@@ -615,17 +639,45 @@ def _negated_claim_context_reaches_subject(context: str) -> bool:
     return len(gap_words) <= _NEGATED_CLAIM_MAX_GAP_WORDS
 
 
+def _is_ignored_negation_match(match: re.Match[str], context: str) -> bool:
+    return _is_not_only_negation(match, context) or _is_discourse_marker_no(
+        match,
+        context,
+    )
+
+
 def _is_not_only_negation(match: re.Match[str], context: str) -> bool:
     return context[match.end() :].lstrip().startswith("only ")
 
 
+def _is_discourse_marker_no(match: re.Match[str], context: str) -> bool:
+    if match.group(0).casefold() != "no":
+        return False
+    return context[match.end() :].lstrip().startswith(",")
+
+
+def _has_later_affirmative_forbidden_action(text: str) -> bool:
+    for prefix in _FORBIDDEN_ACTION_PREFIXES:
+        verb = re.escape(prefix.strip())
+        if re.search(rf"\band\s+{verb}\b", text):
+            return True
+    return False
+
+
 def _claimed_result_values(answer_text: str) -> tuple[str, ...]:
-    claimed_values: list[str] = []
+    return tuple(
+        claim_value
+        for claim_value, _, _ in _claimed_result_value_matches(answer_text)
+    )
+
+
+def _claimed_result_value_matches(answer_text: str) -> tuple[tuple[str, int, int], ...]:
+    claimed_values: list[tuple[str, int, int]] = []
     for match in _RESULT_VALUE_PATTERN.finditer(answer_text):
         value = match.group(0)
         if _is_incidental_integer_claim(answer_text, match):
             continue
-        claimed_values.append(value)
+        claimed_values.append((value, match.start(), match.end()))
     return tuple(claimed_values)
 
 
@@ -658,6 +710,50 @@ def _unsupported_claimed_result_values(
         for claim_value in _claimed_result_values(answer_text)
         if _value_forms(claim_value).isdisjoint(supported_values)
     )
+
+
+def _unsupported_claimed_result_row_combinations(
+    answer_text: str,
+    result_rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    row_value_forms = [_row_value_forms(row) for row in result_rows]
+    supported_values = set().union(*row_value_forms) if row_value_forms else set()
+    unsupported: list[str] = []
+    claimed_values = _claimed_result_value_matches(answer_text)
+    for left, right in zip(claimed_values, claimed_values[1:]):
+        left_value, _, left_end = left
+        right_value, right_start, _ = right
+        left_forms = _value_forms(left_value)
+        right_forms = _value_forms(right_value)
+        if left_forms.isdisjoint(supported_values) or right_forms.isdisjoint(
+            supported_values
+        ):
+            continue
+        if not _claim_values_are_row_linked(answer_text[left_end:right_start]):
+            continue
+        if any(
+            not left_forms.isdisjoint(row_forms)
+            and not right_forms.isdisjoint(row_forms)
+            for row_forms in row_value_forms
+        ):
+            continue
+        unsupported.append(f"{left_value} with {right_value}")
+    return tuple(unsupported)
+
+
+def _row_value_forms(row: Mapping[str, Any]) -> set[str]:
+    forms: set[str] = set()
+    for value in row.values():
+        forms.update(_value_forms(value))
+    return forms
+
+
+def _claim_values_are_row_linked(between_values: str) -> bool:
+    if len(between_values) > 80:
+        return False
+    if re.search(r"\b(?:and|or)\b", between_values, re.IGNORECASE):
+        return False
+    return _CLAIM_VALUE_ROW_LINK_PATTERN.search(between_values) is not None
 
 
 def _value_forms(value: Any) -> set[str]:
