@@ -65,6 +65,8 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     assert fixture_set["source_profile"]["source_id"] == "business-postgres-source"
     assert fixture_set["source_profile"]["source_family"] == "postgresql"
     assert fixture_set["source_profile"]["source_flavor"] == "warehouse"
+    assert fixture_set["source_profile"]["dialect_profile_version"] == 1
+    assert fixture_set["source_profile"]["connector_profile_version"] == 1
     assert fixture_set["source_profile"]["dataset_contract_version"] == 4
     assert fixture_set["source_profile"]["schema_snapshot_version"] == 9
     assert fixture_set["source_profile"]["execution_policy_version"] == 3
@@ -156,6 +158,9 @@ def test_governed_answer_fixture_set_exports_machine_readable_schema() -> None:
     assert schema["properties"]["format_status"]["const"] == (
         "governed_answer_assurance.v1"
     )
+    assert schema["properties"]["semantic_contract_version"]["const"] == (
+        "governed_answer_assurance.v1"
+    )
     assert "expected_semantic_mapping" in json.dumps(schema)
 
 
@@ -179,6 +184,24 @@ def test_governed_answer_fixture_set_exports_machine_readable_schema() -> None:
                 "source_id", "unbound-source"
             ),
             "Fixture metadata source id must match source profile.",
+        ),
+        (
+            lambda data: data.__setitem__("semantic_contract_version", "foo.v9"),
+            "Input should be 'governed_answer_assurance.v1'",
+        ),
+        (
+            lambda data: data["fixtures"][0]["metadata"].__setitem__(
+                "semantic_contract_version", "foo.v9"
+            ),
+            "Input should be 'governed_answer_assurance.v1'",
+        ),
+        (
+            lambda data: data["source_profile"].pop("dialect_profile_version"),
+            "dialect_profile_version",
+        ),
+        (
+            lambda data: data["source_profile"].pop("connector_profile_version"),
+            "connector_profile_version",
         ),
         (
             lambda data: data["fixtures"][0].__setitem__(

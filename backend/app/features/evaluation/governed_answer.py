@@ -31,6 +31,7 @@ GovernedAnswerFailureMode = Literal[
     "guard_denial_required",
     "unsupported_answer_denial_required",
 ]
+GovernedAnswerSemanticContractVersion = Literal["governed_answer_assurance.v1"]
 
 
 class GovernedAnswerSourceProfile(BaseModel):
@@ -40,8 +41,8 @@ class GovernedAnswerSourceProfile(BaseModel):
     source_family: NonEmptyString
     source_flavor: Optional[NonEmptyString] = None
     dialect_profile: NonEmptyString
-    dialect_profile_version: Optional[PositiveInt] = None
-    connector_profile_version: Optional[PositiveInt] = None
+    dialect_profile_version: PositiveInt
+    connector_profile_version: PositiveInt
     dataset_contract_version: PositiveInt
     schema_snapshot_version: PositiveInt
     execution_policy_version: PositiveInt
@@ -53,7 +54,7 @@ class GovernedAnswerFixtureMetadata(BaseModel):
     scenario_id: NonEmptyString
     source_id: NonEmptyString
     schema_snapshot_version: PositiveInt
-    semantic_contract_version: NonEmptyString
+    semantic_contract_version: GovernedAnswerSemanticContractVersion
 
 
 class GovernedAnswerSourceBinding(BaseModel):
@@ -157,7 +158,7 @@ class GovernedAnswerFixtureSet(BaseModel):
     domain: NonEmptyString
     purpose: NonEmptyString
     format_status: Literal["governed_answer_assurance.v1"]
-    semantic_contract_version: NonEmptyString
+    semantic_contract_version: GovernedAnswerSemanticContractVersion
     source_profile: GovernedAnswerSourceProfile
     schema_assumptions: dict[str, Any]
     authoring_summary: GovernedAnswerAuthoringSummary

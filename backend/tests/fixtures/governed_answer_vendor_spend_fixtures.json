@@ -420,6 +420,5 @@
       "human_authoring_minutes": 11,
       "domain_expert_review_required": false
     }
-  ],
-  "semantic_contract_version": "governed_answer_assurance.v1"
+  ]
 }
