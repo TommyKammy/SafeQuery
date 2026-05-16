@@ -43,8 +43,50 @@ GovernedAnswerUnsupportedClaimCategory = Literal[
 ]
 
 _RESULT_VALUE_PATTERN = re.compile(
-    r"\bFY\d{4}-Q[1-4]\b|\b\d+(?:,\d{3})*(?:\.\d+)?\b",
+    r"\bFY\d{4}-Q[1-4]\b|\b(?:\d{1,3}(?:,\d{3})+|\d+\.\d+)\b",
     re.IGNORECASE,
+)
+_FORBIDDEN_ACTION_PREFIXES = (
+    "answer from ",
+    "silently drop ",
+    "silently expand ",
+    "include ",
+    "report ",
+    "subtract ",
+    "label ",
+    "infer ",
+    "fabricate ",
+    "assume ",
+    "ignore ",
+    "choose ",
+    "merge ",
+    "collapse ",
+    "claim ",
+    "provide ",
+    "execute ",
+    "cite ",
+    "say ",
+    "produce ",
+    "expose ",
+    "return ",
+)
+_NEGATED_CLAIM_CONTEXTS = (
+    "not ",
+    "no ",
+    "never ",
+    "cannot ",
+    "can't ",
+    "didn't ",
+    "doesn't ",
+    "won't ",
+    "did not ",
+    "does not ",
+    "do not ",
+    "will not ",
+    "was not ",
+    "were not ",
+    "is not ",
+    "are not ",
 )
 
 
@@ -258,6 +300,7 @@ def score_governed_answer_consistency(
 
     _check_expected_columns(
         expected_result_shape=expected_result_shape,
+        result_rows=result_rows,
         result_metadata=result_metadata,
         categories=categories,
         unsupported_claims=unsupported_claims,
@@ -295,6 +338,7 @@ def score_governed_answer_consistency(
 def _check_expected_columns(
     *,
     expected_result_shape: Mapping[str, Any],
+    result_rows: Sequence[Mapping[str, Any]],
     result_metadata: Mapping[str, Any],
     categories: list[GovernedAnswerUnsupportedClaimCategory],
     unsupported_claims: list[str],
@@ -303,7 +347,10 @@ def _check_expected_columns(
     if not expected_columns:
         return
 
-    observed_columns = tuple(result_metadata.get("columns") or ())
+    observed_columns = _observed_result_columns(
+        result_metadata=result_metadata,
+        result_rows=result_rows,
+    )
     if observed_columns != expected_columns:
         categories.append("expected_columns_mismatch")
         unsupported_claims.append(
@@ -331,6 +378,7 @@ def _check_row_count_and_truncation(
     if (
         result_metadata.get("truncated") is True
         or result_metadata.get("is_truncated") is True
+        or result_metadata.get("result_truncated") is True
     ):
         categories.append("truncation_mismatch")
         unsupported_claims.append("result metadata reports truncated output")
@@ -345,10 +393,14 @@ def _check_forbidden_answer_claims(
 ) -> None:
     normalized_answer = answer_text.casefold()
     for forbidden_claim in fixture.forbidden_answer_claims:
-        claim_subject = _forbidden_claim_subject(forbidden_claim)
-        if claim_subject and claim_subject in normalized_answer:
-            categories.append("forbidden_answer_claim")
-            unsupported_claims.append(claim_subject)
+        for claim_subject in _forbidden_claim_subjects(forbidden_claim):
+            if (
+                claim_subject in normalized_answer
+                and not _claim_subject_is_negated(normalized_answer, claim_subject)
+            ):
+                categories.append("forbidden_answer_claim")
+                unsupported_claims.append(claim_subject)
+                break
 
 
 def _check_deterministic_result_values(
@@ -360,18 +412,85 @@ def _check_deterministic_result_values(
 ) -> None:
     supported_values = _supported_result_values(result_rows)
     for claim_value in _claimed_result_values(answer_text):
-        if claim_value not in supported_values:
+        if _value_forms(claim_value).isdisjoint(supported_values):
             categories.append("unsupported_result_value")
             unsupported_claims.append(claim_value)
 
 
-def _forbidden_claim_subject(forbidden_claim: str) -> str:
-    normalized = forbidden_claim.casefold()
-    prefixes = ("do not include ", "do not report ", "do not cite ", "do not label ")
-    for prefix in prefixes:
-        if normalized.startswith(prefix):
-            return normalized.removeprefix(prefix).split(" as ")[0].rstrip(".")
-    return ""
+def _observed_result_columns(
+    *,
+    result_metadata: Mapping[str, Any],
+    result_rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    metadata_columns = result_metadata.get("columns")
+    if isinstance(metadata_columns, Sequence) and not isinstance(
+        metadata_columns, str
+    ):
+        observed_columns = tuple(str(column) for column in metadata_columns)
+        if observed_columns:
+            return observed_columns
+
+    return tuple(
+        dict.fromkeys(str(column) for row in result_rows for column in row.keys())
+    )
+
+
+def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
+    normalized = _clean_claim_text(forbidden_claim.casefold())
+    if not normalized.startswith("do not "):
+        return ()
+
+    action = _clean_claim_text(normalized.removeprefix("do not "))
+    subjects: list[str] = [action]
+    for prefix in _FORBIDDEN_ACTION_PREFIXES:
+        if action.startswith(prefix):
+            subjects.append(action.removeprefix(prefix))
+            break
+
+    expanded_subjects: list[str] = []
+    for subject in subjects:
+        expanded_subjects.extend(_split_forbidden_subject(subject))
+
+    return tuple(
+        dict.fromkeys(subject for subject in expanded_subjects if len(subject) >= 3)
+    )
+
+
+def _clean_claim_text(text: str) -> str:
+    return text.strip().rstrip(".").strip()
+
+
+def _split_forbidden_subject(subject: str) -> tuple[str, ...]:
+    variants = [subject]
+    for separator in (" unless ", " without ", " to keep ", " under "):
+        if separator in subject:
+            variants.append(subject.split(separator, 1)[0])
+
+    split_variants: list[str] = []
+    for variant in variants:
+        split_variants.append(variant)
+        if " as " in variant:
+            split_variants.append(variant.split(" as ", 1)[0])
+        if " or claim " in variant:
+            before, after = variant.split(" or claim ", 1)
+            split_variants.extend((before, after))
+
+    return tuple(_clean_claim_text(variant) for variant in split_variants)
+
+
+def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> bool:
+    start = normalized_answer.find(claim_subject)
+    while start >= 0:
+        context = normalized_answer[max(0, start - 48) : start]
+        sentence_start = max(context.rfind("."), context.rfind("?"), context.rfind("!"))
+        if sentence_start >= 0:
+            context = context[sentence_start + 1 :]
+        if not any(
+            negated_context in context for negated_context in _NEGATED_CLAIM_CONTEXTS
+        ):
+            return False
+        start = normalized_answer.find(claim_subject, start + len(claim_subject))
+    return True
 
 
 def _claimed_result_values(answer_text: str) -> tuple[str, ...]:
@@ -387,10 +506,11 @@ def _supported_result_values(result_rows: Sequence[Mapping[str, Any]]) -> set[st
 
 
 def _value_forms(value: Any) -> set[str]:
-    text = str(value)
-    forms = {text}
+    text = str(value).strip()
+    uncomma_text = text.replace(",", "")
+    forms = {text, text.casefold(), uncomma_text, uncomma_text.casefold()}
     try:
-        normalized_decimal = Decimal(text.replace(",", "")).normalize()
+        normalized_decimal = Decimal(uncomma_text).normalize()
     except (InvalidOperation, ValueError):
         return forms
     forms.add(format(normalized_decimal, "f"))
