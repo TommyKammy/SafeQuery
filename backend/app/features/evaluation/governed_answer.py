@@ -52,6 +52,10 @@ _INCIDENTAL_INTEGER_PREFIX_PATTERN = re.compile(
     r"(?:^|\b)(?:top|rank|first|last)\s+$",
     re.IGNORECASE,
 )
+_INCIDENTAL_PARENTHESES_YEAR_PREFIX_PATTERN = re.compile(
+    r"(?:^|\b)(?:next|last|this|current|prior|previous)\s+year\s*\($",
+    re.IGNORECASE,
+)
 _FORBIDDEN_ACTION_PREFIXES = (
     "answer from ",
     "silently drop ",
@@ -403,7 +407,7 @@ def _check_forbidden_answer_claims(
     for forbidden_claim in fixture.forbidden_answer_claims:
         for claim_subject in _forbidden_claim_subjects(forbidden_claim):
             if (
-                claim_subject in normalized_answer
+                _claim_subject_appears(normalized_answer, claim_subject)
                 and not _claim_subject_is_negated(normalized_answer, claim_subject)
             ):
                 categories.append("forbidden_answer_claim")
@@ -510,9 +514,23 @@ def _split_forbidden_subject(
             split_variants.append(before)
             split_variants.append(f"claim {after}")
             split_variants.append(after)
+        split_variants.extend(_coordinated_forbidden_action_parts(variant))
         split_variants.extend(_disjunctive_subject_parts(variant))
 
     return tuple(_clean_claim_text(variant) for variant in split_variants)
+
+
+def _coordinated_forbidden_action_parts(subject: str) -> tuple[str, ...]:
+    parts: list[str] = []
+    for prefix in _FORBIDDEN_ACTION_PREFIXES:
+        marker = f" and {prefix}"
+        if marker not in subject:
+            continue
+        before, after = subject.split(marker, 1)
+        parts.append(before)
+        parts.append(f"{prefix}{after}")
+        break
+    return tuple(_clean_claim_text(part) for part in parts if _clean_claim_text(part))
 
 
 def _disjunctive_subject_parts(subject: str) -> tuple[str, ...]:
@@ -549,9 +567,23 @@ def _shared_disjunction_suffix(parts: Sequence[str]) -> str | None:
     return suffix
 
 
+def _claim_subject_appears(normalized_answer: str, claim_subject: str) -> bool:
+    return _claim_subject_pattern(claim_subject).search(normalized_answer) is not None
+
+
+def _claim_subject_pattern(claim_subject: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<!\w){re.escape(claim_subject)}(?!\w)")
+
+
 def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> bool:
-    start = normalized_answer.find(claim_subject)
-    while start >= 0:
+    starts = [
+        match.start()
+        for match in _claim_subject_pattern(claim_subject).finditer(normalized_answer)
+    ]
+    if not starts:
+        return False
+
+    for start in starts:
         context = normalized_answer[max(0, start - 128) : start]
         sentence_start = max(context.rfind("."), context.rfind("?"), context.rfind("!"))
         if sentence_start >= 0:
@@ -561,12 +593,15 @@ def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> boo
             context = context[clause_start + 1 :]
         if not _negated_claim_context_reaches_subject(context):
             return False
-        start = normalized_answer.find(claim_subject, start + len(claim_subject))
     return True
 
 
 def _negated_claim_context_reaches_subject(context: str) -> bool:
-    negation_matches = tuple(_NEGATED_CLAIM_PATTERN.finditer(context))
+    negation_matches = tuple(
+        match
+        for match in _NEGATED_CLAIM_PATTERN.finditer(context)
+        if not _is_not_only_negation(match, context)
+    )
     if not negation_matches:
         return False
 
@@ -578,6 +613,10 @@ def _negated_claim_context_reaches_subject(context: str) -> bool:
 
     gap_words = re.findall(r"\b\w+\b", after_negation)
     return len(gap_words) <= _NEGATED_CLAIM_MAX_GAP_WORDS
+
+
+def _is_not_only_negation(match: re.Match[str], context: str) -> bool:
+    return context[match.end() :].lstrip().startswith("only ")
 
 
 def _claimed_result_values(answer_text: str) -> tuple[str, ...]:
@@ -595,7 +634,10 @@ def _is_incidental_integer_claim(answer_text: str, match: re.Match[str]) -> bool
     if not value.isdigit():
         return False
     context = answer_text[max(0, match.start() - 16) : match.start()]
-    return bool(_INCIDENTAL_INTEGER_PREFIX_PATTERN.search(context))
+    return bool(
+        _INCIDENTAL_INTEGER_PREFIX_PATTERN.search(context)
+        or _INCIDENTAL_PARENTHESES_YEAR_PREFIX_PATTERN.search(context)
+    )
 
 
 def _supported_result_values(result_rows: Sequence[Mapping[str, Any]]) -> set[str]:
