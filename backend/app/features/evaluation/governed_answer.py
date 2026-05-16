@@ -44,6 +44,8 @@ GovernedAnswerUnsupportedClaimCategory = Literal[
 
 _RESULT_VALUE_PATTERN = re.compile(
     r"\bFY\d{4}-Q[1-4]\b|"
+    r"(?<![\w.-])\([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+    r"(?:e[+-]?\d+)?\)(?![\w-])|"
     r"(?<![\w.-])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     r"(?:e[+-]?\d+)?(?![\w-])",
     re.IGNORECASE,
@@ -53,7 +55,7 @@ _INCIDENTAL_INTEGER_PREFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _INCIDENTAL_PARENTHESES_YEAR_PREFIX_PATTERN = re.compile(
-    r"(?:^|\b)(?:next|last|this|current|prior|previous)\s+year\s*\($",
+    r"(?:^|\b)(?:next|last|this|current|prior|previous)\s+year\s*\(?$",
     re.IGNORECASE,
 )
 _FORBIDDEN_ACTION_PREFIXES = (
@@ -101,6 +103,7 @@ _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN = re.compile(
     r"\b(?:after|before|compared|follows?|precedes?|than|versus|vs\.?)\b",
     re.IGNORECASE,
 )
+_FORBIDDEN_SUBJECT_SEPARATOR_PATTERN = re.compile(r"[\s\-\u2010-\u2015]+")
 _NEGATED_CLAIM_MAX_GAP_WORDS = 8
 _TRUNCATION_METADATA_FLAGS = ("truncated", "is_truncated", "result_truncated")
 _APOSTROPHE_TRANSLATION = str.maketrans(
@@ -341,10 +344,14 @@ def score_governed_answer_consistency(
         categories=categories,
         unsupported_claims=unsupported_claims,
     )
-    if result_rows:
+    value_evidence_rows = _deterministic_value_evidence_rows(
+        expected_result_shape=expected_result_shape,
+        result_rows=result_rows,
+    )
+    if value_evidence_rows:
         _check_deterministic_result_values(
             answer_text=answer_text,
-            result_rows=result_rows,
+            result_rows=value_evidence_rows,
             categories=categories,
             unsupported_claims=unsupported_claims,
         )
@@ -461,6 +468,21 @@ def _observed_result_columns(
 
 def _result_metadata_reports_truncation(result_metadata: Mapping[str, Any]) -> bool:
     return any(result_metadata.get(flag) is True for flag in _TRUNCATION_METADATA_FLAGS)
+
+
+def _deterministic_value_evidence_rows(
+    *,
+    expected_result_shape: Mapping[str, Any],
+    result_rows: Sequence[Mapping[str, Any]],
+) -> Sequence[Mapping[str, Any]]:
+    if result_rows:
+        return result_rows
+    known_rows = expected_result_shape.get("known_result_rows")
+    if isinstance(known_rows, list) and all(
+        isinstance(row, Mapping) for row in known_rows
+    ):
+        return known_rows
+    return ()
 
 
 def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
@@ -598,7 +620,16 @@ def _claim_subject_appears(normalized_answer: str, claim_subject: str) -> bool:
 
 
 def _claim_subject_pattern(claim_subject: str) -> re.Pattern[str]:
-    return re.compile(rf"(?<!\w){re.escape(claim_subject)}(?!\w)")
+    tokens = [
+        token
+        for token in _FORBIDDEN_SUBJECT_SEPARATOR_PATTERN.split(claim_subject.strip())
+        if token
+    ]
+    if not tokens:
+        return re.compile(r"(?!x)x")
+    separator = r"[\s\-\u2010-\u2015]+"
+    subject_pattern = separator.join(re.escape(token) for token in tokens)
+    return re.compile(rf"(?<!\w){subject_pattern}(?!\w)")
 
 
 def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> bool:
@@ -638,11 +669,21 @@ def _negated_claim_context_reaches_subject(context: str, claim_subject: str) -> 
         return False
     if _has_later_affirmative_forbidden_action(after_negation):
         return False
+    if _has_uncoordinated_clause_boundary(after_negation):
+        return False
     if "," in after_negation and not re.search(r"\w", after_negation):
         return False
 
     gap_words = re.findall(r"\b\w+\b", after_negation)
     return len(gap_words) <= _NEGATED_CLAIM_MAX_GAP_WORDS
+
+
+def _has_uncoordinated_clause_boundary(after_negation: str) -> bool:
+    last_comma = after_negation.rfind(",")
+    if last_comma < 0:
+        return False
+    tail = after_negation[last_comma + 1 :]
+    return re.search(r"\b(?:and|or)\s*$", tail) is None
 
 
 def _is_ignored_negation_match(match: re.Match[str], context: str) -> bool:
@@ -693,7 +734,8 @@ def _claimed_result_value_matches(answer_text: str) -> tuple[tuple[str, int, int
 
 def _is_incidental_integer_claim(answer_text: str, match: re.Match[str]) -> bool:
     value = match.group(0)
-    if not value.isdigit():
+    bare_value = value.strip("()")
+    if not bare_value.isdigit():
         return False
     context = answer_text[max(0, match.start() - 16) : match.start()]
     return bool(
@@ -773,10 +815,22 @@ def _value_forms(value: Any) -> set[str]:
     uncomma_text = text.replace(",", "")
     forms = {text, text.casefold(), uncomma_text, uncomma_text.casefold()}
     try:
-        normalized_decimal = Decimal(uncomma_text).normalize()
+        normalized_decimal = _decimal_from_value_text(text).normalize()
     except (InvalidOperation, ValueError):
         return forms
     forms.add(format(normalized_decimal, "f"))
     if normalized_decimal == normalized_decimal.to_integral():
         forms.add(str(int(normalized_decimal)))
     return forms
+
+
+def _decimal_from_value_text(text: str) -> Decimal:
+    accounting_match = re.fullmatch(
+        r"\(\s*([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:e[+-]?\d+)?)\s*\)",
+        text,
+        re.IGNORECASE,
+    )
+    if accounting_match:
+        magnitude_text = accounting_match.group(1).replace(",", "").lstrip("+-")
+        return -Decimal(magnitude_text)
+    return Decimal(text.replace(",", ""))
