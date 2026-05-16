@@ -543,8 +543,10 @@ def _assurance_level_report(
         failure_count = sum(
             1
             for failure in failures
-            if failure.scenario_id in fixture_ids
-            and failure.deny_code not in _ASSURANCE_LEVEL_0_DENY_CODES
+            if _is_assurance_behavior_failure_for_level(
+                failure,
+                fixture_ids=fixture_ids,
+            )
         )
     if failure_count:
         status: ReleaseGateAssuranceStatus = "fail"
@@ -561,6 +563,17 @@ def _assurance_level_report(
         covered_fixture_count=covered_fixture_count,
         not_covered_fixture_count=len(fixtures) - covered_fixture_count,
         failure_count=failure_count,
+    )
+
+
+def _is_assurance_behavior_failure_for_level(
+    failure: ReleaseGateFailure,
+    *,
+    fixture_ids: set[str],
+) -> bool:
+    return (
+        failure.scenario_id in fixture_ids
+        and failure.deny_code not in _ASSURANCE_LEVEL_0_DENY_CODES
     )
 
 

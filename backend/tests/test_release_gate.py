@@ -309,6 +309,42 @@ def test_release_gate_assurance_report_preserves_duplicate_observed_artifacts() 
     }
 
 
+def test_release_gate_assurance_report_keeps_duplicate_only_failure_at_level_0() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+    passing_artifact = {
+        "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+        "answer_text": (
+            "FY2025-Q1 approved spend is 125000.00. "
+            "FY2025-Q2 approved spend is 98000.00."
+        ),
+        "result_rows": [
+            {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+            {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+        ],
+        "result_metadata": {
+            "columns": ["fiscal_quarter", "approved_spend"],
+            "row_count": 2,
+            "truncated": False,
+        },
+    }
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(passing_artifact, passing_artifact),
+    )
+
+    assert report.status == "fail"
+    assert report.levels[0].status == "fail"
+    assert report.levels[0].failure_count == 1
+    assert report.levels[1].status == "pass"
+    assert report.levels[1].failure_count == 0
+    assert {failure.deny_code for failure in report.failures} == {
+        "DENY_DUPLICATE_ASSURANCE_ARTIFACT"
+    }
+
+
 def test_release_gate_assurance_report_structures_malformed_artifact_failure() -> None:
     fixture_path = (
         Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
