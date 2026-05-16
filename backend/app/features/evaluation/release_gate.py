@@ -34,6 +34,11 @@ AuditEvidenceStatus = Literal["matched", "missing", "stale", "not_evaluated"]
 ScenarioArtifact = Union[MSSQLEvaluationScenario, PostgreSQLEvaluationScenario]
 ReleaseGateAssuranceStatus = Literal["pass", "fail", "not_covered"]
 ReleaseGateAssuranceLevelName = Literal["level_0", "level_1", "level_2", "level_3"]
+_ASSURANCE_LEVEL_0_DENY_CODES = {
+    "DENY_DUPLICATE_ASSURANCE_ARTIFACT",
+    "DENY_MALFORMED_ASSURANCE_ARTIFACT",
+    "DENY_UNKNOWN_ASSURANCE_FIXTURE",
+}
 
 _SOURCE_REQUIRED_FIELDS = {
     "source.source_id",
@@ -523,7 +528,11 @@ def _assurance_level_report(
 ) -> ReleaseGateAssuranceLevelReport:
     if level == "level_0":
         covered_fixture_count = len(fixtures)
-        failure_count = 0
+        failure_count = sum(
+            1
+            for failure in failures
+            if failure.deny_code in _ASSURANCE_LEVEL_0_DENY_CODES
+        )
     else:
         covered_fixture_count = sum(
             1

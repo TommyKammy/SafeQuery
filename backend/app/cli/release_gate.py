@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.features.evaluation import build_release_gate_assurance_report
 
 
@@ -39,10 +41,13 @@ def main() -> None:
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             parser.error(str(exc))
 
-    report = build_release_gate_assurance_report(
-        fixture_set_path=args.fixture_set,
-        observed_answer_artifacts=observed_answer_artifacts,
-    )
+    try:
+        report = build_release_gate_assurance_report(
+            fixture_set_path=args.fixture_set,
+            observed_answer_artifacts=observed_answer_artifacts,
+        )
+    except (OSError, json.JSONDecodeError, ValidationError) as exc:
+        parser.error(str(exc))
     print(json.dumps(report.model_dump(mode="json"), sort_keys=True))
     if report.status == "fail":
         raise SystemExit(1)

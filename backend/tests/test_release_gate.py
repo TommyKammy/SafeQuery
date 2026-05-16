@@ -8,7 +8,10 @@ from uuid import uuid4
 import pytest
 
 import app.features.evaluation.release_gate as release_gate_module
-from app.cli.release_gate import _observed_answer_artifacts_from_payload
+from app.cli.release_gate import (
+    _observed_answer_artifacts_from_payload,
+    main as release_gate_cli_main,
+)
 from app.features.evaluation import (
     EvaluationOutcomeRecord,
     build_release_gate_assurance_report,
@@ -321,14 +324,82 @@ def test_release_gate_assurance_report_structures_malformed_artifact_failure() -
     )
 
     assert report.status == "fail"
+    assert report.levels[0].status == "fail"
+    assert report.levels[0].failure_count == 1
     assert report.failures[0].deny_code == "DENY_MALFORMED_ASSURANCE_ARTIFACT"
     assert report.failures[0].scenario_id == "gavsf-002-vendor-spend-by-quarter"
     assert "answer_text" in report.failures[0].detail
 
 
+def test_release_gate_assurance_report_marks_unknown_fixture_as_level_0_failure() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "unknown-scenario",
+                "answer_text": "The observed answer came from an unknown fixture.",
+                "result_rows": [],
+                "result_metadata": {"columns": [], "row_count": 0},
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.levels[0].status == "fail"
+    assert report.levels[0].failure_count == 1
+    assert report.failures[0].deny_code == "DENY_UNKNOWN_ASSURANCE_FIXTURE"
+
+
 def test_release_gate_cli_rejects_malformed_observed_artifact_envelope() -> None:
     with pytest.raises(ValueError, match="observed_answer_artifacts"):
         _observed_answer_artifacts_from_payload({"artifacts": []})
+
+
+def test_release_gate_cli_handles_fixture_set_load_error_as_parser_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing_fixture_path = tmp_path / "missing-fixture-set.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["release-gate", "--fixture-set", str(missing_fixture_path)],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        release_gate_cli_main()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert missing_fixture_path.name in captured.err
+
+
+def test_release_gate_cli_handles_fixture_set_validation_error_as_parser_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    invalid_fixture_path = tmp_path / "invalid-fixture-set.json"
+    invalid_fixture_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["release-gate", "--fixture-set", str(invalid_fixture_path)],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        release_gate_cli_main()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "fixture_set" in captured.err
 
 
 def test_release_gate_accepts_scenario_id_from_shared_audit_metadata() -> None:
