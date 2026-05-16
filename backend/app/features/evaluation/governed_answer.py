@@ -43,7 +43,9 @@ GovernedAnswerUnsupportedClaimCategory = Literal[
 ]
 
 _RESULT_VALUE_PATTERN = re.compile(
-    r"\bFY\d{4}-Q[1-4]\b|(?<![\w.-])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w-])",
+    r"\bFY\d{4}-Q[1-4]\b|"
+    r"(?<![\w.-])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+    r"(?:e[+-]?\d+)?(?![\w-])",
     re.IGNORECASE,
 )
 _INCIDENTAL_INTEGER_PREFIX_PATTERN = re.compile(
@@ -75,14 +77,19 @@ _FORBIDDEN_ACTION_PREFIXES = (
     "expose ",
     "return ",
 )
-_NEGATED_CLAIM_CONTEXT_PATTERN = re.compile(
+_NEGATED_CLAIM_PATTERN = re.compile(
     r"(?:^|\b)(?:"
     r"not|no|never|cannot|can't|don't|didn't|doesn't|won't|"
     r"did\s+not|does\s+not|do\s+not|will\s+not|"
     r"was\s+not|were\s+not|is\s+not|are\s+not"
-    r")\s+(?:\w+\s+){0,3}$",
+    r")\b",
     re.IGNORECASE,
 )
+_NEGATED_CLAIM_CONTRAST_PATTERN = re.compile(
+    r"\b(?:but|however|though|although|except)\b",
+    re.IGNORECASE,
+)
+_NEGATED_CLAIM_MAX_GAP_WORDS = 8
 _TRUNCATION_METADATA_FLAGS = ("truncated", "is_truncated", "result_truncated")
 _APOSTROPHE_TRANSLATION = str.maketrans(
     {
@@ -523,7 +530,7 @@ def _disjunctive_subject_parts(subject: str) -> tuple[str, ...]:
     for part in parts:
         if suffix and " " not in part and part != suffix:
             expanded_parts.append(f"{part} {suffix}")
-        else:
+        elif " " in part:
             expanded_parts.append(part)
     return tuple(expanded_parts)
 
@@ -545,17 +552,32 @@ def _shared_disjunction_suffix(parts: Sequence[str]) -> str | None:
 def _claim_subject_is_negated(normalized_answer: str, claim_subject: str) -> bool:
     start = normalized_answer.find(claim_subject)
     while start >= 0:
-        context = normalized_answer[max(0, start - 64) : start]
+        context = normalized_answer[max(0, start - 128) : start]
         sentence_start = max(context.rfind("."), context.rfind("?"), context.rfind("!"))
         if sentence_start >= 0:
             context = context[sentence_start + 1 :]
-        clause_start = max(context.rfind(","), context.rfind(";"), context.rfind(":"))
+        clause_start = max(context.rfind(";"), context.rfind(":"))
         if clause_start >= 0:
             context = context[clause_start + 1 :]
-        if not _NEGATED_CLAIM_CONTEXT_PATTERN.search(context):
+        if not _negated_claim_context_reaches_subject(context):
             return False
         start = normalized_answer.find(claim_subject, start + len(claim_subject))
     return True
+
+
+def _negated_claim_context_reaches_subject(context: str) -> bool:
+    negation_matches = tuple(_NEGATED_CLAIM_PATTERN.finditer(context))
+    if not negation_matches:
+        return False
+
+    after_negation = context[negation_matches[-1].end() :]
+    if _NEGATED_CLAIM_CONTRAST_PATTERN.search(after_negation):
+        return False
+    if "," in after_negation and not re.search(r"\w", after_negation):
+        return False
+
+    gap_words = re.findall(r"\b\w+\b", after_negation)
+    return len(gap_words) <= _NEGATED_CLAIM_MAX_GAP_WORDS
 
 
 def _claimed_result_values(answer_text: str) -> tuple[str, ...]:
