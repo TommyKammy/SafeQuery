@@ -82,6 +82,7 @@ _NEGATED_CLAIM_CONTEXT_PATTERN = re.compile(
     r")\s+(?:\w+\s+){0,3}$",
     re.IGNORECASE,
 )
+_TRUNCATION_METADATA_FLAGS = ("truncated", "is_truncated", "result_truncated")
 
 
 class GovernedAnswerSourceProfile(BaseModel):
@@ -370,11 +371,7 @@ def _check_row_count_and_truncation(
             f"expected row count {expected_row_count}; observed row count {observed_row_count}"
         )
 
-    if (
-        result_metadata.get("truncated") is True
-        or result_metadata.get("is_truncated") is True
-        or result_metadata.get("result_truncated") is True
-    ):
+    if _result_metadata_reports_truncation(result_metadata):
         categories.append("truncation_mismatch")
         unsupported_claims.append("result metadata reports truncated output")
 
@@ -407,7 +404,7 @@ def _check_deterministic_result_values(
 ) -> None:
     supported_values = _supported_result_values(result_rows)
     for claim_value in _claimed_result_values(answer_text):
-        if _value_forms(claim_value).isdisjoint(supported_values):
+        if not _claim_value_is_supported(claim_value, supported_values):
             categories.append("unsupported_result_value")
             unsupported_claims.append(claim_value)
 
@@ -428,6 +425,10 @@ def _observed_result_columns(
     return tuple(
         dict.fromkeys(str(column) for row in result_rows for column in row.keys())
     )
+
+
+def _result_metadata_reports_truncation(result_metadata: Mapping[str, Any]) -> bool:
+    return any(result_metadata.get(flag) is True for flag in _TRUNCATION_METADATA_FLAGS)
 
 
 def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
@@ -519,6 +520,10 @@ def _supported_result_values(result_rows: Sequence[Mapping[str, Any]]) -> set[st
         for value in row.values():
             supported.update(_value_forms(value))
     return supported
+
+
+def _claim_value_is_supported(claim_value: str, supported_values: set[str]) -> bool:
+    return not _value_forms(claim_value).isdisjoint(supported_values)
 
 
 def _value_forms(value: Any) -> set[str]:

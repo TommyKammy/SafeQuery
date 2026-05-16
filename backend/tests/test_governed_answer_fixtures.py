@@ -463,7 +463,13 @@ def test_governed_answer_consistency_scoring_falls_back_to_row_keys() -> None:
     assert score.unsupported_claim_categories == ()
 
 
-def test_governed_answer_consistency_scoring_reads_result_truncated_metadata() -> None:
+@pytest.mark.parametrize(
+    "truncation_metadata_flag",
+    ["truncated", "is_truncated", "result_truncated"],
+)
+def test_governed_answer_consistency_scoring_reads_truncation_metadata_flags(
+    truncation_metadata_flag: str,
+) -> None:
     fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
     result_rows = fixture.expected_result_shape["known_result_rows"]
 
@@ -477,12 +483,34 @@ def test_governed_answer_consistency_scoring_reads_result_truncated_metadata() -
         result_metadata={
             "columns": ["fiscal_quarter", "approved_spend"],
             "row_count": 2,
-            "result_truncated": True,
+            truncation_metadata_flag: True,
         },
     )
 
     assert score.passed is False
     assert "truncation_mismatch" in score.unsupported_claim_categories
+
+
+def test_governed_answer_consistency_scoring_matches_lowercase_quarter_claims() -> None:
+    fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
+    result_rows = fixture.expected_result_shape["known_result_rows"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=(
+            "fy2025-q1 approved spend is 125000.00. "
+            "fy2025-q2 approved spend is 98000.00."
+        ),
+        result_rows=result_rows,
+        result_metadata={
+            "columns": ["fiscal_quarter", "approved_spend"],
+            "row_count": 2,
+            "truncated": False,
+        },
+    )
+
+    assert score.passed is True
+    assert "unsupported_result_value" not in score.unsupported_claim_categories
 
 
 def test_governed_answer_consistency_scoring_accepts_template_value_forms() -> None:
