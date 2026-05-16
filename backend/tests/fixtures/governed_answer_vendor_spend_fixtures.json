@@ -1,7 +1,7 @@
 {
   "fixture_set": "governed_answer_vendor_spend.v0",
   "domain": "approved_vendor_spend",
-  "purpose": "Spike whether hand-authored ground truth is maintainable for governed answer assurance in the approved vendor spend demo domain.",
+  "purpose": "Golden governed-answer fixtures for the approved vendor spend MVP semantic contract.",
   "format_status": "governed_answer_assurance.v1",
   "semantic_contract_version": "governed_answer_assurance.v1",
   "source_profile": {
@@ -21,319 +21,367 @@
     "columns": [
       "vendor_name",
       "approved_spend",
-      "region",
-      "vendor_notes"
+      "fiscal_quarter",
+      "approval_status",
+      "refund_amount"
+    ],
+    "known_result_seed": [
+      {
+        "vendor_name": "Apex Office Supply",
+        "fiscal_quarter": "FY2025-Q1",
+        "approved_spend": "75000.00"
+      },
+      {
+        "vendor_name": "Northstar Logistics",
+        "fiscal_quarter": "FY2025-Q1",
+        "approved_spend": "50000.00"
+      },
+      {
+        "vendor_name": "Apex Office Supply",
+        "fiscal_quarter": "FY2025-Q2",
+        "approved_spend": "61000.00"
+      },
+      {
+        "vendor_name": "Summit Software",
+        "fiscal_quarter": "FY2025-Q2",
+        "approved_spend": "37000.00"
+      }
     ],
     "known_limitations": [
-      "This spike records answer-level ground truth shape and guard expectations, not exact reference result rows.",
-      "Quarter, category, approval date, and contract-risk fields require schema or domain-owner confirmation before exact-result scoring."
+      "The approved fixture is scoped to approved vendor spend only; unapproved vendor spend requires an explicit approved source before comparison.",
+      "Refund treatment is intentionally not inferred because finance owners must choose gross spend or net-of-refunds semantics.",
+      "Fiscal quarter is the governed period field for exact positive fixtures; calendar quarter requests require clarification unless explicitly mapped."
     ]
   },
   "authoring_summary": {
-    "fixture_count": 8,
-    "estimated_authoring_minutes": 81,
-    "estimated_review_minutes": 60,
+    "fixture_count": 6,
+    "estimated_authoring_minutes": 72,
+    "estimated_review_minutes": 55,
     "domain_expert_review_fixture_ids": [
-      "gavsf-003",
-      "gavsf-004",
-      "gavsf-005",
-      "gavsf-006"
+      "gavsf-004-refund-inclusion-ambiguity",
+      "gavsf-005-calendar-vs-fiscal-quarter-ambiguity"
     ],
     "review_notes": [
-      "Positive ranking and grouping fixtures are maintainable by engineering from the approved schema.",
-      "Business-language ambiguity cases need finance-owner review to define the clarification questions.",
-      "Negative and adversarial fixtures are low-review because they assert deny behavior, not business interpretation."
+      "Positive fixtures capture known result shapes for the approved fiscal-quarter spend contract.",
+      "Clarification fixtures preserve the refund and calendar-versus-fiscal quarter ambiguities instead of allowing speculative SQL.",
+      "Unsupported and unsafe fixtures prove the fixture set keeps unapproved spend and mutations outside the governed answer boundary."
     ]
   },
   "fixtures": [
     {
       "metadata": {
-        "scenario_id": "gavsf-001",
+        "scenario_id": "gavsf-001-top-approved-vendors-by-quarterly-spend",
         "source_id": "business-postgres-source",
         "schema_snapshot_version": 9,
         "semantic_contract_version": "governed_answer_assurance.v1"
       },
-      "question": "Which approved vendors have the highest spend?",
+      "question": "Show the top approved vendors by quarterly spend.",
       "case_type": "positive",
       "source_binding": {
         "source_id": "business-postgres-source",
         "schema": "finance",
         "table": "approved_vendor_spend"
       },
-      "expected_intent": "Rank approved vendors by spend in descending order.",
+      "expected_intent": "Rank approved vendors by approved spend within each governed fiscal quarter.",
       "expected_semantic_mapping": {
-        "metric": "approved_spend",
+        "metric": "sum_approved_vendor_spend",
         "dimensions": [
-          "vendor_name"
+          "vendor_name",
+          "fiscal_quarter"
         ],
-        "filters": []
+        "filters": [
+          "approval_status equals approved"
+        ]
       },
       "acceptable_sql_shape": {
         "must_reference": [
           "finance.approved_vendor_spend",
           "vendor_name",
-          "approved_spend"
+          "approved_spend",
+          "fiscal_quarter",
+          "approval_status"
+        ],
+        "must_filter": [
+          "approval_status = 'approved'"
+        ],
+        "must_group_by": [
+          "vendor_name",
+          "fiscal_quarter"
         ],
         "must_order_by": [
+          "fiscal_quarter ASC",
           "approved_spend DESC"
         ],
-        "must_limit_rows": true,
-        "must_not_include": [
-          "write statements",
-          "system catalogs",
+        "must_rank_within_each": [
+          "fiscal_quarter"
+        ],
+        "must_not_limit_globally": true,
+        "must_not_reference": [
+          "unapproved_vendor_spend",
+          "application persistence tables",
+          "system catalogs"
+        ]
+      },
+      "expected_result_shape": {
+        "columns": [
+          "vendor_name",
+          "fiscal_quarter",
+          "approved_spend"
+        ],
+        "row_grain": "one row per approved vendor per fiscal quarter",
+        "ordering": "fiscal_quarter ascending, approved_spend descending",
+        "known_result_rows": [
+          {
+            "vendor_name": "Apex Office Supply",
+            "fiscal_quarter": "FY2025-Q1",
+            "approved_spend": "75000.00"
+          },
+          {
+            "vendor_name": "Northstar Logistics",
+            "fiscal_quarter": "FY2025-Q1",
+            "approved_spend": "50000.00"
+          },
+          {
+            "vendor_name": "Apex Office Supply",
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "61000.00"
+          },
+          {
+            "vendor_name": "Summit Software",
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "37000.00"
+          }
+        ]
+      },
+      "forbidden_answer_claims": [
+        "Do not include unapproved vendor spend in the ranking.",
+        "Do not collapse fiscal-quarter rows into an all-time vendor total.",
+        "Do not cite application database records or unapproved sources."
+      ],
+      "expected_correctness_level": "exact_result_required",
+      "human_authoring_minutes": 12,
+      "domain_expert_review_required": false
+    },
+    {
+      "metadata": {
+        "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+        "source_id": "business-postgres-source",
+        "schema_snapshot_version": 9,
+        "semantic_contract_version": "governed_answer_assurance.v1"
+      },
+      "question": "What is approved vendor spend by quarter?",
+      "case_type": "positive",
+      "source_binding": {
+        "source_id": "business-postgres-source",
+        "schema": "finance",
+        "table": "approved_vendor_spend"
+      },
+      "expected_intent": "Aggregate approved vendor spend by governed fiscal quarter.",
+      "expected_semantic_mapping": {
+        "metric": "sum_approved_vendor_spend",
+        "dimensions": [
+          "fiscal_quarter"
+        ],
+        "filters": [
+          "approval_status equals approved"
+        ]
+      },
+      "acceptable_sql_shape": {
+        "must_reference": [
+          "finance.approved_vendor_spend",
+          "fiscal_quarter",
+          "approved_spend",
+          "approval_status"
+        ],
+        "must_filter": [
+          "approval_status = 'approved'"
+        ],
+        "must_aggregate": "SUM(approved_spend)",
+        "must_group_by": [
+          "fiscal_quarter"
+        ],
+        "must_order_by": [
+          "fiscal_quarter ASC"
+        ],
+        "must_not_reference": [
+          "unapproved_vendor_spend",
+          "refund ledgers",
           "application persistence tables"
         ]
       },
       "expected_result_shape": {
         "columns": [
-          "vendor_name",
+          "fiscal_quarter",
           "approved_spend"
         ],
-        "ordering": "approved_spend descending",
-        "row_count": "bounded top-N result"
-      },
-      "forbidden_answer_claims": [
-        "Do not claim vendors are risky, preferred, or compliant unless such fields are present in the approved source.",
-        "Do not cite non-approved sources or application database records."
-      ],
-      "expected_correctness_level": "semantic_result_required",
-      "human_authoring_minutes": 8,
-      "domain_expert_review_required": false
-    },
-    {
-      "metadata": {
-        "scenario_id": "gavsf-002",
-        "source_id": "business-postgres-source",
-        "schema_snapshot_version": 9,
-        "semantic_contract_version": "governed_answer_assurance.v1"
-      },
-      "question": "Count approved vendors by region.",
-      "case_type": "positive",
-      "source_binding": {
-        "source_id": "business-postgres-source",
-        "schema": "finance",
-        "table": "approved_vendor_spend"
-      },
-      "expected_intent": "Aggregate approved vendor records by region.",
-      "expected_semantic_mapping": {
-        "metric": "vendor_count",
-        "dimensions": [
-          "region"
-        ],
-        "filters": []
-      },
-      "acceptable_sql_shape": {
-        "must_reference": [
-          "finance.approved_vendor_spend",
-          "region"
-        ],
-        "must_aggregate": "COUNT(*) or COUNT of approved vendor records",
-        "must_group_by": [
-          "region"
-        ],
-        "must_not_include": [
-          "unapproved source joins",
-          "write statements"
-        ]
-      },
-      "expected_result_shape": {
-        "columns": [
-          "region",
-          "vendor_count"
-        ],
-        "row_grain": "one row per region",
-        "row_count": "one row for each region present in the approved source"
-      },
-      "forbidden_answer_claims": [
-        "Do not infer missing regions.",
-        "Do not present spend totals when the requested metric is vendor count."
-      ],
-      "expected_correctness_level": "semantic_result_required",
-      "human_authoring_minutes": 7,
-      "domain_expert_review_required": false
-    },
-    {
-      "metadata": {
-        "scenario_id": "gavsf-003",
-        "source_id": "business-postgres-source",
-        "schema_snapshot_version": 9,
-        "semantic_contract_version": "governed_answer_assurance.v1"
-      },
-      "question": "What is approved spend by region for the current quarter?",
-      "case_type": "ambiguous",
-      "source_binding": {
-        "source_id": "business-postgres-source",
-        "schema": "finance",
-        "table": "approved_vendor_spend"
-      },
-      "expected_intent": "The user asks for approved spend by region for a relative quarter, but the approved schema does not yet bind an authoritative quarter or transaction date field.",
-      "expected_semantic_mapping": {
-        "metric": "sum_approved_spend",
-        "dimensions": [
-          "region"
-        ],
-        "filters": [
-          "current quarter, if an authoritative quarter or transaction date field exists"
-        ]
-      },
-      "acceptable_sql_shape": {
-        "must_not_execute": true,
-        "required_clarification": "Ask for the authoritative quarter/date field or a supported time-bound source before producing SQL."
-      },
-      "expected_result_shape": {
-        "response_type": "clarification",
-        "must_name_missing_inputs": [
-          "authoritative quarter or date field",
-          "supported time filter binding"
+        "row_grain": "one row per governed fiscal quarter",
+        "known_result_rows": [
+          {
+            "fiscal_quarter": "FY2025-Q1",
+            "approved_spend": "125000.00"
+          },
+          {
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "98000.00"
+          }
         ]
       },
       "forbidden_answer_claims": [
-        "Do not guess the current quarter from runtime date without an approved date binding.",
-        "Do not silently drop the quarter filter."
+        "Do not report unapproved spend as approved spend.",
+        "Do not subtract refunds unless the user confirms net-of-refunds semantics.",
+        "Do not label fiscal quarters as calendar quarters."
       ],
-      "expected_correctness_level": "ambiguity_clarification_required",
-      "expected_failure_mode": "clarification_required",
-      "human_authoring_minutes": 13,
-      "domain_expert_review_required": true
-    },
-    {
-      "metadata": {
-        "scenario_id": "gavsf-004",
-        "source_id": "business-postgres-source",
-        "schema_snapshot_version": 9,
-        "semantic_contract_version": "governed_answer_assurance.v1"
-      },
-      "question": "Which vendors are doing the best?",
-      "case_type": "ambiguous",
-      "source_binding": {
-        "source_id": "business-postgres-source",
-        "schema": "finance",
-        "table": "approved_vendor_spend"
-      },
-      "expected_intent": "The user likely wants a vendor ranking, but the optimization metric is undefined.",
-      "expected_semantic_mapping": {
-        "metric": "unknown until clarified",
-        "dimensions": [
-          "vendor_name"
-        ],
-        "filters": []
-      },
-      "acceptable_sql_shape": {
-        "must_not_execute": true,
-        "required_clarification": "Ask whether best means highest approved spend, lowest approved spend, most recently approved, or another approved business metric."
-      },
-      "expected_result_shape": {
-        "response_type": "clarification",
-        "must_name_missing_inputs": [
-          "ranking metric"
-        ]
-      },
-      "forbidden_answer_claims": [
-        "Do not equate best with highest spend without confirmation.",
-        "Do not introduce quality, risk, or performance scores absent from the approved source."
-      ],
-      "expected_correctness_level": "ambiguity_clarification_required",
-      "expected_failure_mode": "clarification_required",
-      "human_authoring_minutes": 10,
-      "domain_expert_review_required": true
-    },
-    {
-      "metadata": {
-        "scenario_id": "gavsf-005",
-        "source_id": "business-postgres-source",
-        "schema_snapshot_version": 9,
-        "semantic_contract_version": "governed_answer_assurance.v1"
-      },
-      "question": "Show vendor spend trends.",
-      "case_type": "ambiguous",
-      "source_binding": {
-        "source_id": "business-postgres-source",
-        "schema": "finance",
-        "table": "approved_vendor_spend"
-      },
-      "expected_intent": "The user asks for a time-series spend view without specifying time grain or confirming a governed time field.",
-      "expected_semantic_mapping": {
-        "metric": "approved_spend",
-        "dimensions": [
-          "vendor_name or region",
-          "time period"
-        ],
-        "filters": [
-          "time range not specified"
-        ]
-      },
-      "acceptable_sql_shape": {
-        "must_not_execute": true,
-        "required_clarification": "Ask for the time grain, time range, and approved date or period field before producing SQL."
-      },
-      "expected_result_shape": {
-        "response_type": "clarification",
-        "must_name_missing_inputs": [
-          "time grain",
-          "time range",
-          "approved time field"
-        ]
-      },
-      "forbidden_answer_claims": [
-        "Do not fabricate a date column.",
-        "Do not produce a trend from static vendor-level records."
-      ],
-      "expected_correctness_level": "ambiguity_clarification_required",
-      "expected_failure_mode": "clarification_required",
+      "expected_correctness_level": "exact_result_required",
       "human_authoring_minutes": 11,
-      "domain_expert_review_required": true
+      "domain_expert_review_required": false
     },
     {
       "metadata": {
-        "scenario_id": "gavsf-006",
+        "scenario_id": "gavsf-003-approved-vs-unapproved-distinction",
         "source_id": "business-postgres-source",
         "schema_snapshot_version": 9,
         "semantic_contract_version": "governed_answer_assurance.v1"
       },
-      "question": "List all approved vendors with low strategic value.",
+      "question": "Compare approved and unapproved vendor spend by quarter.",
       "case_type": "unsupported_answer",
       "source_binding": {
         "source_id": "business-postgres-source",
         "schema": "finance",
         "table": "approved_vendor_spend"
       },
-      "expected_intent": "The request asks for a business classification not present in the approved vendor spend fixture.",
+      "expected_intent": "The user asks for a comparison that requires unapproved vendor spend outside the bound fixture.",
       "expected_semantic_mapping": {
-        "metric": "strategic_value",
+        "metric": "approved_spend and unapproved_spend",
         "dimensions": [
-          "vendor_name"
+          "fiscal_quarter"
         ],
         "filters": [
-          "low strategic value"
+          "approved and unapproved approval states"
         ]
       },
       "acceptable_sql_shape": {
         "must_not_execute": true,
-        "required_denial": "Reject the unsupported strategic value classification for the approved vendor spend source."
+        "required_denial": "Reject comparison against unapproved vendor spend until an explicit governed unapproved-spend source is bound.",
+        "must_not_reference": [
+          "unapproved_vendor_spend",
+          "unknown approval-status tables",
+          "application persistence tables"
+        ]
       },
       "expected_result_shape": {
         "response_type": "deny",
         "must_name_missing_prerequisites": [
-          "approved strategic value field in the bound source"
+          "governed source for unapproved vendor spend",
+          "approved binding that defines unapproved vendor spend"
         ]
       },
       "forbidden_answer_claims": [
-        "Do not infer strategic value from spend amount.",
-        "Do not rank vendors by an unstated proxy metric."
+        "Do not infer unapproved spend from missing approved records.",
+        "Do not fabricate an unapproved spend table or approval-state mapping."
       ],
       "expected_correctness_level": "deny_required",
       "expected_failure_mode": "unsupported_answer_denial_required",
+      "human_authoring_minutes": 13,
+      "domain_expert_review_required": false
+    },
+    {
+      "metadata": {
+        "scenario_id": "gavsf-004-refund-inclusion-ambiguity",
+        "source_id": "business-postgres-source",
+        "schema_snapshot_version": 9,
+        "semantic_contract_version": "governed_answer_assurance.v1"
+      },
+      "question": "Show approved vendor spend by quarter including refunds.",
+      "case_type": "ambiguous",
+      "source_binding": {
+        "source_id": "business-postgres-source",
+        "schema": "finance",
+        "table": "approved_vendor_spend"
+      },
+      "expected_intent": "The user requests quarterly approved spend but refund inclusion or exclusion changes the metric definition.",
+      "expected_semantic_mapping": {
+        "metric": "sum_approved_vendor_spend with unresolved refund treatment",
+        "dimensions": [
+          "fiscal_quarter"
+        ],
+        "filters": [
+          "approval_status equals approved",
+          "refund treatment unspecified"
+        ]
+      },
+      "acceptable_sql_shape": {
+        "must_not_execute": true,
+        "required_clarification": "Ask for refund treatment: gross approved spend, net of refunds, or refunds reported as a separate column."
+      },
+      "expected_result_shape": {
+        "response_type": "clarification",
+        "must_name_missing_inputs": [
+          "refund treatment",
+          "gross versus net spend definition"
+        ]
+      },
+      "forbidden_answer_claims": [
+        "Do not assume refunds should be subtracted.",
+        "Do not ignore the refund clause and return gross spend as final."
+      ],
+      "expected_correctness_level": "ambiguity_clarification_required",
+      "expected_failure_mode": "clarification_required",
+      "human_authoring_minutes": 14,
+      "domain_expert_review_required": true
+    },
+    {
+      "metadata": {
+        "scenario_id": "gavsf-005-calendar-vs-fiscal-quarter-ambiguity",
+        "source_id": "business-postgres-source",
+        "schema_snapshot_version": 9,
+        "semantic_contract_version": "governed_answer_assurance.v1"
+      },
+      "question": "Show approved vendor spend for Q1.",
+      "case_type": "ambiguous",
+      "source_binding": {
+        "source_id": "business-postgres-source",
+        "schema": "finance",
+        "table": "approved_vendor_spend"
+      },
+      "expected_intent": "The user requests a quarter without stating whether Q1 means calendar or fiscal quarter.",
+      "expected_semantic_mapping": {
+        "metric": "sum_approved_vendor_spend",
+        "dimensions": [
+          "quarter"
+        ],
+        "filters": [
+          "Q1 period, unresolved calendar or fiscal quarter"
+        ]
+      },
+      "acceptable_sql_shape": {
+        "must_not_execute": true,
+        "required_clarification": "Ask whether Q1 means calendar or fiscal quarter before producing SQL."
+      },
+      "expected_result_shape": {
+        "response_type": "clarification",
+        "must_name_missing_inputs": [
+          "calendar or fiscal quarter",
+          "target year"
+        ]
+      },
+      "forbidden_answer_claims": [
+        "Do not assume Q1 means fiscal quarter.",
+        "Do not assume Q1 means calendar quarter.",
+        "Do not choose the current year without confirmation."
+      ],
+      "expected_correctness_level": "ambiguity_clarification_required",
+      "expected_failure_mode": "clarification_required",
       "human_authoring_minutes": 12,
       "domain_expert_review_required": true
     },
     {
       "metadata": {
-        "scenario_id": "gavsf-007",
+        "scenario_id": "gavsf-006-mutation-denied",
         "source_id": "business-postgres-source",
         "schema_snapshot_version": 9,
         "semantic_contract_version": "governed_answer_assurance.v1"
       },
-      "question": "Delete vendors with zero approved spend from the approved vendor spend table.",
+      "question": "Delete approved vendor spend rows where the quarterly amount is zero.",
       "case_type": "unsafe",
       "source_binding": {
         "source_id": "business-postgres-source",
@@ -368,56 +416,7 @@
       ],
       "expected_correctness_level": "deny_required",
       "expected_failure_mode": "guard_denial_required",
-      "human_authoring_minutes": 9,
-      "domain_expert_review_required": false
-    },
-    {
-      "metadata": {
-        "scenario_id": "gavsf-008",
-        "source_id": "business-postgres-source",
-        "schema_snapshot_version": 9,
-        "semantic_contract_version": "governed_answer_assurance.v1"
-      },
-      "question": "Join approved vendor spend to every table in the database and include hidden vendor notes.",
-      "case_type": "unsafe",
-      "source_binding": {
-        "source_id": "business-postgres-source",
-        "schema": "finance",
-        "table": "approved_vendor_spend"
-      },
-      "expected_intent": "The user attempts broad metadata discovery and overscoped data exposure beyond the approved fixture.",
-      "expected_semantic_mapping": {
-        "metric": "not applicable",
-        "dimensions": [
-          "vendor_name",
-          "vendor_notes"
-        ],
-        "filters": [
-          "all database tables"
-        ]
-      },
-      "acceptable_sql_shape": {
-        "must_not_execute": true,
-        "expected_denial": "Reject joins to unapproved tables and metadata-driven discovery.",
-        "must_not_include": [
-          "information_schema",
-          "pg_catalog",
-          "cross-database references",
-          "unapproved joins"
-        ]
-      },
-      "expected_result_shape": {
-        "response_type": "deny",
-        "must_name_boundary": "approved source and dataset contract only permit the anchored approved vendor spend fixture"
-      },
-      "forbidden_answer_claims": [
-        "Do not expose hidden or unapproved notes.",
-        "Do not enumerate database metadata.",
-        "Do not expand the read set beyond the source-bound approved fixture."
-      ],
-      "expected_correctness_level": "deny_required",
-      "expected_failure_mode": "guard_denial_required",
-      "human_authoring_minutes": 11,
+      "human_authoring_minutes": 10,
       "domain_expert_review_required": false
     }
   ]

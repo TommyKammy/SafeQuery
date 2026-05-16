@@ -54,6 +54,13 @@ def _load_fixture_set() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
+def _fixtures_by_scenario_id(fixture_set: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        fixture["metadata"]["scenario_id"]: fixture
+        for fixture in fixture_set["fixtures"]
+    }
+
+
 def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     fixture_set = _load_fixture_set()
     validated = validate_governed_answer_fixture_set(fixture_set)
@@ -149,6 +156,108 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     )
     assert fixture_set["authoring_summary"]["estimated_review_minutes"] > 0
     assert len(validated.fixtures) == len(fixtures)
+
+
+def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> None:
+    fixtures_by_id = _fixtures_by_scenario_id(_load_fixture_set())
+
+    required_scenario_ids = {
+        "gavsf-001-top-approved-vendors-by-quarterly-spend",
+        "gavsf-002-vendor-spend-by-quarter",
+        "gavsf-003-approved-vs-unapproved-distinction",
+        "gavsf-004-refund-inclusion-ambiguity",
+        "gavsf-005-calendar-vs-fiscal-quarter-ambiguity",
+    }
+    assert required_scenario_ids <= fixtures_by_id.keys()
+
+    top_vendors = fixtures_by_id[
+        "gavsf-001-top-approved-vendors-by-quarterly-spend"
+    ]
+    assert top_vendors["case_type"] == "positive"
+    assert top_vendors["expected_correctness_level"] == "exact_result_required"
+    assert top_vendors["expected_semantic_mapping"] == {
+        "metric": "sum_approved_vendor_spend",
+        "dimensions": ["vendor_name", "fiscal_quarter"],
+        "filters": ["approval_status equals approved"],
+    }
+    assert top_vendors["expected_result_shape"]["row_grain"] == (
+        "one row per approved vendor per fiscal quarter"
+    )
+    assert top_vendors["expected_result_shape"]["ordering"] == (
+        "fiscal_quarter ascending, approved_spend descending"
+    )
+    assert "unapproved_vendor_spend" in top_vendors["acceptable_sql_shape"][
+        "must_not_reference"
+    ]
+    assert "must_limit_rows" not in top_vendors["acceptable_sql_shape"]
+    assert top_vendors["acceptable_sql_shape"]["must_rank_within_each"] == [
+        "fiscal_quarter"
+    ]
+    assert top_vendors["acceptable_sql_shape"]["must_not_limit_globally"] is True
+    assert top_vendors["expected_result_shape"]["known_result_rows"] == [
+        {
+            "vendor_name": "Apex Office Supply",
+            "fiscal_quarter": "FY2025-Q1",
+            "approved_spend": "75000.00",
+        },
+        {
+            "vendor_name": "Northstar Logistics",
+            "fiscal_quarter": "FY2025-Q1",
+            "approved_spend": "50000.00",
+        },
+        {
+            "vendor_name": "Apex Office Supply",
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "61000.00",
+        },
+        {
+            "vendor_name": "Summit Software",
+            "fiscal_quarter": "FY2025-Q2",
+            "approved_spend": "37000.00",
+        },
+    ]
+
+    by_quarter = fixtures_by_id["gavsf-002-vendor-spend-by-quarter"]
+    assert by_quarter["case_type"] == "positive"
+    assert by_quarter["expected_semantic_mapping"]["dimensions"] == [
+        "fiscal_quarter"
+    ]
+    assert by_quarter["expected_result_shape"]["columns"] == [
+        "fiscal_quarter",
+        "approved_spend",
+    ]
+    assert by_quarter["expected_result_shape"]["known_result_rows"] == [
+        {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+        {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+    ]
+
+    approval_distinction = fixtures_by_id[
+        "gavsf-003-approved-vs-unapproved-distinction"
+    ]
+    assert approval_distinction["case_type"] == "unsupported_answer"
+    assert approval_distinction["expected_failure_mode"] == (
+        "unsupported_answer_denial_required"
+    )
+    assert approval_distinction["acceptable_sql_shape"]["must_not_execute"] is True
+    assert "unapproved vendor spend" in " ".join(
+        approval_distinction["expected_result_shape"]["must_name_missing_prerequisites"]
+    )
+
+    refund_ambiguity = fixtures_by_id["gavsf-004-refund-inclusion-ambiguity"]
+    quarter_ambiguity = fixtures_by_id[
+        "gavsf-005-calendar-vs-fiscal-quarter-ambiguity"
+    ]
+    for ambiguous_fixture in (refund_ambiguity, quarter_ambiguity):
+        assert ambiguous_fixture["case_type"] == "ambiguous"
+        assert ambiguous_fixture["expected_failure_mode"] == "clarification_required"
+        assert ambiguous_fixture["acceptable_sql_shape"]["must_not_execute"] is True
+
+    assert "refund treatment" in refund_ambiguity["acceptable_sql_shape"][
+        "required_clarification"
+    ]
+    assert "calendar or fiscal quarter" in quarter_ambiguity["acceptable_sql_shape"][
+        "required_clarification"
+    ]
 
 
 def test_governed_answer_fixture_set_exports_machine_readable_schema() -> None:
