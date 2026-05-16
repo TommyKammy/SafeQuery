@@ -8,6 +8,7 @@ from uuid import uuid4
 import app.features.evaluation.release_gate as release_gate_module
 from app.features.evaluation import (
     EvaluationOutcomeRecord,
+    build_release_gate_assurance_report,
     reconstruct_release_gate,
 )
 from app.features.evaluation.harness import (
@@ -134,6 +135,92 @@ def test_release_gate_passes_when_authoritative_records_match_harness() -> None:
     assert decision.status == "pass"
     assert decision.failure_count == 0
     assert decision.failures == ()
+
+
+def test_release_gate_assurance_report_fails_on_unsupported_answer_claims() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "answer_text": (
+                    "FY2025-Q1 approved spend is 125000.00. "
+                    "FY2025-Q2 approved spend is 98000.00. "
+                    "FY2025-Q3 approved spend is 42000.00."
+                ),
+                "result_rows": [
+                    {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+                    {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+                ],
+                "result_metadata": {
+                    "columns": ["fiscal_quarter", "approved_spend"],
+                    "row_count": 2,
+                    "truncated": False,
+                },
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.fixture_coverage_count == {
+        "total": 14,
+        "covered": 1,
+        "not_covered": 13,
+    }
+    assert tuple(level.level for level in report.levels) == (
+        "level_0",
+        "level_1",
+        "level_2",
+        "level_3",
+    )
+    assert report.levels[0].status == "pass"
+    assert report.levels[1].status == "fail"
+    assert report.levels[2].status == "not_covered"
+    assert report.levels[3].status == "not_covered"
+    assert report.failures[0].deny_code == "DENY_UNSUPPORTED_ANSWER_CLAIM"
+    assert report.failures[0].scenario_id == "gavsf-002-vendor-spend-by-quarter"
+    assert "FY2025-Q3" in report.failures[0].detail
+
+
+def test_release_gate_assurance_report_marks_unimplemented_levels_not_covered() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "answer_text": (
+                    "FY2025-Q1 approved spend is 125000.00. "
+                    "FY2025-Q2 approved spend is 98000.00."
+                ),
+                "result_rows": [
+                    {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+                    {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+                ],
+                "result_metadata": {
+                    "columns": ["fiscal_quarter", "approved_spend"],
+                    "row_count": 2,
+                    "truncated": False,
+                },
+            },
+        ),
+    )
+
+    assert report.status == "pass"
+    assert report.levels[0].status == "pass"
+    assert report.levels[1].status == "pass"
+    assert report.levels[2].status == "not_covered"
+    assert report.levels[3].status == "not_covered"
+    assert report.levels[2].covered_fixture_count == 0
+    assert report.levels[3].covered_fixture_count == 0
+    assert report.failures == ()
 
 
 def test_release_gate_accepts_scenario_id_from_shared_audit_metadata() -> None:

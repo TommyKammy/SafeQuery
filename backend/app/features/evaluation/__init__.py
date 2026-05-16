@@ -38,10 +38,14 @@ from app.features.evaluation.governed_answer import (
 )
 from app.features.evaluation.release_gate import (
     ReleaseGateAuditArtifact,
+    ReleaseGateAssuranceLevelReport,
+    ReleaseGateAssuranceObservedAnswer,
+    ReleaseGateAssuranceReport,
     ReleaseGateDecision,
     ReleaseGateDiffArtifact,
     ReleaseGateDiffScenario,
     ReleaseGateFailure,
+    build_release_gate_assurance_report,
     reconstruct_release_gate,
 )
 
@@ -70,12 +74,16 @@ __all__ = [
     "MSSQLEvaluationScenario",
     "PostgreSQLEvaluationScenario",
     "ReleaseGateAuditArtifact",
+    "ReleaseGateAssuranceLevelReport",
+    "ReleaseGateAssuranceObservedAnswer",
+    "ReleaseGateAssuranceReport",
     "ReleaseGateDecision",
     "ReleaseGateDiffArtifact",
     "ReleaseGateDiffScenario",
     "ReleaseGateFailure",
     "SourceRegressionMatrixEntry",
     "compare_evaluation_outcomes",
+    "build_release_gate_assurance_report",
     "list_mssql_evaluation_scenarios",
     "list_postgresql_evaluation_scenarios",
     "list_source_regression_matrix",
