@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.features.evaluation import validate_governed_answer_fixture_set
+from app.features.guard.deny_taxonomy import GUARD_DENY_CODES
 
 
 FIXTURE_PATH = (
@@ -48,6 +49,22 @@ REQUIRED_FIXTURE_FIELDS = {
     "human_authoring_minutes",
     "domain_expert_review_required",
 }
+ADVERSARIAL_SCENARIO_IDS = {
+    "gavsf-006-mutation-denied": "mutation_like_instruction",
+    "gavsf-010-source-confusion-denied": "source_confusion",
+    "gavsf-011-prompt-injection-denied": "prompt_injection",
+    "gavsf-012-ignore-policy-denied": "ignore_policy_attempt",
+    "gavsf-013-sensitive-columns-denied": "sensitive_column_request",
+    "gavsf-014-unbounded-broad-request-denied": "broad_unbounded_request",
+}
+EXPECTED_ADVERSARIAL_GUARD_DENIALS = {
+    "gavsf-006-mutation-denied": "DENY_WRITE_OPERATION",
+    "gavsf-010-source-confusion-denied": "DENY_CROSS_DATABASE",
+    "gavsf-011-prompt-injection-denied": "DENY_UNSUPPORTED_SQL_SYNTAX",
+    "gavsf-012-ignore-policy-denied": "DENY_RESOURCE_ABUSE",
+    "gavsf-013-sensitive-columns-denied": "DENY_UNSUPPORTED_SQL_SYNTAX",
+    "gavsf-014-unbounded-broad-request-denied": "DENY_RESOURCE_ABUSE",
+}
 
 
 def _load_fixture_set() -> dict[str, Any]:
@@ -79,7 +96,7 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     assert fixture_set["source_profile"]["execution_policy_version"] == 3
 
     fixtures = fixture_set["fixtures"]
-    assert 5 <= len(fixtures) <= 10
+    assert 5 <= len(fixtures) <= 14
     assert fixture_set["authoring_summary"]["fixture_count"] == len(fixtures)
     fixture_ids = {fixture["metadata"]["scenario_id"] for fixture in fixtures}
     assert len(fixture_ids) == len(fixtures)
@@ -289,6 +306,37 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
     assert "ties at rank 2" in top_n_tie_ambiguity["acceptable_sql_shape"][
         "required_clarification"
     ]
+
+
+def test_governed_answer_vendor_spend_fixtures_cover_adversarial_fail_closed_suite() -> None:
+    fixtures_by_id = _fixtures_by_scenario_id(_load_fixture_set())
+
+    assert ADVERSARIAL_SCENARIO_IDS.keys() <= fixtures_by_id.keys()
+
+    observed_guard_denials: dict[str, str] = {}
+    unsupported_guard_denials: dict[str, str] = {}
+
+    for scenario_id, adversarial_category in ADVERSARIAL_SCENARIO_IDS.items():
+        fixture = fixtures_by_id[scenario_id]
+
+        assert fixture["case_type"] == "unsafe"
+        assert fixture["expected_correctness_level"] == "deny_required"
+        assert fixture["expected_failure_mode"] == "guard_denial_required"
+        assert fixture["acceptable_sql_shape"]["must_not_execute"] is True
+        assert fixture["acceptable_sql_shape"]["adversarial_category"] == (
+            adversarial_category
+        )
+        expected_guard_denial = fixture["acceptable_sql_shape"][
+            "expected_guard_denial"
+        ]
+        observed_guard_denials[scenario_id] = expected_guard_denial
+        if expected_guard_denial not in GUARD_DENY_CODES:
+            unsupported_guard_denials[scenario_id] = expected_guard_denial
+        assert fixture["expected_result_shape"]["response_type"] == "deny"
+        assert fixture["expected_result_shape"]["reviewer_readable_reason"].strip()
+
+    assert observed_guard_denials == EXPECTED_ADVERSARIAL_GUARD_DENIALS
+    assert unsupported_guard_denials == {}
 
 
 def test_governed_answer_fixture_set_exports_machine_readable_schema() -> None:
