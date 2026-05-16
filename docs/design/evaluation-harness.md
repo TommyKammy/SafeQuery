@@ -89,6 +89,48 @@ Gold answers may be represented through:
 
 Exact SQL string match is optional and should not be the sole correctness measure.
 
+## Governed Answer Assurance Fixtures
+
+Governed answer assurance fixtures use the
+`governed_answer_assurance.v1` semantic contract. The contract is validated by
+`app.features.evaluation.validate_governed_answer_fixture_set` and exports a
+machine-readable JSON schema from the Pydantic model.
+
+Each fixture set must include:
+
+- `fixture_set`, `domain`, `purpose`, `format_status`, and
+  `semantic_contract_version`
+- a source profile with source id, source family, source flavor, dataset
+  contract version, schema snapshot version, execution policy version,
+  connector profile version, and dialect profile version
+- schema assumptions for the source domain
+- an authoring summary whose fixture count and authoring minutes match the
+  fixture records
+- fixtures covering positive, ambiguous, unsafe, and unsupported-answer cases
+
+Each fixture must include:
+
+- `metadata` with scenario id, source id, schema snapshot version, and semantic
+  contract version
+- natural-language `question`
+- `expected_intent`
+- `expected_semantic_mapping` with metric, dimensions, and filters
+- `acceptable_sql_shape`
+- `expected_result_shape`
+- `forbidden_answer_claims`
+- `expected_correctness_level`
+- `expected_failure_mode` for non-positive cases
+
+The fixture validator fails closed when scenario ids are duplicated, source
+metadata does not match the set source profile, semantic contract versions
+drift, required semantic mapping fields are missing, unknown fields are present,
+or non-positive cases omit the failure mode that prevents execution.
+
+The schema is intentionally source-domain neutral. Domain-specific details live
+in `schema_assumptions`, `source_binding`, semantic mapping values, SQL-shape
+constraints, and result-shape assertions so future source domains can add
+fixtures without rewriting the harness.
+
 ## Baseline Success Dimensions
 
 The baseline evaluation dimensions are:
