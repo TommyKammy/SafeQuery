@@ -83,6 +83,26 @@ _FORBIDDEN_ACTION_PREFIXES = (
     "expose ",
     "return ",
 )
+_FORBIDDEN_DIRECTIVE_PREFIXES = (
+    "do not ",
+    "don't ",
+    "never ",
+    "must not ",
+    "must never ",
+    "should not ",
+    "should never ",
+)
+_FORBIDDEN_CLAIM_FRAGMENT_PATTERN = re.compile(
+    r"\b(?:"
+    r"is|are|was|were|be|been|being|has|have|had|"
+    r"will|would|can|could|should|must|may|might|"
+    r"claim|claims|claimed|report|reports|reported|"
+    r"return|returns|returned|reveal|reveals|revealed|"
+    r"ignore|ignores|ignored|assume|assumes|assumed|"
+    r"expose|exposes|exposed|include|includes|included"
+    r")\b",
+    re.IGNORECASE,
+)
 _NEGATED_CLAIM_PATTERN = re.compile(
     r"(?:^|\b)(?:"
     r"not|no|never|cannot|can't|don't|didn't|doesn't|won't|"
@@ -96,7 +116,7 @@ _NEGATED_CLAIM_CONTRAST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _CLAIM_VALUE_ROW_LINK_PATTERN = re.compile(
-    r"(?:=|:|\b(?:is|are|was|were|had|has|with|at|of|for|totaled|totals?|equals?)\b)",
+    r"(?:=|:|\b(?:is|are|was|were|had|has|at|of|for|totaled|totals?|equals?)\b)",
     re.IGNORECASE,
 )
 _CLAIM_VALUE_NEGATED_COPULA_PATTERN = re.compile(
@@ -498,10 +518,7 @@ def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
     normalized = _clean_claim_text(
         _normalize_forbidden_claim_text(forbidden_claim).casefold()
     )
-    if not normalized.startswith("do not "):
-        return ()
-
-    action = _clean_claim_text(normalized.removeprefix("do not "))
+    action = _forbidden_claim_action(normalized)
     prefix_subjects: list[str] = []
     action_subjects = _split_forbidden_subject(
         action,
@@ -530,6 +547,13 @@ def _forbidden_claim_subjects(forbidden_claim: str) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(subject for subject in subjects if len(subject) >= 3)
     )
+
+
+def _forbidden_claim_action(normalized_claim: str) -> str:
+    for prefix in _FORBIDDEN_DIRECTIVE_PREFIXES:
+        if normalized_claim.startswith(prefix):
+            return _clean_claim_text(normalized_claim.removeprefix(prefix))
+    return normalized_claim
 
 
 def _clean_claim_text(text: str) -> str:
@@ -572,10 +596,19 @@ def _coordinated_forbidden_action_parts(subject: str) -> tuple[str, ...]:
         if marker not in subject:
             continue
         before, after = subject.split(marker, 1)
-        parts.append(before)
+        if _looks_like_forbidden_claim_fragment(before):
+            parts.append(before)
         parts.append(f"{prefix}{after}")
         break
     return tuple(_clean_claim_text(part) for part in parts if _clean_claim_text(part))
+
+
+def _looks_like_forbidden_claim_fragment(fragment: str) -> bool:
+    cleaned = _clean_claim_text(fragment)
+    return any(cleaned.startswith(prefix) for prefix in _FORBIDDEN_ACTION_PREFIXES) or (
+        len(cleaned.split()) >= 2
+        and _FORBIDDEN_CLAIM_FRAGMENT_PATTERN.search(cleaned) is not None
+    )
 
 
 def _disjunctive_subject_parts(subject: str) -> tuple[str, ...]:
@@ -798,34 +831,41 @@ def _unsupported_claimed_result_row_combinations(
     unsupported: list[str] = []
     claimed_values = _claimed_result_value_matches(answer_text)
     for left, right in zip(claimed_values, claimed_values[1:]):
-        left_value, _, left_end = left
-        right_value, right_start, _ = right
-        left_forms = _value_forms(left_value)
-        right_forms = _value_forms(right_value)
-        if left_forms.isdisjoint(supported_values) or right_forms.isdisjoint(
-            supported_values
+        if _claim_value_pair_is_unsupported(
+            left=left,
+            right=right,
+            between_values=answer_text[left[2] : right[1]],
+            row_value_forms=row_value_forms,
+            supported_values=supported_values,
         ):
-            continue
-        if not _claim_values_are_row_linked(answer_text[left_end:right_start]):
-            continue
-        if any(
-            not left_forms.isdisjoint(row_forms)
-            and not right_forms.isdisjoint(row_forms)
-            for row_forms in row_value_forms
-        ):
-            continue
-        unsupported.append(f"{left_value} with {right_value}")
+            unsupported.append(f"{left[0]} with {right[0]}")
+    unsupported.extend(
+        _unsupported_respective_result_row_combinations(
+            answer_text=answer_text,
+            claimed_values=claimed_values,
+            row_value_forms=row_value_forms,
+            supported_values=supported_values,
+        )
+    )
     return tuple(unsupported)
 
 
 def _unsupported_no_evidence_result_value_claims(answer_text: str) -> tuple[str, ...]:
     unsupported: list[str] = []
     claimed_values = _claimed_result_value_matches(answer_text)
+    paired_claim_values: set[tuple[int, int]] = set()
     for left, right in zip(claimed_values, claimed_values[1:]):
         left_value, _, left_end = left
         right_value, right_start, _ = right
         if _claim_values_are_row_linked(answer_text[left_end:right_start]):
             unsupported.append(f"{left_value} with {right_value}")
+            paired_claim_values.add((left[1], left[2]))
+            paired_claim_values.add((right[1], right[2]))
+    for value, start, end in claimed_values:
+        if (start, end) in paired_claim_values:
+            continue
+        if _value_is_numeric_result_claim(value):
+            unsupported.append(value)
     return tuple(unsupported)
 
 
@@ -846,6 +886,81 @@ def _claim_values_are_row_linked(between_values: str) -> bool:
     if _CLAIM_VALUE_NEGATED_COPULA_PATTERN.search(between_values):
         return False
     return _CLAIM_VALUE_ROW_LINK_PATTERN.search(between_values) is not None
+
+
+def _unsupported_respective_result_row_combinations(
+    *,
+    answer_text: str,
+    claimed_values: Sequence[tuple[str, int, int]],
+    row_value_forms: Sequence[set[str]],
+    supported_values: set[str],
+) -> tuple[str, ...]:
+    unsupported: list[str] = []
+    for respectively_match in re.finditer(
+        r"\brespectively\b",
+        answer_text,
+        re.IGNORECASE,
+    ):
+        segment_start = _sentence_start_before(answer_text, respectively_match.start())
+        segment_values = tuple(
+            claimed_value
+            for claimed_value in claimed_values
+            if segment_start <= claimed_value[1] < respectively_match.start()
+        )
+        if len(segment_values) < 4 or len(segment_values) % 2:
+            continue
+        midpoint = len(segment_values) // 2
+        for left, right in zip(segment_values[:midpoint], segment_values[midpoint:]):
+            if _claim_value_pair_is_unsupported(
+                left=left,
+                right=right,
+                between_values="respectively",
+                row_value_forms=row_value_forms,
+                supported_values=supported_values,
+                require_link=False,
+            ):
+                unsupported.append(f"{left[0]} with {right[0]}")
+    return tuple(unsupported)
+
+
+def _claim_value_pair_is_unsupported(
+    *,
+    left: tuple[str, int, int],
+    right: tuple[str, int, int],
+    between_values: str,
+    row_value_forms: Sequence[set[str]],
+    supported_values: set[str],
+    require_link: bool = True,
+) -> bool:
+    left_value = left[0]
+    right_value = right[0]
+    left_forms = _value_forms(left_value)
+    right_forms = _value_forms(right_value)
+    if left_forms.isdisjoint(supported_values) or right_forms.isdisjoint(
+        supported_values
+    ):
+        return False
+    if require_link and not _claim_values_are_row_linked(between_values):
+        return False
+    return not any(
+        not left_forms.isdisjoint(row_forms) and not right_forms.isdisjoint(row_forms)
+        for row_forms in row_value_forms
+    )
+
+
+def _sentence_start_before(text: str, end: int) -> int:
+    sentence_boundaries = tuple(re.finditer(r"[.!?]\s+", text[:end]))
+    if not sentence_boundaries:
+        return 0
+    return sentence_boundaries[-1].end()
+
+
+def _value_is_numeric_result_claim(value: str) -> bool:
+    try:
+        _decimal_from_value_text(value)
+    except (InvalidOperation, ValueError):
+        return False
+    return True
 
 
 def _value_forms(value: Any) -> set[str]:
