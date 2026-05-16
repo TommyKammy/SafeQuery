@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Union
 from uuid import uuid4
 
+import pytest
+
 import app.features.evaluation.release_gate as release_gate_module
+from app.cli.release_gate import _observed_answer_artifacts_from_payload
 from app.features.evaluation import (
     EvaluationOutcomeRecord,
     build_release_gate_assurance_report,
@@ -221,6 +224,111 @@ def test_release_gate_assurance_report_marks_unimplemented_levels_not_covered() 
     assert report.levels[2].covered_fixture_count == 0
     assert report.levels[3].covered_fixture_count == 0
     assert report.failures == ()
+
+
+def test_release_gate_assurance_report_fails_on_non_positive_observed_fixture() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-003-approved-vs-unapproved-distinction",
+                "answer_text": "Approved spend and unapproved spend were compared.",
+                "result_rows": [],
+                "result_metadata": {"columns": [], "row_count": 0},
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.levels[3].status == "fail"
+    assert report.levels[3].covered_fixture_count == 1
+    assert report.failures[0].deny_code == "DENY_UNSUPPORTED_ASSURANCE_FIXTURE_COVERAGE"
+    assert report.failures[0].scenario_id == "gavsf-003-approved-vs-unapproved-distinction"
+
+
+def test_release_gate_assurance_report_preserves_duplicate_observed_artifacts() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "answer_text": (
+                    "FY2025-Q1 approved spend is 125000.00. "
+                    "FY2025-Q2 approved spend is 98000.00. "
+                    "FY2025-Q3 approved spend is 42000.00."
+                ),
+                "result_rows": [
+                    {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+                    {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+                ],
+                "result_metadata": {
+                    "columns": ["fiscal_quarter", "approved_spend"],
+                    "row_count": 2,
+                    "truncated": False,
+                },
+            },
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "answer_text": (
+                    "FY2025-Q1 approved spend is 125000.00. "
+                    "FY2025-Q2 approved spend is 98000.00."
+                ),
+                "result_rows": [
+                    {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+                    {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+                ],
+                "result_metadata": {
+                    "columns": ["fiscal_quarter", "approved_spend"],
+                    "row_count": 2,
+                    "truncated": False,
+                },
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.fixture_coverage_count["covered"] == 1
+    assert {
+        failure.deny_code for failure in report.failures
+    } == {
+        "DENY_DUPLICATE_ASSURANCE_ARTIFACT",
+        "DENY_UNSUPPORTED_ANSWER_CLAIM",
+    }
+
+
+def test_release_gate_assurance_report_structures_malformed_artifact_failure() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "result_rows": [],
+                "result_metadata": {},
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.failures[0].deny_code == "DENY_MALFORMED_ASSURANCE_ARTIFACT"
+    assert report.failures[0].scenario_id == "gavsf-002-vendor-spend-by-quarter"
+    assert "answer_text" in report.failures[0].detail
+
+
+def test_release_gate_cli_rejects_malformed_observed_artifact_envelope() -> None:
+    with pytest.raises(ValueError, match="observed_answer_artifacts"):
+        _observed_answer_artifacts_from_payload({"artifacts": []})
 
 
 def test_release_gate_accepts_scenario_id_from_shared_audit_metadata() -> None:

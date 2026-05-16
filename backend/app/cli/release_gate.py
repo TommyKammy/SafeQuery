@@ -31,12 +31,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    observed_answer_artifacts: tuple[dict[str, Any], ...] = ()
+    observed_answer_artifacts: tuple[Any, ...] = ()
     if args.observed_answer_artifacts is not None:
-        payload = json.loads(args.observed_answer_artifacts.read_text(encoding="utf-8"))
-        if isinstance(payload, dict):
-            payload = payload.get("observed_answer_artifacts", ())
-        observed_answer_artifacts = tuple(payload)
+        try:
+            payload = json.loads(args.observed_answer_artifacts.read_text(encoding="utf-8"))
+            observed_answer_artifacts = _observed_answer_artifacts_from_payload(payload)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            parser.error(str(exc))
 
     report = build_release_gate_assurance_report(
         fixture_set_path=args.fixture_set,
@@ -45,6 +46,24 @@ def main() -> None:
     print(json.dumps(report.model_dump(mode="json"), sort_keys=True))
     if report.status == "fail":
         raise SystemExit(1)
+
+
+def _observed_answer_artifacts_from_payload(payload: Any) -> tuple[Any, ...]:
+    if isinstance(payload, list):
+        return tuple(payload)
+    if isinstance(payload, dict):
+        if "observed_answer_artifacts" not in payload:
+            raise ValueError(
+                "Observed answer artifact envelope must include "
+                "'observed_answer_artifacts'."
+            )
+        artifacts = payload["observed_answer_artifacts"]
+        if not isinstance(artifacts, list):
+            raise ValueError("'observed_answer_artifacts' must be a JSON array.")
+        return tuple(artifacts)
+    raise ValueError(
+        "Observed answer artifacts JSON must be an array or an object envelope."
+    )
 
 
 if __name__ == "__main__":
