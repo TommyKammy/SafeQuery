@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, MutableMapping, MutableSequence, MutableSet
 from types import MappingProxyType
 from typing import Literal, Optional
 
@@ -42,6 +42,15 @@ class _SemanticContractModel(BaseModel):
         frozen=True,
         populate_by_name=True,
     )
+
+    @model_validator(mode="after")
+    def validate_immutable_collections(self) -> "_SemanticContractModel":
+        for field_name in type(self).model_fields:
+            _reject_mutable_collections(
+                getattr(self, field_name),
+                f"{type(self).__name__}.{field_name}",
+            )
+        return self
 
 
 class SemanticContractVersionMetadata(_SemanticContractModel):
@@ -322,3 +331,26 @@ def _require_subset(
 ) -> None:
     if not set(values).issubset(allowed_values):
         raise ValueError(message)
+
+
+def _reject_mutable_collections(value: object, path: str) -> None:
+    if isinstance(value, (MutableMapping, MutableSequence, MutableSet)):
+        raise ValueError(f"{path} must use immutable collections after validation.")
+
+    if isinstance(value, _SemanticContractModel):
+        for field_name in type(value).model_fields:
+            _reject_mutable_collections(
+                getattr(value, field_name),
+                f"{path}.{field_name}",
+            )
+        return
+
+    if isinstance(value, tuple):
+        for index, item in enumerate(value):
+            _reject_mutable_collections(item, f"{path}[{index}]")
+        return
+
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _reject_mutable_collections(key, f"{path}.key")
+            _reject_mutable_collections(item, f"{path}[{key!r}]")

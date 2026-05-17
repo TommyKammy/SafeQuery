@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.features.semantic_contract.schema import (
     SemanticContractDefinition,
+    _SemanticContractModel,
     validate_semantic_contract_definition,
 )
 
@@ -82,6 +83,14 @@ def test_validated_semantic_contract_collections_are_immutable() -> None:
         contract.metrics[0].allowed_source_ids.append("undeclared-source")
     with pytest.raises(TypeError):
         contract.ambiguity_rules["unchecked_rule"] = "mutated after validation."
+
+
+def test_semantic_contract_model_rejects_mutable_collections_after_validation() -> None:
+    class MutableCollectionModel(_SemanticContractModel):
+        values: list[str]
+
+    with pytest.raises(ValidationError, match="immutable collections"):
+        MutableCollectionModel.model_validate({"values": ["mutable-value"]})
 
 
 def test_non_spend_contract_does_not_require_spend_definition_ambiguity() -> None:
