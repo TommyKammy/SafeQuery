@@ -244,11 +244,7 @@ class SemanticContractDefinition(_SemanticContractModel):
             "Contract filters",
         )
         _unique_ids([item.metric_id for item in self.metrics], "Contract metrics")
-        _unique_concepts_by_id(
-            self.sensitive_concepts,
-            lambda item: item.concept_id,
-            "Contract sensitive concepts",
-        )
+        _require_unique_sensitive_concepts(self.sensitive_concepts)
 
         if not source_ids:
             raise ValueError("Contract must declare at least one allowed source.")
@@ -281,36 +277,8 @@ class SemanticContractDefinition(_SemanticContractModel):
                 source_ids,
                 f"Metric {metric.metric_id} references undeclared allowed sources",
             )
-            _require_subset(
-                metric.allowed_dimensions,
-                set(dimensions_by_id),
-                f"Metric {metric.metric_id} references undeclared dimensions",
-            )
-            _require_referenced_concept_source_overlap(
-                metric.allowed_source_ids,
-                dimensions_by_id,
-                metric.allowed_dimensions,
-                lambda dimension: dimension.allowed_source_ids,
-                (
-                    f"Metric {metric.metric_id} references dimensions without "
-                    "compatible allowed sources"
-                ),
-            )
-            _require_subset(
-                metric.default_filters,
-                set(filters_by_id),
-                f"Metric {metric.metric_id} references undeclared default filters",
-            )
-            _require_referenced_concept_source_overlap(
-                metric.allowed_source_ids,
-                filters_by_id,
-                metric.default_filters,
-                lambda semantic_filter: semantic_filter.allowed_source_ids,
-                (
-                    f"Metric {metric.metric_id} references default filters without "
-                    "compatible allowed sources"
-                ),
-            )
+            _require_metric_dimensions_compatible(metric, dimensions_by_id)
+            _require_metric_default_filters_compatible(metric, filters_by_id)
             _require_subset(
                 metric.time_range_semantics.allowed_grains,
                 self.time_semantics.allowed_grains,
@@ -406,6 +374,16 @@ def _unique_concepts_by_id(
     return concepts_by_id
 
 
+def _require_unique_sensitive_concepts(
+    concepts: Iterable[SensitiveSemanticConcept],
+) -> None:
+    _unique_concepts_by_id(
+        concepts,
+        lambda item: item.concept_id,
+        "Contract sensitive concepts",
+    )
+
+
 def _require_subset(
     values: Iterable[object],
     allowed_values: set[object],
@@ -413,6 +391,48 @@ def _require_subset(
 ) -> None:
     if not set(values).issubset(allowed_values):
         raise ValueError(message)
+
+
+def _require_metric_dimensions_compatible(
+    metric: SemanticMetric,
+    dimensions_by_id: Mapping[SourceIdentifier, SemanticDimension],
+) -> None:
+    _require_subset(
+        metric.allowed_dimensions,
+        set(dimensions_by_id),
+        f"Metric {metric.metric_id} references undeclared dimensions",
+    )
+    _require_referenced_concept_source_overlap(
+        metric.allowed_source_ids,
+        dimensions_by_id,
+        metric.allowed_dimensions,
+        lambda dimension: dimension.allowed_source_ids,
+        (
+            f"Metric {metric.metric_id} references dimensions without "
+            "compatible allowed sources"
+        ),
+    )
+
+
+def _require_metric_default_filters_compatible(
+    metric: SemanticMetric,
+    filters_by_id: Mapping[SourceIdentifier, SemanticFilter],
+) -> None:
+    _require_subset(
+        metric.default_filters,
+        set(filters_by_id),
+        f"Metric {metric.metric_id} references undeclared default filters",
+    )
+    _require_referenced_concept_source_overlap(
+        metric.allowed_source_ids,
+        filters_by_id,
+        metric.default_filters,
+        lambda semantic_filter: semantic_filter.allowed_source_ids,
+        (
+            f"Metric {metric.metric_id} references default filters without "
+            "compatible allowed sources"
+        ),
+    )
 
 
 def _require_referenced_concept_source_overlap(
