@@ -153,6 +153,28 @@ def test_spend_definition_detection_catches_compound_spend_terms() -> None:
         validate_semantic_contract_definition(payload)
 
 
+@pytest.mark.parametrize(
+    "metric_id, expression",
+    [
+        ("sum_spending_total", "SUM(spending_amount)"),
+        ("sum_spend2_amount", "SUM(spend2_amount)"),
+    ],
+)
+def test_spend_definition_detection_catches_spend_prefixed_terms(
+    metric_id: str, expression: str
+) -> None:
+    payload = _make_non_spend_contract(deepcopy(_load_contract()))
+    payload["metrics"][0]["metric_id"] = metric_id
+    payload["metrics"][0]["expression"] = expression
+    payload["ambiguity_rules"].pop("spend_definition")
+
+    with pytest.raises(
+        ValidationError,
+        match="Spend definition ambiguity must be explicit in ambiguity_rules",
+    ):
+        validate_semantic_contract_definition(payload)
+
+
 def test_spend_definition_detection_catches_camel_compound_terms() -> None:
     payload = deepcopy(_load_contract())
     payload["contract_id"] = "approved_amount"

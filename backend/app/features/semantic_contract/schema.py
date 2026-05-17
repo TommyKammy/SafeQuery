@@ -35,7 +35,8 @@ TimeGrain = Literal[
 ]
 TimeRangePolicy = Literal["required", "optional", "clarify_when_unspecified"]
 SPEND_CONCEPT_PATTERN = re.compile(
-    r"(?i:(?<![a-z0-9])spend(?![a-z0-9]))"
+    r"(?i:(?<![a-z0-9])spend[a-z0-9]*(?=$|[^a-z0-9]))"
+    r"|(?<=[a-z0-9])Spend[a-z0-9]*(?=$|[^a-z0-9]|[A-Z0-9])"
     r"|(?<=[a-z0-9])(?:Spend|spend)(?=$|[^a-z0-9]|[A-Z0-9])"
 )
 SemanticConceptT = TypeVar("SemanticConceptT")
