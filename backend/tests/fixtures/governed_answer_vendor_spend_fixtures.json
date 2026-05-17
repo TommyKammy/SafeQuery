@@ -385,7 +385,7 @@
         "schema_snapshot_version": 9,
         "semantic_contract_version": "governed_answer_assurance.v1"
       },
-      "question": "Show vendors that were approved when the transaction happened.",
+      "question": "Show approved vendor spend by vendor when the transaction happened.",
       "case_type": "ambiguous",
       "source_binding": {
         "source_id": "business-postgres-source",

@@ -112,18 +112,7 @@ def _mentions_unapproved_vendor_spend(normalized: str) -> bool:
 
 
 def _mentions_approval_timing_ambiguity(normalized: str) -> bool:
-    mentions_approved_vendor_domain = (
-        (
-            _contains_phrase(normalized, "approved")
-            and (
-                _contains_phrase(normalized, "vendor")
-                or _contains_phrase(normalized, "vendors")
-                or _contains_phrase(normalized, "spend")
-            )
-        )
-        or _mentions_approved_vendor_intent(normalized)
-    )
-    return mentions_approved_vendor_domain and (
+    return _mentions_approved_vendor_intent(normalized) and (
         _contains_phrase(normalized, "when the transaction happened")
         or _contains_phrase(normalized, "transaction time")
         or _contains_phrase(normalized, "approval timestamp")

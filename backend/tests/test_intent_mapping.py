@@ -195,6 +195,7 @@ def test_intent_mapping_fails_closed_for_generic_vendor_spend_ambiguity_marker()
         "Show approved vendors by calendar quarter.",
         "Show approved vendor refunds by fiscal quarter.",
         "Show top 2 approved vendors by count.",
+        "Which approved vendors were active when the transaction happened?",
     ],
 )
 def test_intent_mapping_fails_closed_when_approved_vendor_prompt_lacks_spend_metric(
