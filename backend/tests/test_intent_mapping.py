@@ -79,6 +79,27 @@ def test_intent_mapping_maps_explicit_fiscal_quarter_shorthand() -> None:
 @pytest.mark.parametrize(
     "question",
     [
+        "Show approved vendor spend for FY 2025 Q1.",
+        "Show approved spend for FY25 Q1.",
+        "Show approved spend for FY Q1.",
+    ],
+)
+def test_intent_mapping_maps_explicit_fy_quarter_shorthand(question: str) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "mapped"
+    assert mapping.mapping_id == "approved_vendor_spend_by_fiscal_quarter"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["fiscal_quarter"]
+    assert mapping.filters == ["approved_spend_only"]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
         "Show refund totals by fiscal quarter.",
         "Show invoice totals by calendar quarter.",
         "Show revenue for Q3.",
@@ -139,6 +160,28 @@ def test_intent_mapping_fails_closed_for_hyphenated_unapproved_spend() -> None:
     assert mapping.clarification is not None
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show not approved spend for fiscal Q1.",
+        "Show non-approved vendor spend by quarter.",
+    ],
+)
+def test_intent_mapping_fails_closed_for_negated_approved_spend(
+    question: str,
+) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
 def test_intent_mapping_fails_closed_for_unsupported_epic_aa_fixture() -> None:
     mapping = map_question_intent(
         _fixture_question("unsupported_answer"),
@@ -146,6 +189,20 @@ def test_intent_mapping_fails_closed_for_unsupported_epic_aa_fixture() -> None:
     )
 
     assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_fails_closed_when_no_approved_vendor_mapping_matches() -> None:
+    mapping = map_question_intent(
+        "Show supplier refunds by region.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.mapping_id is None
     assert mapping.metric is None
     assert mapping.dimensions == []
     assert mapping.filters == []

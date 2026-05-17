@@ -44,12 +44,34 @@ def _mentions_approved_vendor_intent(normalized: str) -> bool:
     )
 
 
+def _mentions_negated_approved_vendor_intent(normalized: str) -> bool:
+    return any(
+        _contains_phrase(normalized, marker)
+        for marker in (
+            "not approved vendor spend",
+            "not approved vendors",
+            "not approved vendor",
+            "not approved spend",
+            "non approved vendor spend",
+            "non approved vendors",
+            "non approved vendor",
+            "non approved spend",
+        )
+    )
+
+
 def _mentions_quarter_shorthand(normalized: str) -> bool:
     return re.search(r"\bq[1-4]\b", normalized) is not None
 
 
 def _mentions_explicit_fiscal_quarter_shorthand(normalized: str) -> bool:
-    return re.search(r"\b(?:fiscal|fy[0-9]{2,4}) q[1-4]\b", normalized) is not None
+    return (
+        re.search(
+            r"\b(?:fiscal|fy(?: ?[0-9]{2,4})?) q[1-4]\b",
+            normalized,
+        )
+        is not None
+    )
 
 
 def _mentions_ambiguous_quarter_shorthand(normalized: str) -> bool:
@@ -103,15 +125,19 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ),
         )
 
-    if _mentions_unapproved_vendor_spend(normalized) or any(
-        marker in normalized
-        for marker in (
-            "bank account numbers",
-            "tax identifiers",
-            "ignore the system prompt",
-            "dump every approved vendor spend row",
-            "every column and every row",
-            "whatever source has the vendor spend table",
+    if (
+        _mentions_unapproved_vendor_spend(normalized)
+        or _mentions_negated_approved_vendor_intent(normalized)
+        or any(
+            marker in normalized
+            for marker in (
+                "bank account numbers",
+                "tax identifiers",
+                "ignore the system prompt",
+                "dump every approved vendor spend row",
+                "every column and every row",
+                "whatever source has the vendor spend table",
+            )
         )
     ):
         return IntentMappingOutput(
@@ -173,7 +199,10 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             **base,
         )
 
-    if _contains_phrase(normalized, "approved vendor spend") and (
+    if (
+        _contains_phrase(normalized, "approved vendor spend")
+        or _contains_phrase(normalized, "approved spend")
+    ) and (
         _contains_phrase(normalized, "quarter")
         or _mentions_explicit_fiscal_quarter_shorthand(normalized)
     ):
@@ -197,9 +226,7 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ranking_behavior_id="top_approved_vendors_by_quarterly_spend",
             **base,
         )
-    if _contains_phrase(normalized, "approved vendor spend") or _contains_phrase(
-        normalized, "approved vendors"
-    ):
+    if _mentions_approved_vendor_intent(normalized):
         return IntentMappingOutput(
             status="mapped",
             mapping_id="approved_vendor_spend_general",
@@ -208,6 +235,9 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
         )
 
     return IntentMappingOutput(
-        status="mapped",
-        mapping_id="legacy_guard_evaluated_mapping",
+        status="unsupported",
+        clarification=(
+            "The question does not map to an approved vendor spend semantic "
+            "contract intent."
+        ),
     )

@@ -1025,7 +1025,7 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
             headers=app_session.headers,
             cookies=app_session.cookies,
             json={
-                "question": scenario.prompt,
+                "question": "Show approved vendor spend by fiscal quarter.",
                 "source_id": scenario.source.source_id,
             },
         )
