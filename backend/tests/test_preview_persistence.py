@@ -93,6 +93,7 @@ def _seed_authoritative_source_governance(
     source_family: str = "postgresql",
     source_flavor: str = "warehouse",
     dataset_contract_version: int = 1,
+    semantic_contract_version: str | None = "approved_vendor_spend.v1",
     schema_snapshot_version: int = 1,
 ) -> None:
     source = RegisteredSource(
@@ -127,6 +128,7 @@ def _seed_authoritative_source_governance(
         registered_source_id=source.id,
         schema_snapshot_id=snapshot.id,
         contract_version=dataset_contract_version,
+        semantic_contract_version=semantic_contract_version,
         display_name="SAP spend cube contract",
         owner_binding="group:finance-analysts",
         security_review_binding=None,
@@ -229,7 +231,13 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         response_candidate_id = response_payload["audit"]["events"][2]["query_candidate_id"]
 
         assert response_payload["request"]["request_id"] == request_id
+        assert response_payload["request"]["semantic_contract_version"] == (
+            "approved_vendor_spend.v1"
+        )
         assert response_payload["candidate"]["candidate_id"] == response_candidate_id
+        assert response_payload["candidate"]["semantic_contract_version"] == (
+            "approved_vendor_spend.v1"
+        )
         assert response_payload["candidate"]["guard_status"] == "pending"
         assert response_payload["candidate"]["candidate_sql"] is None
 
@@ -256,6 +264,7 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert persisted_request.auth_source == "test-helper"
         assert persisted_request.governance_bindings == "group:finance-analysts"
         assert persisted_request.dataset_contract_version == 1
+        assert persisted_request.semantic_contract_version == "approved_vendor_spend.v1"
         assert persisted_request.schema_snapshot_version == 1
 
         assert persisted_candidate.candidate_id == response_candidate_id
@@ -268,6 +277,9 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert persisted_candidate.candidate_sql is None
         assert persisted_candidate.authenticated_subject_id == "user:alice"
         assert persisted_candidate.dataset_contract_version == 1
+        assert persisted_candidate.semantic_contract_version == (
+            "approved_vendor_spend.v1"
+        )
         assert persisted_candidate.schema_snapshot_version == 1
         assert persisted_candidate.registered_source_id == persisted_request.registered_source_id
         assert persisted_candidate.dataset_contract_id == persisted_request.dataset_contract_id
@@ -304,6 +316,49 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert persisted_events[-1].audit_payload["event_type"] == "guard_evaluated"
         assert persisted_events[-1].audit_payload["query_candidate_id"] == (
             response_candidate_id
+        )
+        assert persisted_events[-1].semantic_contract_version == (
+            "approved_vendor_spend.v1"
+        )
+        assert persisted_events[-1].audit_payload["semantic_contract_version"] == (
+            "approved_vendor_spend.v1"
+        )
+        current_contract = session.get(
+            DatasetContract,
+            persisted_request.dataset_contract_id,
+        )
+        assert current_contract is not None
+        current_contract.semantic_contract_version = "approved_vendor_spend.v2"
+        session.commit()
+        session.refresh(persisted_request)
+        session.refresh(persisted_candidate)
+        session.refresh(persisted_events[-1])
+        assert persisted_request.semantic_contract_version == "approved_vendor_spend.v1"
+        assert persisted_candidate.semantic_contract_version == "approved_vendor_spend.v1"
+        assert persisted_events[-1].semantic_contract_version == (
+            "approved_vendor_spend.v1"
+        )
+        workflow_payload = get_operator_workflow_snapshot(session).model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
+        candidate_history_item = next(
+            item
+            for item in workflow_payload["history"]
+            if item["itemType"] == "candidate"
+        )
+        request_history_item = next(
+            item for item in workflow_payload["history"] if item["itemType"] == "request"
+        )
+        assert request_history_item["semanticContractVersion"] == (
+            "approved_vendor_spend.v1"
+        )
+        assert candidate_history_item["semanticContractVersion"] == (
+            "approved_vendor_spend.v1"
+        )
+        assert candidate_history_item["auditEvents"][0]["semanticContractVersion"] == (
+            "approved_vendor_spend.v1"
         )
         serialized_events = str([event.audit_payload for event in persisted_events])
         assert app_session.csrf_token not in serialized_events
@@ -445,6 +500,15 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
 
         assert execute_response.status_code == 200
         assert calls == ["called"]
+        persisted_execution_event = (
+            session.execute(
+                select(PreviewAuditEvent).where(
+                    PreviewAuditEvent.event_type == "execution_completed"
+                )
+            )
+            .scalars()
+            .one()
+        )
         session.refresh(persisted_approval)
         assert persisted_approval.approval_state == "executed"
         assert persisted_approval.executed_at is not None
@@ -463,6 +527,12 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
             "prompt_version": "sql_generation_adapter_request.v1",
             "prompt_fingerprint": persisted_candidate.prompt_fingerprint,
         }.items() <= persisted_generation_event.audit_payload.items()
+        assert persisted_execution_event.semantic_contract_version == (
+            persisted_candidate.semantic_contract_version
+        )
+        assert persisted_execution_event.audit_payload["semantic_contract_version"] == (
+            persisted_candidate.semantic_contract_version
+        )
     finally:
         session.close()
         engine.dispose()
@@ -938,6 +1008,15 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
         )
         assert all(
             event.source_id == fixture["source_id"]
+            for event in persisted_post_execute_events
+        )
+        assert all(
+            event.semantic_contract_version == persisted_candidate.semantic_contract_version
+            for event in persisted_post_execute_events
+        )
+        assert all(
+            event.audit_payload["semantic_contract_version"]
+            == persisted_candidate.semantic_contract_version
             for event in persisted_post_execute_events
         )
         assert "execution_run_id" not in str(

@@ -158,6 +158,7 @@ class RequestRecord(BaseModel):
     question: str
     request_id: str
     source_id: str
+    semantic_contract_version: Optional[str] = None
     state: str
     revision_context: Optional["RevisionRecord"] = None
 
@@ -170,6 +171,7 @@ class CandidateRecord(BaseModel):
     source_family: str
     source_flavor: Optional[str]
     dataset_contract_version: int
+    semantic_contract_version: Optional[str] = None
     schema_snapshot_version: int
     state: str
     primary_deny_code: Optional[str] = None
@@ -383,6 +385,7 @@ def _build_preview_lifecycle_audit_events(
             source_family=resolved_source.source_family,
             source_flavor=resolved_source.source_flavor,
             dataset_contract_version=dataset_contract.contract_version,
+            semantic_contract_version=dataset_contract.semantic_contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
             execution_policy_version=execution_policy_version,
             connector_profile_version=connector_profile_version,
@@ -502,6 +505,7 @@ def _build_preview_entitlement_denial_audit_event(
             source_family=resolved_source.source_family,
             source_flavor=resolved_source.source_flavor,
             dataset_contract_version=dataset_contract.contract_version,
+            semantic_contract_version=dataset_contract.semantic_contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
             primary_deny_code="DENY_SOURCE_ENTITLEMENT",
             denial_cause="entitlement_denied",
@@ -541,6 +545,7 @@ def _build_preview_unavailable_audit_event(
             source_family=resolved_source.source_family,
             source_flavor=resolved_source.source_flavor,
             dataset_contract_version=dataset_contract.contract_version,
+            semantic_contract_version=dataset_contract.semantic_contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
             primary_deny_code=primary_deny_code,
             denial_cause=denial_cause,
@@ -579,6 +584,7 @@ def _build_preview_generation_failed_audit_event(
             source_family=resolved_source.source_family,
             source_flavor=resolved_source.source_flavor,
             dataset_contract_version=dataset_contract.contract_version,
+            semantic_contract_version=dataset_contract.semantic_contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
             primary_deny_code="DENY_SQL_GENERATION_FAILED",
             denial_cause=failure_code,
@@ -759,6 +765,17 @@ def _persist_preview_audit_events(
         if event.event_id in existing_event_ids:
             continue
         payload = event.model_dump(mode="json", exclude_none=True)
+        semantic_contract_version = (
+            event.semantic_contract_version
+            or (
+                preview_candidate.semantic_contract_version
+                if preview_candidate is not None
+                else None
+            )
+            or preview_request.semantic_contract_version
+        )
+        if semantic_contract_version is not None:
+            payload["semantic_contract_version"] = semantic_contract_version
         session.add(
             PreviewAuditEvent(
                 event_id=event.event_id,
@@ -794,6 +811,7 @@ def _persist_preview_audit_events(
                 source_family=event.source_family,
                 source_flavor=event.source_flavor,
                 dataset_contract_version=event.dataset_contract_version,
+                semantic_contract_version=semantic_contract_version,
                 schema_snapshot_version=event.schema_snapshot_version,
                 primary_deny_code=event.primary_deny_code,
                 denial_cause=event.denial_cause,
@@ -1046,6 +1064,9 @@ def _persist_preview_submission_records(
             preview_request.source_flavor = resolved_source.source_flavor
             preview_request.dataset_contract_id = dataset_contract.id
             preview_request.dataset_contract_version = dataset_contract.contract_version
+            preview_request.semantic_contract_version = (
+                dataset_contract.semantic_contract_version
+            )
             preview_request.schema_snapshot_id = schema_snapshot.id
             preview_request.schema_snapshot_version = schema_snapshot.snapshot_version
             preview_request.authenticated_subject_id = subject_id
@@ -1132,6 +1153,9 @@ def _persist_preview_submission_records(
             preview_candidate.source_flavor = resolved_source.source_flavor
             preview_candidate.dataset_contract_id = dataset_contract.id
             preview_candidate.dataset_contract_version = dataset_contract.contract_version
+            preview_candidate.semantic_contract_version = (
+                dataset_contract.semantic_contract_version
+            )
             preview_candidate.schema_snapshot_id = schema_snapshot.id
             preview_candidate.schema_snapshot_version = schema_snapshot.snapshot_version
             preview_candidate.authenticated_subject_id = subject_id
@@ -1623,6 +1647,7 @@ def submit_preview_request(
             question=payload.question,
             request_id=request_id,
             source_id=resolved_source.source_id,
+            semantic_contract_version=dataset_contract.semantic_contract_version,
             state="submitted",
             revision_context=revision_record,
         ),
@@ -1634,6 +1659,7 @@ def submit_preview_request(
             source_family=resolved_source.source_family,
             source_flavor=resolved_source.source_flavor,
             dataset_contract_version=dataset_contract.contract_version,
+            semantic_contract_version=dataset_contract.semantic_contract_version,
             schema_snapshot_version=schema_snapshot.snapshot_version,
             state=candidate_state,
             primary_deny_code=primary_deny_code,

@@ -46,6 +46,10 @@ class PreviewRequest(Base):
         nullable=False,
     )
     dataset_contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    semantic_contract_version: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     schema_snapshot_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("schema_snapshots.id"),
         nullable=False,
@@ -129,6 +133,10 @@ class PreviewCandidate(Base):
         nullable=False,
     )
     dataset_contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    semantic_contract_version: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     schema_snapshot_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("schema_snapshots.id"),
         nullable=False,
@@ -314,6 +322,10 @@ class PreviewAuditEvent(Base):
     source_flavor: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     dataset_contract_version: Mapped[Optional[int]] = mapped_column(
         Integer,
+        nullable=True,
+    )
+    semantic_contract_version: Mapped[Optional[str]] = mapped_column(
+        String(255),
         nullable=True,
     )
     schema_snapshot_version: Mapped[Optional[int]] = mapped_column(

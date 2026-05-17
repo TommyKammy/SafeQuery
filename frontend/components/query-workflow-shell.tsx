@@ -1863,6 +1863,9 @@ function renderCandidateAttemptComparison(attempts: OperatorWorkflowCandidateAtt
             <span>
               Contract v{attempt.datasetContractVersion}; schema v{attempt.schemaSnapshotVersion}
             </span>
+            {attempt.semanticContractVersion ? (
+              <span>Semantic contract {attempt.semanticContractVersion}</span>
+            ) : null}
             <span>{attempt.occurredAt}</span>
           </div>
         ))}

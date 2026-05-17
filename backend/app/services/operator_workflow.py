@@ -71,6 +71,10 @@ class OperatorWorkflowHistoryItem(BaseModel):
     occurred_at: datetime = Field(serialization_alias="occurredAt")
     candidate_sql: Optional[str] = Field(default=None, serialization_alias="candidateSql")
     request_id: Optional[str] = Field(default=None, serialization_alias="requestId")
+    semantic_contract_version: Optional[str] = Field(
+        default=None,
+        serialization_alias="semanticContractVersion",
+    )
     guard_status: Optional[str] = Field(default=None, serialization_alias="guardStatus")
     primary_deny_code: Optional[str] = Field(
         default=None,
@@ -119,6 +123,10 @@ class OperatorWorkflowCandidateAttemptSummary(BaseModel):
     denial_reason: Optional[str] = Field(default=None, serialization_alias="denialReason")
     occurred_at: datetime = Field(serialization_alias="occurredAt")
     dataset_contract_version: int = Field(serialization_alias="datasetContractVersion")
+    semantic_contract_version: Optional[str] = Field(
+        default=None,
+        serialization_alias="semanticContractVersion",
+    )
     schema_snapshot_version: int = Field(serialization_alias="schemaSnapshotVersion")
     approved: bool
     executed: bool
@@ -143,6 +151,10 @@ class OperatorWorkflowAuditEventSummary(BaseModel):
     request_id: str = Field(serialization_alias="requestId")
     candidate_id: Optional[str] = Field(default=None, serialization_alias="candidateId")
     source_id: str = Field(serialization_alias="sourceId")
+    semantic_contract_version: Optional[str] = Field(
+        default=None,
+        serialization_alias="semanticContractVersion",
+    )
     candidate_state: Optional[str] = Field(default=None, serialization_alias="candidateState")
     primary_deny_code: Optional[str] = Field(default=None, serialization_alias="primaryDenyCode")
     guard_decision: Optional[str] = Field(default=None, serialization_alias="guardDecision")
@@ -474,6 +486,7 @@ def _audit_event_summary(event: PreviewAuditEvent) -> OperatorWorkflowAuditEvent
         request_id=event.request_id,
         candidate_id=event.candidate_id,
         source_id=event.source_id,
+        semantic_contract_version=event.semantic_contract_version,
         candidate_state=event.candidate_state,
         primary_deny_code=event.primary_deny_code,
         guard_decision=_read_text(event.audit_payload.get("guard_decision")),
@@ -679,6 +692,7 @@ def _candidate_attempts_by_candidate_id(
                     candidate.updated_at or candidate.created_at,
                 ),
                 dataset_contract_version=candidate.dataset_contract_version,
+                semantic_contract_version=candidate.semantic_contract_version,
                 schema_snapshot_version=candidate.schema_snapshot_version,
                 approved=candidate.candidate_id in approved_candidate_ids,
                 executed=candidate.candidate_id in executed_candidate_ids,
@@ -774,6 +788,7 @@ def _build_operator_history(
                 lifecycle_state=run_state,
                 occurred_at=_as_utc_datetime(event.occurred_at),
                 request_id=event.request_id,
+                semantic_contract_version=event.semantic_contract_version,
                 primary_deny_code=event.primary_deny_code,
                 result_truncated=_run_result_truncated_for_event(event, run_state),
                 row_count=_run_row_count_for_event(event, run_state),
@@ -805,6 +820,7 @@ def _build_operator_history(
                 ),
                 candidate_sql=candidate.candidate_sql,
                 request_id=candidate.request_id,
+                semantic_contract_version=candidate.semantic_contract_version,
                 guard_status=candidate.guard_status,
                 primary_deny_code=(
                     candidate_event.primary_deny_code if candidate_event else None
@@ -838,6 +854,7 @@ def _build_operator_history(
                 source_id=request.source_id,
                 source_label=source_labels.get(request.source_id, request.source_id),
                 lifecycle_state=request.request_state,
+                semantic_contract_version=request.semantic_contract_version,
                 occurred_at=_history_occurred_at(
                     request_event,
                     request.updated_at or request.created_at,
