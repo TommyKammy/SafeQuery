@@ -545,14 +545,15 @@ def _assurance_level_report(
             )
         )
         fixture_ids = {fixture.metadata.scenario_id for fixture in fixtures}
-        failure_count = sum(
-            1
+        behavior_failures = tuple(
+            failure
             for failure in failures
             if _is_assurance_behavior_failure_for_level(
                 failure,
                 fixture_ids=fixture_ids,
             )
         )
+        failure_count = len(behavior_failures)
     if failure_count:
         status: ReleaseGateAssuranceStatus = "fail"
     elif covered_fixture_count:
