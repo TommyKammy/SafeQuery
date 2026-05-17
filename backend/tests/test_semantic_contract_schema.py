@@ -124,6 +124,47 @@ def test_spend_definition_detection_uses_tokens_not_substrings() -> None:
     assert "spend_definition" not in contract.ambiguity_rules
 
 
+def test_spend_definition_detection_catches_compound_spend_terms() -> None:
+    payload = _make_non_spend_contract(deepcopy(_load_contract()))
+    payload["metrics"][0]["metric_id"] = "sum_overspend_amount"
+    payload["metrics"][0]["label"] = "Vendor overage amount"
+    payload["metrics"][0]["expression"] = "SUM(overspend_amount)"
+    payload["ambiguity_rules"].pop("spend_definition")
+
+    with pytest.raises(
+        ValidationError,
+        match="Spend definition ambiguity must be explicit in ambiguity_rules",
+    ):
+        validate_semantic_contract_definition(payload)
+
+
+def test_spend_definition_detection_catches_camel_compound_terms() -> None:
+    payload = deepcopy(_load_contract())
+    payload["contract_id"] = "approved_amount"
+    payload["domain"] = "approved_amount"
+    payload["version"]["identifier"] = "approved_amount.v1"
+    payload["dimensions"][0]["source_column"] = "finance.approved_amount.vendor_name"
+    payload["dimensions"][1]["source_column"] = (
+        "finance.approved_amount.fiscal_quarter"
+    )
+    payload["filters"][0]["filter_id"] = "approved_amount_only"
+    payload["filters"][0]["label"] = "Approved amount only"
+    payload["metrics"][0]["metric_id"] = "sum_approved_vendor_amount"
+    payload["metrics"][0]["label"] = "ApprovedVendorSpend"
+    payload["metrics"][0]["expression"] = "SUM(approved_amount)"
+    payload["metrics"][0]["default_filters"] = ["approved_amount_only"]
+    payload["sensitive_concepts"][0]["reason"] = (
+        "Refund handling changes gross-versus-net amount definition."
+    )
+    payload["ambiguity_rules"].pop("spend_definition")
+
+    with pytest.raises(
+        ValidationError,
+        match="Spend definition ambiguity must be explicit in ambiguity_rules",
+    ):
+        validate_semantic_contract_definition(payload)
+
+
 @pytest.mark.parametrize(
     "mutator, expected_message",
     [
@@ -213,6 +254,16 @@ def test_spend_definition_detection_uses_tokens_not_substrings() -> None:
         (
             lambda payload: payload["sensitive_concepts"][0].__setitem__(
                 "requires_review", "true"
+            ),
+            "Input should be a valid boolean",
+        ),
+        (
+            lambda payload: payload["filters"][0].__setitem__("locked", "true"),
+            "Input should be a valid boolean",
+        ),
+        (
+            lambda payload: payload["metrics"][0]["time_range_semantics"].__setitem__(
+                "requires_explicit_range", "false"
             ),
             "Input should be a valid boolean",
         ),

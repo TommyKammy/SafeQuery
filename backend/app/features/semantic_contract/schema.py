@@ -34,7 +34,10 @@ TimeGrain = Literal[
     "year",
 ]
 TimeRangePolicy = Literal["required", "optional", "clarify_when_unspecified"]
-SPEND_TOKEN_PATTERN = re.compile(r"(?<![a-z0-9])spend(?![a-z0-9])", re.IGNORECASE)
+SPEND_CONCEPT_PATTERN = re.compile(
+    r"(?i:(?<![a-z0-9])spend(?![a-z0-9]))"
+    r"|(?<=[a-z0-9])(?:Spend|spend)(?=$|[^a-z0-9]|[A-Z0-9])"
+)
 SemanticConceptT = TypeVar("SemanticConceptT")
 
 
@@ -118,7 +121,7 @@ class SemanticFilter(_SemanticContractModel):
     label: NonEmptyTrimmedString
     expression: NonEmptyTrimmedString
     allowed_source_ids: tuple[SourceIdentifier, ...]
-    locked: bool = False
+    locked: StrictBool = False
 
     @model_validator(mode="after")
     def validate_sources(self) -> "SemanticFilter":
@@ -129,7 +132,7 @@ class SemanticFilter(_SemanticContractModel):
 class SemanticTimeRange(_SemanticContractModel):
     default_grain: TimeGrain
     allowed_grains: tuple[TimeGrain, ...]
-    requires_explicit_range: bool
+    requires_explicit_range: StrictBool
 
     @model_validator(mode="after")
     def validate_default_grain(self) -> "SemanticTimeRange":
@@ -359,7 +362,11 @@ def _contract_requires_spend_definition(contract: SemanticContractDefinition) ->
                 metric.expression,
             ]
         )
-    return any(SPEND_TOKEN_PATTERN.search(term) for term in spend_terms)
+    return any(_contains_spend_concept(term) for term in spend_terms)
+
+
+def _contains_spend_concept(term: str) -> bool:
+    return bool(SPEND_CONCEPT_PATTERN.search(term))
 
 
 def _require_unique(values: Iterable[object], label: str) -> None:
