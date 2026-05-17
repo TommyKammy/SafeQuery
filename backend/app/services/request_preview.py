@@ -289,14 +289,9 @@ def _build_preview_lifecycle_audit_events(
 
     events: list[SourceAwareAuditEvent] = []
     causation_event_id: UUID | None = None
-    event_types = (
-        "query_submitted",
-        "generation_requested",
-        "generation_completed",
-        "guard_evaluated",
+    event_types = _preview_lifecycle_event_types(
+        intent_blocked_candidate_state=intent_blocked_candidate_state,
     )
-    if intent_blocked_candidate_state is not None:
-        event_types = ("query_submitted", "generation_requested")
 
     for event_type in event_types:
         execution_policy_version = (
@@ -462,6 +457,20 @@ def _build_preview_lifecycle_audit_events(
         events.append(event)
 
     return events
+
+
+def _preview_lifecycle_event_types(
+    *,
+    intent_blocked_candidate_state: str | None,
+) -> tuple[str, ...]:
+    if intent_blocked_candidate_state is not None:
+        return ("query_submitted", "generation_requested")
+    return (
+        "query_submitted",
+        "generation_requested",
+        "generation_completed",
+        "guard_evaluated",
+    )
 
 
 def _intent_blocked_candidate_state(

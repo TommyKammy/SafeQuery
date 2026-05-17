@@ -657,6 +657,12 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             "query_submitted",
             "generation_requested",
         ]
+        assert "generation_completed" not in {
+            event["event_type"] for event in response_payload["audit"]["events"]
+        }
+        assert "guard_evaluated" not in {
+            event["event_type"] for event in response_payload["audit"]["events"]
+        }
         assert response_payload["audit"]["events"][1]["intent_mapping"]["status"] == (
             expected_status
         )
@@ -683,6 +689,10 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             "query_submitted",
             "generation_requested",
         ]
+        assert "generation_completed" not in {
+            event.event_type for event in persisted_events
+        }
+        assert "guard_evaluated" not in {event.event_type for event in persisted_events}
         assert persisted_events[-1].candidate_state == expected_state
         assert persisted_events[-1].audit_payload["intent_mapping"]["status"] == (
             expected_status
