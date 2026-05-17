@@ -497,9 +497,7 @@ def _intent_blocked_candidate_state(
 ) -> str | None:
     if intent_mapping is None or intent_mapping.status == "mapped":
         return None
-    if intent_mapping.status == "ambiguous":
-        return "clarification_required"
-    return "unsupported"
+    return "blocked"
 
 
 def _contract_execution_entitlement_bindings(

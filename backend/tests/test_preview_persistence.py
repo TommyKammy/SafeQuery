@@ -569,17 +569,16 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
 
 
 @pytest.mark.parametrize(
-    ("case_type", "expected_status", "expected_state"),
+    ("case_type", "expected_status"),
     [
-        ("ambiguous", "ambiguous", "clarification_required"),
-        ("unsupported_answer", "unsupported", "unsupported"),
+        ("ambiguous", "ambiguous"),
+        ("unsupported_answer", "unsupported"),
     ],
 )
 def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped_fixtures(
     monkeypatch,
     case_type: str,
     expected_status: str,
-    expected_state: str,
 ) -> None:
     fixture = _load_governed_answer_fixture_by_case(case_type)
     monkeypatch.setenv(
@@ -643,7 +642,7 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
         response_payload = response.json()
         assert adapter.adapter_request is None
         assert response_payload["candidate"]["candidate_sql"] is None
-        assert response_payload["candidate"]["state"] == expected_state
+        assert response_payload["candidate"]["state"] == "blocked"
         assert response_payload["candidate"]["intent_mapping"]["status"] == (
             expected_status
         )
@@ -667,7 +666,7 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             expected_status
         )
         assert response_payload["audit"]["events"][1]["candidate_state"] == (
-            expected_state
+            "blocked"
         )
 
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
@@ -682,7 +681,7 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             .all()
         )
         assert persisted_candidate.candidate_sql is None
-        assert persisted_candidate.candidate_state == expected_state
+        assert persisted_candidate.candidate_state == "blocked"
         assert persisted_candidate.guard_status == "pending"
         assert persisted_approval.approval_state == "invalidated"
         assert [event.event_type for event in persisted_events] == [
@@ -693,10 +692,38 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             event.event_type for event in persisted_events
         }
         assert "guard_evaluated" not in {event.event_type for event in persisted_events}
-        assert persisted_events[-1].candidate_state == expected_state
+        assert persisted_events[-1].candidate_state == "blocked"
         assert persisted_events[-1].audit_payload["intent_mapping"]["status"] == (
             expected_status
         )
+
+        revision_response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+                "revise_from": {
+                    "item_type": "candidate",
+                    "request_id": response_payload["request"]["request_id"],
+                    "candidate_id": response_payload["candidate"]["candidate_id"],
+                    "lifecycle_state": "blocked",
+                },
+            },
+        )
+
+        assert revision_response.status_code == 200
+        revision_payload = revision_response.json()
+        assert revision_payload["candidate"]["state"] == "preview_ready"
+        assert revision_payload["candidate"]["revision_context"] == {
+            "item_type": "candidate",
+            "request_id": response_payload["request"]["request_id"],
+            "candidate_id": response_payload["candidate"]["candidate_id"],
+            "run_id": None,
+            "source_id": "sap-approved-spend",
+            "lifecycle_state": "blocked",
+        }
     finally:
         session.close()
         engine.dispose()
