@@ -27,8 +27,13 @@ def test_first_planning_candidate_selection_is_recorded() -> None:
         "dialect-capability-matrix.md",
         "dialect-guard-readiness-checklists.md",
         "evaluation-harness.md",
+        "ADR-0015-semantic-contract-and-sql-guard-responsibility.md",
     ]:
         assert source in content
+
+    assert "semantic-contract readiness" in normalized
+    assert "Level 1 SQL safety only" in normalized
+    assert "Level 2 or Level 3 governed answer assurance" in normalized
 
 
 def test_deferred_families_have_explicit_blockers() -> None:
@@ -93,6 +98,7 @@ def test_next_roadmap_handoff_artifact_is_defined() -> None:
         "flavor-specific runtime readiness plan",
         "backend-owned secret indirection plan",
         "fixture manifest",
+        "semantic-contract readiness summary",
         "release-gate reconstruction plan",
         "operator-history checklist",
         "must be reviewed before active connector implementation is scoped",

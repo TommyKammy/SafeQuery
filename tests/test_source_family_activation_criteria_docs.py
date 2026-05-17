@@ -26,6 +26,7 @@ def test_future_source_family_activation_gate_is_documented() -> None:
 
     required_categories = [
         "Guard readiness",
+        "Semantic-contract readiness",
         "Runtime readiness",
         "Secrets readiness",
         "Audit readiness",
@@ -38,6 +39,7 @@ def test_future_source_family_activation_gate_is_documented() -> None:
 
     fail_closed_blockers = [
         "missing guard readiness",
+        "missing semantic-contract readiness",
         "missing runtime readiness",
         "missing secrets readiness",
         "missing audit readiness",
@@ -50,6 +52,14 @@ def test_future_source_family_activation_gate_is_documented() -> None:
 
     assert (
         "No planned or unsupported family may dispatch connector code"
+        in normalized_activation_section
+    )
+    assert (
+        "Sources without semantic contracts may claim Level 1 SQL safety only"
+        in normalized_activation_section
+    )
+    assert (
+        "must not claim Level 2 or Level 3 governed answer assurance"
         in normalized_activation_section
     )
 
