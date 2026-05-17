@@ -1,0 +1,96 @@
+{
+  "contract_id": "approved_vendor_spend",
+  "domain": "approved_vendor_spend",
+  "version": {
+    "identifier": "approved_vendor_spend.v1",
+    "version": 1,
+    "status": "active",
+    "owner": "finance_analytics",
+    "created_for_issue": 438
+  },
+  "source_bindings": [
+    {
+      "source_id": "business-postgres-source",
+      "source_family": "postgresql",
+      "source_flavor": "warehouse",
+      "dataset_contract_version": 4,
+      "schema_snapshot_version": 9
+    }
+  ],
+  "dimensions": [
+    {
+      "dimension_id": "vendor_name",
+      "label": "Vendor name",
+      "source_column": "finance.approved_vendor_spend.vendor_name",
+      "allowed_source_ids": [
+        "business-postgres-source"
+      ]
+    },
+    {
+      "dimension_id": "fiscal_quarter",
+      "label": "Fiscal quarter",
+      "source_column": "finance.approved_vendor_spend.fiscal_quarter",
+      "allowed_source_ids": [
+        "business-postgres-source"
+      ]
+    }
+  ],
+  "filters": [
+    {
+      "filter_id": "approved_spend_only",
+      "label": "Approved spend only",
+      "expression": "approval_status = 'approved'",
+      "allowed_source_ids": [
+        "business-postgres-source"
+      ],
+      "locked": true
+    }
+  ],
+  "metrics": [
+    {
+      "metric_id": "sum_approved_vendor_spend",
+      "label": "Approved vendor spend",
+      "expression_owner": "finance_analytics",
+      "expression": "SUM(approved_spend)",
+      "allowed_source_ids": [
+        "business-postgres-source"
+      ],
+      "allowed_dimensions": [
+        "vendor_name",
+        "fiscal_quarter"
+      ],
+      "default_filters": [
+        "approved_spend_only"
+      ],
+      "time_range_semantics": {
+        "default_grain": "fiscal_quarter",
+        "allowed_grains": [
+          "fiscal_quarter"
+        ],
+        "requires_explicit_range": false
+      }
+    }
+  ],
+  "time_semantics": {
+    "default_grain": "fiscal_quarter",
+    "allowed_grains": [
+      "fiscal_quarter"
+    ],
+    "ambiguous_terms": [
+      "quarter"
+    ],
+    "range_policy": "clarify_when_unspecified"
+  },
+  "sensitive_concepts": [
+    {
+      "concept_id": "refund_amount",
+      "label": "Refund amount",
+      "reason": "Refund handling changes gross-versus-net spend definition.",
+      "requires_review": true
+    }
+  ],
+  "ambiguity_rules": {
+    "quarter": "Clarify fiscal versus calendar quarter before mapping.",
+    "spend_definition": "Clarify gross spend versus net-of-refunds spend before mapping."
+  }
+}
