@@ -293,6 +293,25 @@ def build_release_gate_assurance_report(
             observed_by_scenario_id=observed_by_scenario_id,
         )
     )
+    covered_count = sum(
+        1
+        for fixture in fixture_set.fixtures
+        if fixture.metadata.scenario_id in observed_by_scenario_id
+    )
+    if fixture_set.fixtures and covered_count == 0:
+        failures.append(
+            ReleaseGateFailure(
+                deny_code="DENY_MISSING_ASSURANCE_COVERAGE",
+                source_id=fixture_set.source_profile.source_id,
+                source_family=fixture_set.source_profile.source_family,
+                scenario_id=None,
+                scenario_category=None,
+                detail=(
+                    "Governed-answer assurance release gate has no observed "
+                    "governed-answer artifacts covering any fixture."
+                ),
+            )
+        )
     levels = tuple(
         _assurance_level_report(
             level=level,
@@ -302,11 +321,6 @@ def build_release_gate_assurance_report(
             failures=failures,
         )
         for level, label, fixtures in _assurance_level_fixtures(fixture_set)
-    )
-    covered_count = sum(
-        1
-        for fixture in fixture_set.fixtures
-        if fixture.metadata.scenario_id in observed_by_scenario_id
     )
 
     return ReleaseGateAssuranceReport(

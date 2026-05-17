@@ -192,6 +192,31 @@ def test_release_gate_assurance_report_fails_on_unsupported_answer_claims() -> N
     assert "FY2025-Q3" in report.failures[0].detail
 
 
+def test_release_gate_assurance_report_fails_closed_on_zero_observed_coverage() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(),
+    )
+
+    assert report.status == "fail"
+    assert report.fixture_coverage_count == {
+        "total": 14,
+        "covered": 0,
+        "not_covered": 14,
+    }
+    assert report.levels[0].status == "pass"
+    assert report.levels[1].status == "not_covered"
+    assert report.levels[2].status == "not_covered"
+    assert report.levels[3].status == "not_covered"
+    assert report.failures[0].deny_code == "DENY_MISSING_ASSURANCE_COVERAGE"
+    assert report.failures[0].scenario_id is None
+    assert "no observed governed-answer artifacts" in report.failures[0].detail
+
+
 def test_release_gate_assurance_report_marks_unimplemented_levels_not_covered() -> None:
     fixture_path = (
         Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
