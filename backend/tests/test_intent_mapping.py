@@ -1,0 +1,300 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from app.services.intent_mapping import map_question_intent
+
+
+FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+)
+
+
+def _fixture_question(case_type: str) -> str:
+    fixture_set = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    for fixture in fixture_set["fixtures"]:
+        if fixture["case_type"] == case_type:
+            return fixture["question"]
+    raise AssertionError(f"Expected Epic AA fixture for case_type={case_type}")
+
+
+def _fixture_question_by_scenario_id(scenario_id: str) -> str:
+    fixture_set = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    for fixture in fixture_set["fixtures"]:
+        if fixture["metadata"]["scenario_id"] == scenario_id:
+            return fixture["question"]
+    raise AssertionError(f"Expected Epic AA fixture for scenario_id={scenario_id}")
+
+
+def test_intent_mapping_maps_positive_epic_aa_fixture_to_concepts() -> None:
+    mapping = map_question_intent(
+        _fixture_question("positive"),
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.model_dump(exclude_none=True) == {
+        "status": "mapped",
+        "mapping_id": "show_top_approved_vendors_by_quarterly_spend",
+        "metric": "sum_approved_vendor_spend",
+        "dimensions": ["vendor_name", "fiscal_quarter"],
+        "filters": ["approved_spend_only"],
+        "ranking_behavior_id": "top_approved_vendors_by_quarterly_spend",
+    }
+
+
+def test_intent_mapping_keeps_ambiguous_epic_aa_fixture_in_clarification_state() -> None:
+    mapping = map_question_intent(
+        _fixture_question("ambiguous"),
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "ambiguous"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["vendor_name", "fiscal_quarter"]
+    assert mapping.filters == ["approved_spend_only"]
+    assert mapping.clarification is not None
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "expected_mapping_id"),
+    [
+        ("gavsf-007-approval-timing-ambiguity", "clarify_approval_timing"),
+        (
+            "gavsf-008-vendor-name-normalization-ambiguity",
+            "clarify_vendor_name_normalization",
+        ),
+    ],
+)
+def test_intent_mapping_keeps_named_ambiguous_epic_aa_fixtures_in_clarification_state(
+    scenario_id: str,
+    expected_mapping_id: str,
+) -> None:
+    mapping = map_question_intent(
+        _fixture_question_by_scenario_id(scenario_id),
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "ambiguous"
+    assert mapping.mapping_id == expected_mapping_id
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["vendor_name"]
+    assert mapping.filters == ["approved_spend_only"]
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_keeps_bare_quarter_shorthand_in_clarification_state() -> None:
+    mapping = map_question_intent(
+        "Show approved vendor spend for Q3.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "ambiguous"
+    assert mapping.mapping_id == "clarify_calendar_vs_fiscal_quarter"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["fiscal_quarter"]
+    assert mapping.filters == ["approved_spend_only"]
+
+
+def test_intent_mapping_maps_explicit_fiscal_quarter_shorthand() -> None:
+    mapping = map_question_intent(
+        "Show approved vendor spend for fiscal Q3.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "mapped"
+    assert mapping.mapping_id == "approved_vendor_spend_by_fiscal_quarter"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["fiscal_quarter"]
+    assert mapping.filters == ["approved_spend_only"]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show approved vendor spend for FY 2025 Q1.",
+        "Show approved spend for FY25 Q1.",
+        "Show approved spend for FY Q1.",
+    ],
+)
+def test_intent_mapping_maps_explicit_fy_quarter_shorthand(question: str) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "mapped"
+    assert mapping.mapping_id == "approved_vendor_spend_by_fiscal_quarter"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["fiscal_quarter"]
+    assert mapping.filters == ["approved_spend_only"]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show the top approved vendor spend records.",
+        "Show the approved vendor spend rows with the highest spend.",
+    ],
+)
+def test_intent_mapping_maps_bounded_top_approved_spend_rows(question: str) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "mapped"
+    assert mapping.mapping_id == "show_top_approved_vendor_spend_rows"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["vendor_name"]
+    assert mapping.filters == ["approved_spend_only"]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show refund totals by fiscal quarter.",
+        "Show invoice totals by calendar quarter.",
+        "Show revenue for Q3.",
+        "Show top 2 suppliers including ties.",
+    ],
+)
+def test_intent_mapping_fails_closed_for_unrelated_ambiguity_markers(
+    question: str,
+) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_fails_closed_for_generic_vendor_spend_ambiguity_marker() -> None:
+    mapping = map_question_intent(
+        "Show vendor spend by calendar quarter.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show approved vendors by calendar quarter.",
+        "Show approved vendor refunds by fiscal quarter.",
+        "Show top 2 approved vendors by count.",
+        "Which approved vendors were active when the transaction happened?",
+    ],
+)
+def test_intent_mapping_fails_closed_when_approved_vendor_prompt_lacks_spend_metric(
+    question: str,
+) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_matches_approved_markers_on_token_boundaries() -> None:
+    mapping = map_question_intent(
+        "Show notapproved vendor spend for Q1.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_fails_closed_for_hyphenated_unapproved_spend() -> None:
+    mapping = map_question_intent(
+        "Compare approved and unapproved-spend by vendor for Q1.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show not approved spend for fiscal Q1.",
+        "Show non-approved vendor spend by quarter.",
+    ],
+)
+def test_intent_mapping_fails_closed_for_negated_approved_spend(
+    question: str,
+) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_fails_closed_for_unsupported_epic_aa_fixture() -> None:
+    mapping = map_question_intent(
+        _fixture_question("unsupported_answer"),
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show approved vendor spend.",
+        "Summarize approved vendor spend by department.",
+        "Show supplier spend by region.",
+        "What is revenue by region?",
+    ],
+)
+def test_intent_mapping_fails_closed_when_no_approved_vendor_mapping_matches(
+    question: str,
+) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.mapping_id is None
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+    assert "does not match" in mapping.clarification

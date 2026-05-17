@@ -171,6 +171,21 @@ class _RecordingHTTPPreviewAdapter:
         )
 
 
+def _load_governed_answer_fixture_by_case(case_type: str) -> dict[str, object]:
+    fixture_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "governed_answer_vendor_spend_fixtures.json"
+    )
+    fixture_set = json.loads(fixture_path.read_text(encoding="utf-8"))
+    matching = [
+        fixture for fixture in fixture_set["fixtures"]
+        if fixture["case_type"] == case_type
+    ]
+    assert matching, f"Expected Epic AA fixture for case_type={case_type}"
+    return matching[0]
+
+
 class _FailingHTTPPreviewAdapter:
     def generate_sql(self, request):
         raise SQLGenerationAdapterConfigurationError(
@@ -444,9 +459,22 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
         assert response_payload["candidate"]["candidate_sql"] == candidate_sql
         assert response_payload["candidate"]["guard_status"] == "allow"
         assert response_payload["candidate"]["state"] == "preview_ready"
+        assert response_payload["candidate"]["intent_mapping"]["status"] == "mapped"
+        assert response_payload["candidate"]["intent_mapping"]["metric"] == (
+            "sum_approved_vendor_spend"
+        )
 
         adapter_payload = adapter.adapter_request.model_dump(mode="json")
         assert adapter_payload["request_id"] == request_id
+        assert adapter_payload["intent_mapping"] == {
+            "status": "mapped",
+            "mapping_id": "show_top_approved_vendors_by_quarterly_spend",
+            "metric": "sum_approved_vendor_spend",
+            "dimensions": ["vendor_name", "fiscal_quarter"],
+            "filters": ["approved_spend_only"],
+            "ranking_behavior_id": "top_approved_vendors_by_quarterly_spend",
+            "clarification": None,
+        }
         assert adapter_payload["source"] == {
             "source_id": "sap-approved-spend",
             "source_family": "postgresql",
@@ -533,6 +561,169 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
         assert persisted_execution_event.audit_payload["semantic_contract_version"] == (
             persisted_candidate.semantic_contract_version
         )
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("case_type", "expected_status"),
+    [
+        ("ambiguous", "ambiguous"),
+        ("unsupported_answer", "unsupported"),
+    ],
+)
+def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped_fixtures(
+    monkeypatch,
+    case_type: str,
+    expected_status: str,
+) -> None:
+    fixture = _load_governed_answer_fixture_by_case(case_type)
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    monkeypatch.setenv(
+        "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        "postgresql://safequery_exec:secret@business-postgres-source:5432/business",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+    adapter = _RecordingHTTPPreviewAdapter()
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: adapter,
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(
+            session,
+            connection_reference="env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        )
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": fixture["question"],
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 200
+        response_payload = response.json()
+        assert adapter.adapter_request is None
+        assert response_payload["candidate"]["candidate_sql"] is None
+        assert response_payload["candidate"]["state"] == "blocked"
+        assert response_payload["candidate"]["intent_mapping"]["status"] == (
+            expected_status
+        )
+        assert response_payload["candidate"]["intent_mapping"]["metric"] == (
+            "sum_approved_vendor_spend"
+            if expected_status == "ambiguous"
+            else None
+        )
+        assert response_payload["candidate"]["intent_mapping"]["clarification"] is not None
+        assert [event["event_type"] for event in response_payload["audit"]["events"]] == [
+            "query_submitted",
+            "generation_requested",
+        ]
+        assert "generation_completed" not in {
+            event["event_type"] for event in response_payload["audit"]["events"]
+        }
+        assert "guard_evaluated" not in {
+            event["event_type"] for event in response_payload["audit"]["events"]
+        }
+        assert response_payload["audit"]["events"][1]["intent_mapping"]["status"] == (
+            expected_status
+        )
+        assert response_payload["audit"]["events"][1]["candidate_state"] == (
+            "blocked"
+        )
+
+        persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_approval = session.execute(
+            select(PreviewCandidateApproval)
+        ).scalar_one()
+        persisted_events = (
+            session.execute(
+                select(PreviewAuditEvent).order_by(PreviewAuditEvent.lifecycle_order)
+            )
+            .scalars()
+            .all()
+        )
+        assert persisted_candidate.candidate_sql is None
+        assert persisted_candidate.candidate_state == "blocked"
+        assert persisted_candidate.guard_status == "pending"
+        assert persisted_approval.approval_state == "invalidated"
+        assert [event.event_type for event in persisted_events] == [
+            "query_submitted",
+            "generation_requested",
+        ]
+        assert "generation_completed" not in {
+            event.event_type for event in persisted_events
+        }
+        assert "guard_evaluated" not in {event.event_type for event in persisted_events}
+        assert persisted_events[-1].candidate_state == "blocked"
+        assert persisted_events[-1].audit_payload["intent_mapping"]["status"] == (
+            expected_status
+        )
+
+        revision_response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+                "revise_from": {
+                    "item_type": "candidate",
+                    "request_id": response_payload["request"]["request_id"],
+                    "candidate_id": response_payload["candidate"]["candidate_id"],
+                    "lifecycle_state": "blocked",
+                },
+            },
+        )
+
+        assert revision_response.status_code == 200
+        revision_payload = revision_response.json()
+        assert revision_payload["candidate"]["state"] == "preview_ready"
+        assert revision_payload["candidate"]["revision_context"] == {
+            "item_type": "candidate",
+            "request_id": response_payload["request"]["request_id"],
+            "candidate_id": response_payload["candidate"]["candidate_id"],
+            "run_id": None,
+            "source_id": "sap-approved-spend",
+            "lifecycle_state": "blocked",
+        }
     finally:
         session.close()
         engine.dispose()
@@ -871,7 +1062,7 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
             headers=app_session.headers,
             cookies=app_session.cookies,
             json={
-                "question": scenario.prompt,
+                "question": "Show approved vendor spend by fiscal quarter.",
                 "source_id": scenario.source.source_id,
             },
         )

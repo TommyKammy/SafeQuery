@@ -51,6 +51,15 @@ def test_sql_generation_adapter_request_is_source_aware_and_single_source() -> N
     assert request.model_dump() == {
         "request_id": "req_79_preview",
         "question": "Show approved vendors by quarterly spend",
+        "intent_mapping": {
+            "status": "mapped",
+            "mapping_id": "legacy_adapter_request",
+            "metric": None,
+            "dimensions": [],
+            "filters": [],
+            "ranking_behavior_id": None,
+            "clarification": None,
+        },
         "source": {
             "source_id": "sap-approved-spend",
             "source_family": "postgresql",
@@ -567,6 +576,12 @@ def test_vanna_generation_uses_curated_context_and_bounded_request(
     assert seen["body"] == {
         "question": "Show approved vendors",
         "model": "warehouse-assistant",
+        "intent_mapping": {
+            "status": "mapped",
+            "mapping_id": "legacy_adapter_request",
+            "dimensions": [],
+            "filters": [],
+        },
         "source": {
             "source_id": "sap-approved-spend",
             "source_family": "postgresql",

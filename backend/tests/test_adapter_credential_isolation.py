@@ -43,6 +43,15 @@ def test_build_sql_generation_adapter_request_uses_only_adapter_safe_fields() ->
     assert adapter_request.model_dump() == {
         "request_id": "req_82_preview",
         "question": "Show approved vendors by quarterly spend",
+        "intent_mapping": {
+            "status": "mapped",
+            "mapping_id": "legacy_adapter_request",
+            "metric": None,
+            "dimensions": [],
+            "filters": [],
+            "ranking_behavior_id": None,
+            "clarification": None,
+        },
         "source": {
             "source_id": "sap-approved-spend",
             "source_family": "postgresql",
