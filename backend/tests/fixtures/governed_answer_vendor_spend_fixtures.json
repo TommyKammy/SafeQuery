@@ -95,7 +95,7 @@
           "fiscal_quarter"
         ],
         "filters": [
-          "approval_status equals approved"
+          "approved_spend_only"
         ]
       },
       "acceptable_sql_shape": {
@@ -188,7 +188,7 @@
           "fiscal_quarter"
         ],
         "filters": [
-          "approval_status equals approved"
+          "approved_spend_only"
         ]
       },
       "acceptable_sql_shape": {
@@ -305,13 +305,12 @@
       },
       "expected_intent": "The user requests quarterly approved spend but refund inclusion or exclusion changes the metric definition.",
       "expected_semantic_mapping": {
-        "metric": "sum_approved_vendor_spend with unresolved refund treatment",
+        "metric": "sum_approved_vendor_spend",
         "dimensions": [
           "fiscal_quarter"
         ],
         "filters": [
-          "approval_status equals approved",
-          "refund treatment unspecified"
+          "approved_spend_only"
         ]
       },
       "acceptable_sql_shape": {
@@ -352,10 +351,10 @@
       "expected_semantic_mapping": {
         "metric": "sum_approved_vendor_spend",
         "dimensions": [
-          "quarter"
+          "fiscal_quarter"
         ],
         "filters": [
-          "Q1 period, unresolved calendar or fiscal quarter"
+          "approved_spend_only"
         ]
       },
       "acceptable_sql_shape": {
@@ -395,13 +394,12 @@
       },
       "expected_intent": "The user asks for approved spend but does not define whether approval means transaction-time approval or current approval status.",
       "expected_semantic_mapping": {
-        "metric": "sum_approved_vendor_spend with unresolved approval timing",
+        "metric": "sum_approved_vendor_spend",
         "dimensions": [
           "vendor_name"
         ],
         "filters": [
-          "approval timing unspecified",
-          "approved status source of truth unspecified"
+          "approved_spend_only"
         ]
       },
       "acceptable_sql_shape": {
@@ -440,13 +438,12 @@
       },
       "expected_intent": "The user asks to normalize vendor names without an authoritative alias or vendor-master binding.",
       "expected_semantic_mapping": {
-        "metric": "sum_approved_vendor_spend with unresolved vendor normalization",
+        "metric": "sum_approved_vendor_spend",
         "dimensions": [
           "vendor_name"
         ],
         "filters": [
-          "approval_status equals approved",
-          "vendor alias mapping unspecified"
+          "approved_spend_only"
         ]
       },
       "acceptable_sql_shape": {
@@ -485,14 +482,13 @@
       },
       "expected_intent": "The user requests a top-N ranking but does not specify whether ties at the rank boundary should expand the row count or require a deterministic tie-breaker.",
       "expected_semantic_mapping": {
-        "metric": "sum_approved_vendor_spend with unresolved top-N tie handling",
+        "metric": "sum_approved_vendor_spend",
         "dimensions": [
           "vendor_name",
           "fiscal_quarter"
         ],
         "filters": [
-          "approval_status equals approved",
-          "top-N tie policy unspecified"
+          "approved_spend_only"
         ]
       },
       "acceptable_sql_shape": {
@@ -725,7 +721,7 @@
           "tax_identifier"
         ],
         "filters": [
-          "approval_status equals approved"
+          "approved_spend_only"
         ]
       },
       "acceptable_sql_shape": {

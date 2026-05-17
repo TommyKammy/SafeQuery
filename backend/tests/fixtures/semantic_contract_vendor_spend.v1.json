@@ -71,6 +71,90 @@
       }
     }
   ],
+  "ranking_behaviors": [
+    {
+      "ranking_id": "top_approved_vendors_by_quarterly_spend",
+      "label": "Top approved vendors by quarterly spend",
+      "order_metric": "sum_approved_vendor_spend",
+      "order_direction": "desc",
+      "partition_dimensions": [
+        "fiscal_quarter"
+      ],
+      "limit_per_partition": 10,
+      "ties_policy": "clarify"
+    }
+  ],
+  "intent_mappings": [
+    {
+      "mapping_id": "show_top_approved_vendors_by_quarterly_spend",
+      "label": "Show top approved vendors by quarterly spend",
+      "canonical_question": "Show the top approved vendors by quarterly spend.",
+      "classification": "supported",
+      "metric": "sum_approved_vendor_spend",
+      "dimensions": [
+        "vendor_name",
+        "fiscal_quarter"
+      ],
+      "filters": [
+        "approved_spend_only"
+      ],
+      "ranking_behavior_id": "top_approved_vendors_by_quarterly_spend",
+      "ambiguity_rule_refs": []
+    },
+    {
+      "mapping_id": "clarify_refund_inclusion",
+      "label": "Clarify refund inclusion",
+      "canonical_question": "Show vendor spend after refunds by quarter.",
+      "classification": "ambiguous",
+      "metric": "sum_approved_vendor_spend",
+      "dimensions": [
+        "vendor_name",
+        "fiscal_quarter"
+      ],
+      "filters": [
+        "approved_spend_only"
+      ],
+      "ranking_behavior_id": null,
+      "ambiguity_rule_refs": [
+        "spend_definition"
+      ]
+    },
+    {
+      "mapping_id": "clarify_calendar_vs_fiscal_quarter",
+      "label": "Clarify calendar versus fiscal quarter",
+      "canonical_question": "Show approved vendor spend by calendar quarter.",
+      "classification": "ambiguous",
+      "metric": "sum_approved_vendor_spend",
+      "dimensions": [
+        "fiscal_quarter"
+      ],
+      "filters": [
+        "approved_spend_only"
+      ],
+      "ranking_behavior_id": null,
+      "ambiguity_rule_refs": [
+        "quarter"
+      ]
+    },
+    {
+      "mapping_id": "clarify_top_n_ties",
+      "label": "Clarify top-N ties",
+      "canonical_question": "Show the top two approved vendors by quarterly spend including ties.",
+      "classification": "ambiguous",
+      "metric": "sum_approved_vendor_spend",
+      "dimensions": [
+        "vendor_name",
+        "fiscal_quarter"
+      ],
+      "filters": [
+        "approved_spend_only"
+      ],
+      "ranking_behavior_id": "top_approved_vendors_by_quarterly_spend",
+      "ambiguity_rule_refs": [
+        "top_n_ties"
+      ]
+    }
+  ],
   "time_semantics": {
     "default_grain": "fiscal_quarter",
     "allowed_grains": [
@@ -91,6 +175,7 @@
   ],
   "ambiguity_rules": {
     "quarter": "Clarify fiscal versus calendar quarter before mapping.",
-    "spend_definition": "Clarify gross spend versus net-of-refunds spend before mapping."
+    "spend_definition": "Clarify gross spend versus net-of-refunds spend before mapping.",
+    "top_n_ties": "Clarify whether ties at the cutoff should be included or broken by a stable secondary sort before mapping."
   }
 }

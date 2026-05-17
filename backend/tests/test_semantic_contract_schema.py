@@ -37,9 +37,12 @@ def _make_non_spend_contract(payload: dict[str, Any]) -> dict[str, Any]:
     payload["metrics"][0]["label"] = "Closed tickets"
     payload["metrics"][0]["expression"] = "COUNT(ticket_id)"
     payload["metrics"][0]["default_filters"] = ["closed_tickets_only"]
+    payload["ranking_behaviors"] = []
+    payload["intent_mappings"] = []
     payload["sensitive_concepts"][0]["reason"] = (
         "Ticket status handling requires review."
     )
+    payload["ambiguity_rules"].pop("top_n_ties", None)
     return payload
 
 
@@ -56,6 +59,29 @@ def test_vendor_spend_semantic_contract_fixture_validates_and_serializes() -> No
         "fiscal_quarter",
     )
     assert contract.metrics[0].default_filters == ("approved_spend_only",)
+    assert contract.ranking_behaviors[0].ranking_id == (
+        "top_approved_vendors_by_quarterly_spend"
+    )
+    assert contract.ranking_behaviors[0].order_metric == "sum_approved_vendor_spend"
+    assert contract.ranking_behaviors[0].partition_dimensions == ("fiscal_quarter",)
+    assert contract.ranking_behaviors[0].limit_per_partition == 10
+    assert contract.ranking_behaviors[0].ties_policy == "clarify"
+    assert contract.intent_mappings[0].mapping_id == (
+        "show_top_approved_vendors_by_quarterly_spend"
+    )
+    assert contract.intent_mappings[0].canonical_question == (
+        "Show the top approved vendors by quarterly spend."
+    )
+    assert contract.intent_mappings[0].classification == "supported"
+    assert contract.intent_mappings[0].metric == "sum_approved_vendor_spend"
+    assert contract.intent_mappings[0].dimensions == (
+        "vendor_name",
+        "fiscal_quarter",
+    )
+    assert contract.intent_mappings[0].filters == ("approved_spend_only",)
+    assert contract.intent_mappings[0].ranking_behavior_id == (
+        "top_approved_vendors_by_quarterly_spend"
+    )
     assert contract.time_semantics.default_grain == "fiscal_quarter"
     assert contract.time_semantics.ambiguous_terms == ("quarter",)
     assert contract.ambiguity_rules["quarter"] == (
@@ -70,8 +96,39 @@ def test_vendor_spend_semantic_contract_fixture_validates_and_serializes() -> No
     assert serialized["contractId"] == "approved_vendor_spend"
     assert serialized["version"]["identifier"] == "approved_vendor_spend.v1"
     assert serialized["metrics"][0]["metricId"] == "sum_approved_vendor_spend"
+    assert serialized["rankingBehaviors"][0]["rankingId"] == (
+        "top_approved_vendors_by_quarterly_spend"
+    )
+    assert serialized["intentMappings"][0]["mappingId"] == (
+        "show_top_approved_vendors_by_quarterly_spend"
+    )
     assert serialized["timeSemantics"]["defaultGrain"] == "fiscal_quarter"
     assert "contract_id" not in serialized
+
+
+def test_vendor_spend_contract_represents_ambiguous_demo_variations() -> None:
+    contract = validate_semantic_contract_definition(_load_contract())
+    mappings_by_id = {
+        mapping.mapping_id: mapping for mapping in contract.intent_mappings
+    }
+
+    assert mappings_by_id[
+        "clarify_refund_inclusion"
+    ].ambiguity_rule_refs == ("spend_definition",)
+    assert mappings_by_id[
+        "clarify_calendar_vs_fiscal_quarter"
+    ].ambiguity_rule_refs == ("quarter",)
+    assert mappings_by_id["clarify_top_n_ties"].ambiguity_rule_refs == (
+        "top_n_ties",
+    )
+    assert all(
+        mappings_by_id[mapping_id].classification == "ambiguous"
+        for mapping_id in (
+            "clarify_refund_inclusion",
+            "clarify_calendar_vs_fiscal_quarter",
+            "clarify_top_n_ties",
+        )
+    )
 
 
 def test_validated_semantic_contract_collections_are_immutable() -> None:
@@ -219,9 +276,12 @@ def test_spend_definition_detection_catches_camel_compound_terms() -> None:
     payload["metrics"][0]["label"] = "ApprovedVendorSpend"
     payload["metrics"][0]["expression"] = "SUM(approved_amount)"
     payload["metrics"][0]["default_filters"] = ["approved_amount_only"]
+    payload["ranking_behaviors"] = []
+    payload["intent_mappings"] = []
     payload["sensitive_concepts"][0]["reason"] = (
         "Refund handling changes gross-versus-net amount definition."
     )
+    payload["ambiguity_rules"].pop("top_n_ties", None)
     payload["ambiguity_rules"].pop("spend_definition")
 
     with pytest.raises(
@@ -332,6 +392,30 @@ def test_spend_definition_detection_catches_camel_compound_terms() -> None:
                 "requires_explicit_range", "false"
             ),
             "Input should be a valid boolean",
+        ),
+        (
+            lambda payload: payload["ranking_behaviors"][0].__setitem__(
+                "order_metric", "undeclared_metric"
+            ),
+            "references undeclared order metric",
+        ),
+        (
+            lambda payload: payload["intent_mappings"][0].__setitem__(
+                "metric", "undeclared_metric"
+            ),
+            "references undeclared metric",
+        ),
+        (
+            lambda payload: payload["intent_mappings"][0]["filters"].append(
+                "undeclared_filter"
+            ),
+            "references undeclared filters",
+        ),
+        (
+            lambda payload: payload["intent_mappings"][0].__setitem__(
+                "ranking_behavior_id", "undeclared_ranking"
+            ),
+            "references undeclared ranking behavior",
         ),
     ],
 )

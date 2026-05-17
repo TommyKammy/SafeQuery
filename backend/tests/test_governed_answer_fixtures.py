@@ -14,12 +14,16 @@ from app.features.evaluation import (
     validate_governed_answer_fixture_set,
 )
 from app.features.guard.deny_taxonomy import GUARD_DENY_CODES
+from app.features.semantic_contract import validate_semantic_contract_definition
 
 
 FIXTURE_PATH = (
     Path(__file__).parent
     / "fixtures"
     / "governed_answer_vendor_spend_fixtures.json"
+)
+SEMANTIC_CONTRACT_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "semantic_contract_vendor_spend.v1.json"
 )
 
 
@@ -72,6 +76,10 @@ EXPECTED_ADVERSARIAL_GUARD_DENIALS = {
 
 def _load_fixture_set() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+
+def _load_semantic_contract() -> dict[str, Any]:
+    return json.loads(SEMANTIC_CONTRACT_FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
 def _fixtures_by_scenario_id(fixture_set: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -201,7 +209,7 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
     assert top_vendors["expected_semantic_mapping"] == {
         "metric": "sum_approved_vendor_spend",
         "dimensions": ["vendor_name", "fiscal_quarter"],
-        "filters": ["approval_status equals approved"],
+        "filters": ["approved_spend_only"],
     }
     assert top_vendors["expected_result_shape"]["row_grain"] == (
         "one row per approved vendor per fiscal quarter"
@@ -309,6 +317,23 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
     assert "ties at rank 2" in top_n_tie_ambiguity["acceptable_sql_shape"][
         "required_clarification"
     ]
+
+
+def test_governed_answer_fixture_mappings_reference_semantic_contract_concepts() -> None:
+    contract = validate_semantic_contract_definition(_load_semantic_contract())
+    fixture_set = _load_fixture_set()
+
+    metric_ids = {metric.metric_id for metric in contract.metrics}
+    dimension_ids = {dimension.dimension_id for dimension in contract.dimensions}
+    filter_ids = {semantic_filter.filter_id for semantic_filter in contract.filters}
+
+    for fixture in fixture_set["fixtures"]:
+        if fixture["case_type"] not in {"positive", "ambiguous"}:
+            continue
+        mapping = fixture["expected_semantic_mapping"]
+        assert mapping["metric"] in metric_ids
+        assert set(mapping["dimensions"]) <= dimension_ids
+        assert set(mapping["filters"]) <= filter_ids
 
 
 def test_governed_answer_vendor_spend_fixtures_cover_adversarial_fail_closed_suite() -> None:
