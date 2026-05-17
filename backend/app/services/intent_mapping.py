@@ -21,6 +21,7 @@ class IntentMappingOutput(BaseModel):
     filters: list[NonEmptyTrimmedString] = Field(default_factory=list)
     ranking_behavior_id: Optional[NonEmptyTrimmedString] = None
     clarification: Optional[NonEmptyTrimmedString] = None
+    unsupported_concepts: Optional[list[NonEmptyTrimmedString]] = None
 
 
 def _normalize_question(question: str) -> str:
@@ -139,6 +140,60 @@ def _unsupported_no_approved_vendor_mapping_match() -> IntentMappingOutput:
     )
 
 
+def _unsupported_business_concept_match(
+    unsupported_concepts: list[str],
+) -> IntentMappingOutput:
+    return IntentMappingOutput(
+        status="unsupported",
+        unsupported_concepts=unsupported_concepts,
+        clarification=(
+            "The requested business concept is not approved for the selected "
+            "semantic contract."
+        ),
+    )
+
+
+def _unsupported_metric_concepts(normalized: str) -> list[str]:
+    concepts: list[str] = []
+    if _contains_phrase(normalized, "revenue"):
+        concepts.append("metric:revenue")
+    if _contains_phrase(normalized, "invoice totals") or _contains_phrase(
+        normalized, "invoice total"
+    ):
+        concepts.append("metric:invoice_total")
+    if _contains_phrase(normalized, "supplier spend"):
+        concepts.append("metric:supplier_spend")
+    if _contains_phrase(normalized, "vendor count") or (
+        _contains_phrase(normalized, "by count")
+        and (
+            _contains_phrase(normalized, "vendor")
+            or _contains_phrase(normalized, "vendors")
+        )
+    ):
+        concepts.append("metric:vendor_count")
+    return concepts
+
+
+def _unsupported_dimension_concepts(normalized: str) -> list[str]:
+    concepts: list[str] = []
+    if _contains_phrase(normalized, "department"):
+        concepts.append("dimension:department")
+    if _contains_phrase(normalized, "region"):
+        concepts.append("dimension:region")
+    return concepts
+
+
+def _unsupported_business_concepts(normalized: str) -> list[str]:
+    return list(
+        dict.fromkeys(
+            [
+                *_unsupported_metric_concepts(normalized),
+                *_unsupported_dimension_concepts(normalized),
+            ]
+        )
+    )
+
+
 def map_question_intent(question: str, *, semantic_contract_version: str | None) -> IntentMappingOutput:
     normalized = _normalize_question(question)
     if semantic_contract_version is None:
@@ -151,6 +206,10 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
                 "for the selected source."
             ),
         )
+
+    unsupported_concepts = _unsupported_business_concepts(normalized)
+    if unsupported_concepts:
+        return _unsupported_business_concept_match(unsupported_concepts)
 
     if (
         _mentions_unapproved_vendor_spend(normalized)

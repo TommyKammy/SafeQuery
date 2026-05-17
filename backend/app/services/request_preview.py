@@ -88,6 +88,18 @@ _SQL_GUARD_EVALUATOR_BY_SOURCE_FAMILY = {
     "mssql": evaluate_mssql_sql_guard,
     "postgresql": evaluate_postgresql_sql_guard,
 }
+_INTENT_DENIAL_CODE_BY_STATUS = {
+    "ambiguous": "DENY_AMBIGUOUS_INTENT",
+    "unsupported": "DENY_UNSUPPORTED_INTENT",
+}
+_INTENT_DENIAL_CAUSE_BY_STATUS = {
+    "ambiguous": "ambiguous_intent",
+    "unsupported": "unsupported_intent",
+}
+_DEFAULT_INTENT_DENIAL_REASON_BY_STATUS = {
+    "ambiguous": "The requested business concept requires clarification before SQL generation.",
+    "unsupported": "The requested business concept is not approved for the selected semantic contract.",
+}
 
 
 def _resolve_sql_guard_controls(source_family: str) -> tuple[str, Any]:
@@ -135,6 +147,36 @@ def _primary_guard_deny_code(
     ):
         return None
     return guard_evaluation.rejections[0].code
+
+
+def _intent_denial_code(intent_mapping: IntentMappingOutput | None) -> str | None:
+    if intent_mapping is None or intent_mapping.status == "mapped":
+        return None
+    return _INTENT_DENIAL_CODE_BY_STATUS[intent_mapping.status]
+
+
+def _intent_denial_cause(intent_mapping: IntentMappingOutput | None) -> str | None:
+    if intent_mapping is None or intent_mapping.status == "mapped":
+        return None
+    return _INTENT_DENIAL_CAUSE_BY_STATUS[intent_mapping.status]
+
+
+def _intent_denial_reason(intent_mapping: IntentMappingOutput | None) -> str | None:
+    if intent_mapping is None or intent_mapping.status == "mapped":
+        return None
+    reason = (intent_mapping.clarification or "").strip()
+    if not reason:
+        reason = _DEFAULT_INTENT_DENIAL_REASON_BY_STATUS[intent_mapping.status]
+    if (
+        _RAW_WORKSTATION_PATH_PATTERN.search(reason)
+        or _CREDENTIAL_MARKER_PATTERN.search(reason)
+    ):
+        return _DEFAULT_INTENT_DENIAL_REASON_BY_STATUS[intent_mapping.status]
+    if len(reason) > _MAX_DENIAL_REASON_LENGTH:
+        suffix = "..."
+        max_prefix = max(1, _MAX_DENIAL_REASON_LENGTH - len(suffix))
+        return f"{reason[:max_prefix].rstrip()}{suffix}"
+    return reason
 
 
 class PreviewSubmissionRequest(BaseModel):
@@ -411,6 +453,11 @@ def _build_preview_lifecycle_audit_events(
             primary_deny_code=(
                 _primary_guard_deny_code(guard_evaluation)
                 if event_type == "guard_evaluated"
+                else _intent_denial_code(intent_mapping)
+                if (
+                    event_type == "generation_requested"
+                    and intent_blocked_candidate_state is not None
+                )
                 else None
             ),
             denial_cause=(
@@ -418,11 +465,21 @@ def _build_preview_lifecycle_audit_events(
                 if event_type == "guard_evaluated"
                 and guard_evaluation is not None
                 and guard_evaluation.decision != "allow"
+                else _intent_denial_cause(intent_mapping)
+                if (
+                    event_type == "generation_requested"
+                    and intent_blocked_candidate_state is not None
+                )
                 else None
             ),
             denial_reason=(
                 _sanitized_guard_denial_reason(guard_evaluation)
                 if event_type == "guard_evaluated"
+                else _intent_denial_reason(intent_mapping)
+                if (
+                    event_type == "generation_requested"
+                    and intent_blocked_candidate_state is not None
+                )
                 else None
             ),
             intent_mapping=(
@@ -1727,6 +1784,18 @@ def submit_preview_request(
     )
     primary_deny_code = _primary_guard_deny_code(guard_evaluation)
     denial_reason = _sanitized_guard_denial_reason(guard_evaluation)
+    if intent_blocked_candidate_state is not None:
+        primary_deny_code = _intent_denial_code(intent_mapping)
+        denial_reason = _intent_denial_reason(intent_mapping)
+    evaluation_state = (
+        _intent_denial_cause(intent_mapping)
+        if intent_blocked_candidate_state is not None
+        else "pending"
+        if guard_evaluation is None
+        else "allowed"
+        if guard_evaluation.decision == "allow"
+        else "blocked"
+    )
 
     return PreviewSubmissionResponse(
         request=RequestRecord(
@@ -1756,15 +1825,7 @@ def submit_preview_request(
         audit=audit,
         evaluation=EvaluationRecord(
             source_id=resolved_source.source_id,
-            state=(
-                intent_blocked_candidate_state
-                if intent_blocked_candidate_state is not None
-                else "pending"
-                if guard_evaluation is None
-                else "allowed"
-                if guard_evaluation.decision == "allow"
-                else "blocked"
-            ),
+            state=evaluation_state,
             primary_deny_code=primary_deny_code,
             denial_reason=denial_reason,
         ),

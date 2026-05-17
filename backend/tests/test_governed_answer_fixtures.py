@@ -124,7 +124,7 @@ def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     assert fixture_set["source_profile"]["execution_policy_version"] == 3
 
     fixtures = fixture_set["fixtures"]
-    assert 5 <= len(fixtures) <= 14
+    assert 5 <= len(fixtures) <= 16
     assert fixture_set["authoring_summary"]["fixture_count"] == len(fixtures)
     fixture_ids = {fixture["metadata"]["scenario_id"] for fixture in fixtures}
     assert len(fixture_ids) == len(fixtures)
@@ -215,6 +215,8 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
         "gavsf-007-approval-timing-ambiguity",
         "gavsf-008-vendor-name-normalization-ambiguity",
         "gavsf-009-top-n-tie-handling-ambiguity",
+        "gavsf-015-unapproved-revenue-metric-denied",
+        "gavsf-016-unapproved-department-dimension-denied",
     }
     assert required_scenario_ids <= fixtures_by_id.keys()
 
@@ -290,6 +292,17 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
     assert "unapproved vendor spend" in " ".join(
         approval_distinction["expected_result_shape"]["must_name_missing_prerequisites"]
     )
+
+    unsupported_revenue = fixtures_by_id["gavsf-015-unapproved-revenue-metric-denied"]
+    unsupported_department = fixtures_by_id[
+        "gavsf-016-unapproved-department-dimension-denied"
+    ]
+    for unsupported_fixture in (unsupported_revenue, unsupported_department):
+        assert unsupported_fixture["case_type"] == "unsupported_answer"
+        assert unsupported_fixture["expected_failure_mode"] == (
+            "unsupported_answer_denial_required"
+        )
+        assert unsupported_fixture["acceptable_sql_shape"]["must_not_execute"] is True
 
     refund_ambiguity = fixtures_by_id["gavsf-004-refund-inclusion-ambiguity"]
     quarter_ambiguity = fixtures_by_id[

@@ -45,6 +45,7 @@ def test_adapter_request_accepts_single_source_context_fragments() -> None:
             "filters": [],
             "ranking_behavior_id": None,
             "clarification": None,
+            "unsupported_concepts": None,
         },
         "source": {
             "source_id": "sap-approved-spend",
