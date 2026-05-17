@@ -186,9 +186,10 @@ def test_spend_definition_detection_catches_compound_spend_terms() -> None:
         ("sum_spending_total", "SUM(spending_amount)"),
         ("sum_spend2_amount", "SUM(spend2_amount)"),
         ("sum_totalspending", "SUM(totalspending_amount)"),
+        ("sum_totalspent", "SUM(totalspent_amount)"),
     ],
 )
-def test_spend_definition_detection_catches_spend_prefixed_terms(
+def test_spend_definition_detection_catches_spend_and_spent_terms(
     metric_id: str, expression: str
 ) -> None:
     payload = _make_non_spend_contract(deepcopy(_load_contract()))
@@ -342,4 +343,65 @@ def test_semantic_contract_schema_fails_closed_for_malformed_definitions(
     mutator(payload)
 
     with pytest.raises(ValidationError, match=expected_message):
+        SemanticContractDefinition.model_validate(payload)
+
+
+def test_metric_dimensions_must_share_one_metric_source() -> None:
+    payload = deepcopy(_load_contract())
+    payload["source_bindings"].append(
+        {
+            "source_id": "support-postgres-source",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+            "dataset_contract_version": 1,
+            "schema_snapshot_version": 1,
+        }
+    )
+    payload["metrics"][0]["allowed_source_ids"] = [
+        "business-postgres-source",
+        "support-postgres-source",
+    ]
+    payload["dimensions"][0]["allowed_source_ids"] = ["business-postgres-source"]
+    payload["dimensions"][1]["allowed_source_ids"] = ["support-postgres-source"]
+
+    with pytest.raises(
+        ValidationError,
+        match="references dimensions without compatible allowed sources",
+    ):
+        SemanticContractDefinition.model_validate(payload)
+
+
+def test_metric_default_filters_must_share_one_metric_source() -> None:
+    payload = deepcopy(_load_contract())
+    payload["source_bindings"].append(
+        {
+            "source_id": "support-postgres-source",
+            "source_family": "postgresql",
+            "source_flavor": "warehouse",
+            "dataset_contract_version": 1,
+            "schema_snapshot_version": 1,
+        }
+    )
+    payload["filters"].append(
+        {
+            "filter_id": "support_spend_only",
+            "label": "Support spend only",
+            "expression": "support_status = 'approved'",
+            "allowed_source_ids": ["support-postgres-source"],
+            "locked": True,
+        }
+    )
+    payload["metrics"][0]["allowed_source_ids"] = [
+        "business-postgres-source",
+        "support-postgres-source",
+    ]
+    payload["metrics"][0]["default_filters"] = [
+        "approved_spend_only",
+        "support_spend_only",
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="references default filters without compatible allowed sources",
+    ):
         SemanticContractDefinition.model_validate(payload)

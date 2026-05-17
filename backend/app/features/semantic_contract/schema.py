@@ -34,7 +34,7 @@ TimeGrain = Literal[
 ]
 TimeRangePolicy = Literal["required", "optional", "clarify_when_unspecified"]
 SPEND_CONCEPT_PATTERN = re.compile(
-    r"(?i)(?<!su)spend[a-z0-9]*(?=$|[^a-z0-9])"
+    r"(?i)(?<!su)spen[dt][a-z0-9]*(?=$|[^a-z0-9])"
 )
 SemanticConceptT = TypeVar("SemanticConceptT")
 SEMANTIC_CONTRACT_MODEL_CONFIG = ConfigDict(
@@ -472,12 +472,13 @@ def _require_referenced_concept_source_overlap(
     get_source_ids: Callable[[SemanticConceptT], Iterable[SourceIdentifier]],
     message: str,
 ) -> None:
-    metric_source_id_set = set(metric_source_ids)
+    common_source_ids = set(metric_source_ids)
     for referenced_id in referenced_ids:
         concept = concepts_by_id.get(referenced_id)
         if concept is None:
             raise ValueError(message)
-        if metric_source_id_set.isdisjoint(set(get_source_ids(concept))):
+        common_source_ids.intersection_update(set(get_source_ids(concept)))
+        if not common_source_ids:
             raise ValueError(message)
 
 
