@@ -48,7 +48,7 @@ def test_intent_mapping_keeps_ambiguous_epic_aa_fixture_in_clarification_state()
     assert mapping.clarification is not None
 
 
-def test_intent_mapping_keeps_all_quarter_shorthand_in_clarification_state() -> None:
+def test_intent_mapping_keeps_bare_quarter_shorthand_in_clarification_state() -> None:
     mapping = map_question_intent(
         "Show approved vendor spend for Q3.",
         semantic_contract_version="approved_vendor_spend.v1",
@@ -61,9 +61,61 @@ def test_intent_mapping_keeps_all_quarter_shorthand_in_clarification_state() -> 
     assert mapping.filters == ["approved_spend_only"]
 
 
+def test_intent_mapping_maps_explicit_fiscal_quarter_shorthand() -> None:
+    mapping = map_question_intent(
+        "Show approved vendor spend for fiscal Q3.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "mapped"
+    assert mapping.mapping_id == "approved_vendor_spend_by_fiscal_quarter"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["fiscal_quarter"]
+    assert mapping.filters == ["approved_spend_only"]
+
+
 def test_intent_mapping_fails_closed_for_unrelated_ambiguity_markers() -> None:
     mapping = map_question_intent(
         "Show refund totals by calendar quarter.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_fails_closed_for_generic_vendor_spend_ambiguity_marker() -> None:
+    mapping = map_question_intent(
+        "Show vendor spend by calendar quarter.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_matches_approved_markers_on_token_boundaries() -> None:
+    mapping = map_question_intent(
+        "Show notapproved vendor spend for Q1.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
+def test_intent_mapping_fails_closed_for_hyphenated_unapproved_spend() -> None:
+    mapping = map_question_intent(
+        "Compare approved and unapproved-spend by vendor for Q1.",
         semantic_contract_version="approved_vendor_spend.v1",
     )
 

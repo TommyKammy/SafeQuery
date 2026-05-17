@@ -28,15 +28,18 @@ def _normalize_question(question: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
 
 
+def _contains_phrase(normalized: str, phrase: str) -> bool:
+    return re.search(rf"(?:^| ){re.escape(phrase)}(?: |$)", normalized) is not None
+
+
 def _mentions_approved_vendor_intent(normalized: str) -> bool:
     return any(
-        marker in normalized
+        _contains_phrase(normalized, marker)
         for marker in (
             "approved vendor spend",
             "approved vendors",
             "approved vendor",
             "approved spend",
-            "vendor spend",
         )
     )
 
@@ -45,15 +48,45 @@ def _mentions_quarter_shorthand(normalized: str) -> bool:
     return re.search(r"\bq[1-4]\b", normalized) is not None
 
 
+def _mentions_explicit_fiscal_quarter_shorthand(normalized: str) -> bool:
+    return re.search(r"\b(?:fiscal|fy[0-9]{2,4}) q[1-4]\b", normalized) is not None
+
+
+def _mentions_ambiguous_quarter_shorthand(normalized: str) -> bool:
+    return _mentions_quarter_shorthand(
+        normalized
+    ) and not _mentions_explicit_fiscal_quarter_shorthand(normalized)
+
+
 def _mentions_ambiguity_marker(normalized: str) -> bool:
     return (
         "refund" in normalized
         or "after refunds" in normalized
         or "calendar quarter" in normalized
-        or _mentions_quarter_shorthand(normalized)
+        or _mentions_ambiguous_quarter_shorthand(normalized)
         or "top 2" in normalized
         or "top two" in normalized
         or "including ties" in normalized
+    )
+
+
+def _mentions_unapproved_vendor_spend(normalized: str) -> bool:
+    return (
+        _contains_phrase(normalized, "unapproved vendor spend")
+        or (
+            _contains_phrase(normalized, "unapproved spend")
+            and (
+                _contains_phrase(normalized, "vendor")
+                or _contains_phrase(normalized, "vendors")
+            )
+        )
+        or (
+            (
+                _contains_phrase(normalized, "unapproved vendor")
+                or _contains_phrase(normalized, "unapproved vendors")
+            )
+            and _contains_phrase(normalized, "spend")
+        )
     )
 
 
@@ -70,10 +103,9 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ),
         )
 
-    if any(
+    if _mentions_unapproved_vendor_spend(normalized) or any(
         marker in normalized
         for marker in (
-            "unapproved vendor spend",
             "bank account numbers",
             "tax identifiers",
             "ignore the system prompt",
@@ -114,7 +146,9 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             clarification="Clarify gross spend versus net-of-refunds spend before mapping.",
             **base,
         )
-    if "calendar quarter" in normalized or _mentions_quarter_shorthand(normalized):
+    if "calendar quarter" in normalized or _mentions_ambiguous_quarter_shorthand(
+        normalized
+    ):
         return IntentMappingOutput(
             status="ambiguous",
             mapping_id="clarify_calendar_vs_fiscal_quarter",
@@ -139,7 +173,10 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             **base,
         )
 
-    if "approved vendor spend" in normalized and "quarter" in normalized:
+    if _contains_phrase(normalized, "approved vendor spend") and (
+        _contains_phrase(normalized, "quarter")
+        or _mentions_explicit_fiscal_quarter_shorthand(normalized)
+    ):
         return IntentMappingOutput(
             status="mapped",
             mapping_id="approved_vendor_spend_by_fiscal_quarter",
@@ -147,8 +184,11 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             **base,
         )
     if (
-        "approved vendors" in normalized
-        and ("quarterly spend" in normalized or "quarter spend" in normalized)
+        _contains_phrase(normalized, "approved vendors")
+        and (
+            _contains_phrase(normalized, "quarterly spend")
+            or _contains_phrase(normalized, "quarter spend")
+        )
     ):
         return IntentMappingOutput(
             status="mapped",
@@ -157,7 +197,9 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ranking_behavior_id="top_approved_vendors_by_quarterly_spend",
             **base,
         )
-    if "approved vendor spend" in normalized or "approved vendors" in normalized:
+    if _contains_phrase(normalized, "approved vendor spend") or _contains_phrase(
+        normalized, "approved vendors"
+    ):
         return IntentMappingOutput(
             status="mapped",
             mapping_id="approved_vendor_spend_general",
