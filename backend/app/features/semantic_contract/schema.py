@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping, MutableMapping, MutableSequence, MutableSet
 from types import MappingProxyType
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -33,6 +34,8 @@ TimeGrain = Literal[
     "year",
 ]
 TimeRangePolicy = Literal["required", "optional", "clarify_when_unspecified"]
+SPEND_TOKEN_PATTERN = re.compile(r"(?<![a-z0-9])spend(?![a-z0-9])", re.IGNORECASE)
+SemanticConceptT = TypeVar("SemanticConceptT")
 
 
 class _SemanticContractModel(BaseModel):
@@ -205,6 +208,10 @@ class SemanticContractDefinition(_SemanticContractModel):
             "Contract filters",
         )
         _unique_ids([item.metric_id for item in self.metrics], "Contract metrics")
+        _unique_ids(
+            [item.concept_id for item in self.sensitive_concepts],
+            "Contract sensitive concepts",
+        )
 
         if not source_ids:
             raise ValueError("Contract must declare at least one allowed source.")
@@ -242,10 +249,32 @@ class SemanticContractDefinition(_SemanticContractModel):
                 dimension_ids,
                 f"Metric {metric.metric_id} references undeclared dimensions",
             )
+            _require_referenced_concept_source_overlap(
+                metric.allowed_source_ids,
+                (dimension for dimension in self.dimensions),
+                metric.allowed_dimensions,
+                lambda dimension: dimension.dimension_id,
+                lambda dimension: dimension.allowed_source_ids,
+                (
+                    f"Metric {metric.metric_id} references dimensions without "
+                    "compatible allowed sources"
+                ),
+            )
             _require_subset(
                 metric.default_filters,
                 filter_ids,
                 f"Metric {metric.metric_id} references undeclared default filters",
+            )
+            _require_referenced_concept_source_overlap(
+                metric.allowed_source_ids,
+                (semantic_filter for semantic_filter in self.filters),
+                metric.default_filters,
+                lambda semantic_filter: semantic_filter.filter_id,
+                lambda semantic_filter: semantic_filter.allowed_source_ids,
+                (
+                    f"Metric {metric.metric_id} references default filters without "
+                    "compatible allowed sources"
+                ),
             )
             _require_subset(
                 metric.time_range_semantics.allowed_grains,
@@ -253,11 +282,11 @@ class SemanticContractDefinition(_SemanticContractModel):
                 f"Metric {metric.metric_id} references undeclared time grains",
             )
 
-        if (
-            "quarter" in self.time_semantics.ambiguous_terms
-            and "quarter" not in self.ambiguity_rules
-        ):
-            raise ValueError("Quarter ambiguity must be explicit in ambiguity_rules.")
+        for ambiguous_term in self.time_semantics.ambiguous_terms:
+            if ambiguous_term not in self.ambiguity_rules:
+                raise ValueError(
+                    "Declared ambiguous terms must have matching ambiguity_rules."
+                )
         if (
             _contract_requires_spend_definition(self)
             and "spend_definition" not in self.ambiguity_rules
@@ -301,7 +330,7 @@ def _contract_requires_spend_definition(contract: SemanticContractDefinition) ->
                 metric.expression,
             ]
         )
-    return any("spend" in term.lower() for term in spend_terms)
+    return any(SPEND_TOKEN_PATTERN.search(term) for term in spend_terms)
 
 
 def _require_unique(values: Iterable[object], label: str) -> None:
@@ -331,6 +360,24 @@ def _require_subset(
 ) -> None:
     if not set(values).issubset(allowed_values):
         raise ValueError(message)
+
+
+def _require_referenced_concept_source_overlap(
+    metric_source_ids: Iterable[SourceIdentifier],
+    concepts: Iterable[SemanticConceptT],
+    referenced_ids: Iterable[SourceIdentifier],
+    get_id: Callable[[SemanticConceptT], SourceIdentifier],
+    get_source_ids: Callable[[SemanticConceptT], Iterable[SourceIdentifier]],
+    message: str,
+) -> None:
+    metric_source_id_set = set(metric_source_ids)
+    concepts_by_id = {get_id(concept): concept for concept in concepts}
+    for referenced_id in referenced_ids:
+        concept = concepts_by_id.get(referenced_id)
+        if concept is None:
+            continue
+        if metric_source_id_set.isdisjoint(set(get_source_ids(concept))):
+            raise ValueError(message)
 
 
 def _reject_mutable_collections(value: object, path: str) -> None:

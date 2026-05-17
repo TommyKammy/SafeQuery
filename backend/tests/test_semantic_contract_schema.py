@@ -103,6 +103,25 @@ def test_non_spend_contract_does_not_require_spend_definition_ambiguity() -> Non
     assert "spend_definition" not in contract.ambiguity_rules
 
 
+def test_spend_definition_detection_uses_tokens_not_substrings() -> None:
+    payload = _make_non_spend_contract(deepcopy(_load_contract()))
+    payload["contract_id"] = "suspended_ticket_volume"
+    payload["domain"] = "suspended_ticket_volume"
+    payload["version"]["identifier"] = "suspended_ticket_volume.v1"
+    payload["dimensions"][0]["source_column"] = (
+        "support.suspended_ticket_volume.vendor_name"
+    )
+    payload["filters"][0]["expression"] = "status = 'suspended'"
+    payload["metrics"][0]["label"] = "Suspended ticket count"
+    payload["metrics"][0]["expression"] = "COUNT(suspended_ticket_id)"
+    payload["ambiguity_rules"].pop("spend_definition")
+
+    contract = validate_semantic_contract_definition(payload)
+
+    assert contract.contract_id == "suspended_ticket_volume"
+    assert "spend_definition" not in contract.ambiguity_rules
+
+
 @pytest.mark.parametrize(
     "mutator, expected_message",
     [
@@ -130,7 +149,58 @@ def test_non_spend_contract_does_not_require_spend_definition_ambiguity() -> Non
         ),
         (
             lambda payload: payload["ambiguity_rules"].pop("quarter"),
-            "Quarter ambiguity must be explicit",
+            "Declared ambiguous terms must have matching ambiguity_rules",
+        ),
+        (
+            lambda payload: payload["time_semantics"]["ambiguous_terms"].append(
+                "month"
+            ),
+            "Declared ambiguous terms must have matching ambiguity_rules",
+        ),
+        (
+            lambda payload: payload["sensitive_concepts"].append(
+                {
+                    "concept_id": "refund_amount",
+                    "label": "Refund amount duplicate",
+                    "reason": "Duplicate concept metadata must fail closed.",
+                    "requires_review": True,
+                }
+            ),
+            "Contract sensitive concepts must not contain duplicate values",
+        ),
+        (
+            lambda payload: (
+                payload["source_bindings"].append(
+                    {
+                        "source_id": "support-postgres-source",
+                        "source_family": "postgresql",
+                        "source_flavor": "warehouse",
+                        "dataset_contract_version": 1,
+                        "schema_snapshot_version": 1,
+                    }
+                ),
+                payload["dimensions"][0].__setitem__(
+                    "allowed_source_ids", ["support-postgres-source"]
+                ),
+            ),
+            "references dimensions without compatible allowed sources",
+        ),
+        (
+            lambda payload: (
+                payload["source_bindings"].append(
+                    {
+                        "source_id": "support-postgres-source",
+                        "source_family": "postgresql",
+                        "source_flavor": "warehouse",
+                        "dataset_contract_version": 1,
+                        "schema_snapshot_version": 1,
+                    }
+                ),
+                payload["filters"][0].__setitem__(
+                    "allowed_source_ids", ["support-postgres-source"]
+                ),
+            ),
+            "references default filters without compatible allowed sources",
         ),
         (
             lambda payload: payload["sensitive_concepts"][0].__setitem__(
