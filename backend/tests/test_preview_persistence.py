@@ -500,6 +500,15 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
 
         assert execute_response.status_code == 200
         assert calls == ["called"]
+        persisted_execution_event = (
+            session.execute(
+                select(PreviewAuditEvent).where(
+                    PreviewAuditEvent.event_type == "execution_completed"
+                )
+            )
+            .scalars()
+            .one()
+        )
         session.refresh(persisted_approval)
         assert persisted_approval.approval_state == "executed"
         assert persisted_approval.executed_at is not None
@@ -518,6 +527,12 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
             "prompt_version": "sql_generation_adapter_request.v1",
             "prompt_fingerprint": persisted_candidate.prompt_fingerprint,
         }.items() <= persisted_generation_event.audit_payload.items()
+        assert persisted_execution_event.semantic_contract_version == (
+            persisted_candidate.semantic_contract_version
+        )
+        assert persisted_execution_event.audit_payload["semantic_contract_version"] == (
+            persisted_candidate.semantic_contract_version
+        )
     finally:
         session.close()
         engine.dispose()
@@ -993,6 +1008,15 @@ def test_http_preview_guard_denied_candidate_remains_non_executable(
         )
         assert all(
             event.source_id == fixture["source_id"]
+            for event in persisted_post_execute_events
+        )
+        assert all(
+            event.semantic_contract_version == persisted_candidate.semantic_contract_version
+            for event in persisted_post_execute_events
+        )
+        assert all(
+            event.audit_payload["semantic_contract_version"]
+            == persisted_candidate.semantic_contract_version
             for event in persisted_post_execute_events
         )
         assert "execution_run_id" not in str(

@@ -765,6 +765,17 @@ def _persist_preview_audit_events(
         if event.event_id in existing_event_ids:
             continue
         payload = event.model_dump(mode="json", exclude_none=True)
+        semantic_contract_version = (
+            event.semantic_contract_version
+            or (
+                preview_candidate.semantic_contract_version
+                if preview_candidate is not None
+                else None
+            )
+            or preview_request.semantic_contract_version
+        )
+        if semantic_contract_version is not None:
+            payload["semantic_contract_version"] = semantic_contract_version
         session.add(
             PreviewAuditEvent(
                 event_id=event.event_id,
@@ -800,7 +811,7 @@ def _persist_preview_audit_events(
                 source_family=event.source_family,
                 source_flavor=event.source_flavor,
                 dataset_contract_version=event.dataset_contract_version,
-                semantic_contract_version=event.semantic_contract_version,
+                semantic_contract_version=semantic_contract_version,
                 schema_snapshot_version=event.schema_snapshot_version,
                 primary_deny_code=event.primary_deny_code,
                 denial_cause=event.denial_cause,
