@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping, MutableMapping, MutableSequence, MutableSet
-from types import MappingProxyType
-from typing import Callable, Literal, Optional, TypeVar, get_args, get_origin
+from typing import Callable, Iterator, Literal, Optional, TypeVar, get_args, get_origin
 
 from pydantic import (
     BaseModel,
@@ -44,6 +43,29 @@ SEMANTIC_CONTRACT_MODEL_CONFIG = ConfigDict(
     frozen=True,
     populate_by_name=True,
 )
+
+
+class _FrozenMapping(Mapping[SourceIdentifier, NonEmptyTrimmedString]):
+    __slots__ = ("_values",)
+
+    def __init__(
+        self, values: Mapping[SourceIdentifier, NonEmptyTrimmedString]
+    ) -> None:
+        self._values = dict(values)
+
+    def __getitem__(self, key: SourceIdentifier) -> NonEmptyTrimmedString:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[SourceIdentifier]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "_FrozenMapping":
+        copied = type(self)(self._values.copy())
+        memo[id(self)] = copied
+        return copied
 
 
 def _annotation_allows_mutable_collection(annotation: object) -> bool:
@@ -206,7 +228,7 @@ class SemanticContractDefinition(_SemanticContractModel):
         default_factory=tuple
     )
     ambiguity_rules: Mapping[SourceIdentifier, NonEmptyTrimmedString] = Field(
-        default_factory=lambda: MappingProxyType({})
+        default_factory=lambda: _FrozenMapping({})
     )
 
     def to_wire_payload(self) -> dict[str, object]:
@@ -217,7 +239,7 @@ class SemanticContractDefinition(_SemanticContractModel):
     def freeze_ambiguity_rules(
         cls, value: Mapping[SourceIdentifier, NonEmptyTrimmedString]
     ) -> Mapping[SourceIdentifier, NonEmptyTrimmedString]:
-        return MappingProxyType(dict(value))
+        return _FrozenMapping(value)
 
     @field_serializer("ambiguity_rules")
     def serialize_ambiguity_rules(

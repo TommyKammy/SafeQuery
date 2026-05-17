@@ -96,6 +96,22 @@ def test_validated_contract_does_not_retain_mutable_payload_collections() -> Non
     assert "unchecked_rule" not in contract.ambiguity_rules
 
 
+def test_validated_contract_supports_deep_copy_paths() -> None:
+    contract = validate_semantic_contract_definition(_load_contract())
+
+    copied = deepcopy(contract)
+    pydantic_copied = contract.model_copy(deep=True)
+
+    assert copied.to_wire_payload() == contract.to_wire_payload()
+    assert pydantic_copied.to_wire_payload() == contract.to_wire_payload()
+    assert copied.ambiguity_rules is not contract.ambiguity_rules
+    assert pydantic_copied.ambiguity_rules is not contract.ambiguity_rules
+    with pytest.raises(TypeError):
+        copied.ambiguity_rules["unchecked_rule"] = "mutated after copy."
+    with pytest.raises(TypeError):
+        pydantic_copied.ambiguity_rules["unchecked_rule"] = "mutated after copy."
+
+
 def test_semantic_contract_model_rejects_mutable_collection_annotations() -> None:
     with pytest.raises(TypeError, match="immutable collection annotations"):
         class MutableCollectionModel(_SemanticContractModel):
