@@ -459,6 +459,25 @@ def _build_preview_lifecycle_audit_events(
     return events
 
 
+def _build_preview_intent_blocked_lifecycle_audit_events(
+    *,
+    resolved_source: RegisteredSource,
+    dataset_contract: DatasetContract,
+    schema_snapshot: SchemaSnapshot,
+    audit_context: PreviewAuditContext | None,
+    intent_mapping: IntentMappingOutput,
+    intent_blocked_candidate_state: str,
+) -> list[SourceAwareAuditEvent]:
+    return _build_preview_lifecycle_audit_events(
+        resolved_source=resolved_source,
+        dataset_contract=dataset_contract,
+        schema_snapshot=schema_snapshot,
+        audit_context=audit_context,
+        intent_mapping=intent_mapping,
+        intent_blocked_candidate_state=intent_blocked_candidate_state,
+    )
+
+
 def _preview_lifecycle_event_types(
     *,
     intent_blocked_candidate_state: str | None,
@@ -1666,10 +1685,18 @@ def submit_preview_request(
                     ),
                 ) from exc
 
-    audit = AuditRecord(
-        source_id=resolved_source.source_id,
-        state="recorded",
-        events=_build_preview_lifecycle_audit_events(
+    if intent_blocked_candidate_state is not None:
+        assert intent_mapping is not None
+        audit_events = _build_preview_intent_blocked_lifecycle_audit_events(
+            resolved_source=resolved_source,
+            dataset_contract=dataset_contract,
+            schema_snapshot=schema_snapshot,
+            audit_context=audit_context,
+            intent_mapping=intent_mapping,
+            intent_blocked_candidate_state=intent_blocked_candidate_state,
+        )
+    else:
+        audit_events = _build_preview_lifecycle_audit_events(
             resolved_source=resolved_source,
             dataset_contract=dataset_contract,
             schema_snapshot=schema_snapshot,
@@ -1678,8 +1705,12 @@ def submit_preview_request(
             guard_evaluation=guard_evaluation,
             candidate_sql=candidate_sql,
             intent_mapping=intent_mapping,
-            intent_blocked_candidate_state=intent_blocked_candidate_state,
-        ),
+        )
+
+    audit = AuditRecord(
+        source_id=resolved_source.source_id,
+        state="recorded",
+        events=audit_events,
     )
     request_id, candidate_id = _persist_preview_submission_records(
         session,
