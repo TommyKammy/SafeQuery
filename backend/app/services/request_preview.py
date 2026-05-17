@@ -464,6 +464,16 @@ def _build_preview_lifecycle_audit_events(
     return events
 
 
+def _intent_blocked_candidate_state(
+    intent_mapping: IntentMappingOutput | None,
+) -> str | None:
+    if intent_mapping is None or intent_mapping.status == "mapped":
+        return None
+    if intent_mapping.status == "ambiguous":
+        return "clarification_required"
+    return "unsupported"
+
+
 def _contract_execution_entitlement_bindings(
     dataset_contract: DatasetContract,
 ) -> list[str]:
@@ -1576,14 +1586,12 @@ def submit_preview_request(
             payload.question,
             semantic_contract_version=dataset_contract.semantic_contract_version,
         )
-        if intent_mapping.status == "ambiguous":
-            candidate_state = "clarification_required"
+        intent_blocked_candidate_state = _intent_blocked_candidate_state(
+            intent_mapping
+        )
+        if intent_blocked_candidate_state is not None:
+            candidate_state = intent_blocked_candidate_state
             request_state = "blocked"
-            intent_blocked_candidate_state = candidate_state
-        elif intent_mapping.status == "unsupported":
-            candidate_state = "unsupported"
-            request_state = "blocked"
-            intent_blocked_candidate_state = candidate_state
         else:
             try:
                 prepared_context = prepare_generation_context(
@@ -1711,14 +1719,10 @@ def submit_preview_request(
         evaluation=EvaluationRecord(
             source_id=resolved_source.source_id,
             state=(
-                "pending"
-                if guard_evaluation is None and (
-                    intent_mapping is None or intent_mapping.status == "mapped"
-                )
-                else "clarification_required"
-                if intent_mapping is not None and intent_mapping.status == "ambiguous"
-                else "unsupported"
-                if intent_mapping is not None and intent_mapping.status == "unsupported"
+                intent_blocked_candidate_state
+                if intent_blocked_candidate_state is not None
+                else "pending"
+                if guard_evaluation is None
                 else "allowed"
                 if guard_evaluation.decision == "allow"
                 else "blocked"

@@ -176,10 +176,9 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ),
         )
 
-    if (
-        _mentions_ambiguity_marker(normalized)
-        and not _mentions_approved_vendor_intent(normalized)
-    ):
+    approved_vendor_intent = _mentions_approved_vendor_intent(normalized)
+
+    if _mentions_ambiguity_marker(normalized) and not approved_vendor_intent:
         return IntentMappingOutput(
             status="unsupported",
             clarification=(
@@ -214,40 +213,43 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ),
             **base,
         )
-    if "refund" in normalized or "after refunds" in normalized:
-        return IntentMappingOutput(
-            status="ambiguous",
-            mapping_id="clarify_refund_inclusion",
-            dimensions=["vendor_name", "fiscal_quarter"],
-            clarification="Clarify gross spend versus net-of-refunds spend before mapping.",
-            **base,
-        )
-    if "calendar quarter" in normalized or _mentions_ambiguous_quarter_shorthand(
-        normalized
-    ):
-        return IntentMappingOutput(
-            status="ambiguous",
-            mapping_id="clarify_calendar_vs_fiscal_quarter",
-            dimensions=["fiscal_quarter"],
-            clarification="Clarify fiscal versus calendar quarter before mapping.",
-            **base,
-        )
-    if (
-        "top 2" in normalized
-        or "top two" in normalized
-        or "including ties" in normalized
-    ):
-        return IntentMappingOutput(
-            status="ambiguous",
-            mapping_id="clarify_top_n_ties",
-            dimensions=["vendor_name", "fiscal_quarter"],
-            ranking_behavior_id="top_approved_vendors_by_quarterly_spend",
-            clarification=(
-                "Clarify whether ties at the cutoff should be included or broken "
-                "by a stable secondary sort before mapping."
-            ),
-            **base,
-        )
+    if approved_vendor_intent:
+        if "refund" in normalized or "after refunds" in normalized:
+            return IntentMappingOutput(
+                status="ambiguous",
+                mapping_id="clarify_refund_inclusion",
+                dimensions=["vendor_name", "fiscal_quarter"],
+                clarification=(
+                    "Clarify gross spend versus net-of-refunds spend before mapping."
+                ),
+                **base,
+            )
+        if "calendar quarter" in normalized or _mentions_ambiguous_quarter_shorthand(
+            normalized
+        ):
+            return IntentMappingOutput(
+                status="ambiguous",
+                mapping_id="clarify_calendar_vs_fiscal_quarter",
+                dimensions=["fiscal_quarter"],
+                clarification="Clarify fiscal versus calendar quarter before mapping.",
+                **base,
+            )
+        if (
+            "top 2" in normalized
+            or "top two" in normalized
+            or "including ties" in normalized
+        ):
+            return IntentMappingOutput(
+                status="ambiguous",
+                mapping_id="clarify_top_n_ties",
+                dimensions=["vendor_name", "fiscal_quarter"],
+                ranking_behavior_id="top_approved_vendors_by_quarterly_spend",
+                clarification=(
+                    "Clarify whether ties at the cutoff should be included or broken "
+                    "by a stable secondary sort before mapping."
+                ),
+                **base,
+            )
 
     if (
         _contains_phrase(normalized, "approved vendor spend")
@@ -276,7 +278,7 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ranking_behavior_id="top_approved_vendors_by_quarterly_spend",
             **base,
         )
-    if _mentions_approved_vendor_intent(normalized):
+    if approved_vendor_intent:
         return IntentMappingOutput(
             status="mapped",
             mapping_id="approved_vendor_spend_general",
