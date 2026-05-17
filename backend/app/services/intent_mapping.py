@@ -33,15 +33,14 @@ def _contains_phrase(normalized: str, phrase: str) -> bool:
 
 
 def _mentions_approved_vendor_intent(normalized: str) -> bool:
-    return any(
-        _contains_phrase(normalized, marker)
-        for marker in (
-            "approved vendor spend",
-            "approved vendors",
-            "approved vendor",
-            "approved spend",
-        )
-    )
+    if _contains_phrase(normalized, "approved vendor spend") or _contains_phrase(
+        normalized, "approved spend"
+    ):
+        return True
+    return (
+        _contains_phrase(normalized, "approved vendors")
+        or _contains_phrase(normalized, "approved vendor")
+    ) and _contains_phrase(normalized, "spend")
 
 
 def _mentions_negated_approved_vendor_intent(normalized: str) -> bool:

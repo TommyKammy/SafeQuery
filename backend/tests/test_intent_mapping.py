@@ -134,6 +134,29 @@ def test_intent_mapping_fails_closed_for_generic_vendor_spend_ambiguity_marker()
     assert mapping.clarification is not None
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show approved vendors by calendar quarter.",
+        "Show approved vendor refunds by fiscal quarter.",
+        "Show top 2 approved vendors by count.",
+    ],
+)
+def test_intent_mapping_fails_closed_when_approved_vendor_prompt_lacks_spend_metric(
+    question: str,
+) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
 def test_intent_mapping_matches_approved_markers_on_token_boundaries() -> None:
     mapping = map_question_intent(
         "Show notapproved vendor spend for Q1.",
