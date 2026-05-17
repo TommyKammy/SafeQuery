@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, MutableMapping, MutableSequence, MutableSet
 from types import MappingProxyType
-from typing import Callable, Literal, Optional, TypeVar
+from typing import Callable, Literal, Optional, TypeVar, get_args, get_origin
 
 from pydantic import (
     BaseModel,
@@ -38,6 +38,25 @@ SPEND_TOKEN_PATTERN = re.compile(r"(?<![a-z0-9])spend(?![a-z0-9])", re.IGNORECAS
 SemanticConceptT = TypeVar("SemanticConceptT")
 
 
+def _annotation_allows_mutable_collection(annotation: object) -> bool:
+    origin = get_origin(annotation)
+    candidate = origin or annotation
+    if _is_mutable_collection_type(candidate):
+        return True
+    return any(
+        _annotation_allows_mutable_collection(arg)
+        for arg in get_args(annotation)
+        if arg is not Ellipsis
+    )
+
+
+def _is_mutable_collection_type(candidate: object) -> bool:
+    try:
+        return issubclass(candidate, (MutableMapping, MutableSequence, MutableSet))
+    except TypeError:
+        return False
+
+
 class _SemanticContractModel(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
@@ -45,6 +64,16 @@ class _SemanticContractModel(BaseModel):
         frozen=True,
         populate_by_name=True,
     )
+
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: object) -> None:
+        super().__pydantic_init_subclass__(**kwargs)
+        for field_name, field_info in cls.model_fields.items():
+            if _annotation_allows_mutable_collection(field_info.annotation):
+                raise TypeError(
+                    f"{cls.__name__}.{field_name} must use immutable "
+                    "collection annotations."
+                )
 
     @model_validator(mode="after")
     def validate_immutable_collections(self) -> "_SemanticContractModel":

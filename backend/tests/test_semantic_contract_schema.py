@@ -85,12 +85,14 @@ def test_validated_semantic_contract_collections_are_immutable() -> None:
         contract.ambiguity_rules["unchecked_rule"] = "mutated after validation."
 
 
-def test_semantic_contract_model_rejects_mutable_collections_after_validation() -> None:
-    class MutableCollectionModel(_SemanticContractModel):
-        values: list[str]
+def test_semantic_contract_model_rejects_mutable_collection_annotations() -> None:
+    with pytest.raises(TypeError, match="immutable collection annotations"):
+        class MutableCollectionModel(_SemanticContractModel):
+            values: list[str]
 
-    with pytest.raises(ValidationError, match="immutable collections"):
-        MutableCollectionModel.model_validate({"values": ["mutable-value"]})
+    with pytest.raises(TypeError, match="immutable collection annotations"):
+        class NestedMutableCollectionModel(_SemanticContractModel):
+            values: tuple[list[str], ...]
 
 
 def test_non_spend_contract_does_not_require_spend_definition_ambiguity() -> None:
