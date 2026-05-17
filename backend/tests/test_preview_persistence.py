@@ -653,15 +653,37 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             else None
         )
         assert response_payload["candidate"]["intent_mapping"]["clarification"] is not None
+        assert [event["event_type"] for event in response_payload["audit"]["events"]] == [
+            "query_submitted",
+            "generation_requested",
+        ]
+        assert response_payload["audit"]["events"][1]["intent_mapping"]["status"] == (
+            expected_status
+        )
 
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
         persisted_approval = session.execute(
             select(PreviewCandidateApproval)
         ).scalar_one()
+        persisted_events = (
+            session.execute(
+                select(PreviewAuditEvent).order_by(PreviewAuditEvent.lifecycle_order)
+            )
+            .scalars()
+            .all()
+        )
         assert persisted_candidate.candidate_sql is None
         assert persisted_candidate.candidate_state == expected_state
         assert persisted_candidate.guard_status == "pending"
         assert persisted_approval.approval_state == "invalidated"
+        assert [event.event_type for event in persisted_events] == [
+            "query_submitted",
+            "generation_requested",
+        ]
+        assert persisted_events[-1].candidate_state is None
+        assert persisted_events[-1].audit_payload["intent_mapping"]["status"] == (
+            expected_status
+        )
     finally:
         session.close()
         engine.dispose()

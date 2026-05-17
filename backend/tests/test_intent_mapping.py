@@ -48,6 +48,32 @@ def test_intent_mapping_keeps_ambiguous_epic_aa_fixture_in_clarification_state()
     assert mapping.clarification is not None
 
 
+def test_intent_mapping_keeps_all_quarter_shorthand_in_clarification_state() -> None:
+    mapping = map_question_intent(
+        "Show approved vendor spend for Q3.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "ambiguous"
+    assert mapping.mapping_id == "clarify_calendar_vs_fiscal_quarter"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["fiscal_quarter"]
+    assert mapping.filters == ["approved_spend_only"]
+
+
+def test_intent_mapping_fails_closed_for_unrelated_ambiguity_markers() -> None:
+    mapping = map_question_intent(
+        "Show refund totals by calendar quarter.",
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.clarification is not None
+
+
 def test_intent_mapping_fails_closed_for_unsupported_epic_aa_fixture() -> None:
     mapping = map_question_intent(
         _fixture_question("unsupported_answer"),

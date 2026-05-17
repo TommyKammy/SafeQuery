@@ -28,6 +28,35 @@ def _normalize_question(question: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
 
 
+def _mentions_approved_vendor_intent(normalized: str) -> bool:
+    return any(
+        marker in normalized
+        for marker in (
+            "approved vendor spend",
+            "approved vendors",
+            "approved vendor",
+            "approved spend",
+            "vendor spend",
+        )
+    )
+
+
+def _mentions_quarter_shorthand(normalized: str) -> bool:
+    return re.search(r"\bq[1-4]\b", normalized) is not None
+
+
+def _mentions_ambiguity_marker(normalized: str) -> bool:
+    return (
+        "refund" in normalized
+        or "after refunds" in normalized
+        or "calendar quarter" in normalized
+        or _mentions_quarter_shorthand(normalized)
+        or "top 2" in normalized
+        or "top two" in normalized
+        or "including ties" in normalized
+    )
+
+
 def map_question_intent(question: str, *, semantic_contract_version: str | None) -> IntentMappingOutput:
     normalized = _normalize_question(question)
     if semantic_contract_version is None:
@@ -61,6 +90,18 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ),
         )
 
+    if (
+        _mentions_ambiguity_marker(normalized)
+        and not _mentions_approved_vendor_intent(normalized)
+    ):
+        return IntentMappingOutput(
+            status="unsupported",
+            clarification=(
+                "The ambiguous concept is not bound to approved vendor spend "
+                "in the selected semantic contract."
+            ),
+        )
+
     base = {
         "metric": "sum_approved_vendor_spend",
         "filters": ["approved_spend_only"],
@@ -73,7 +114,7 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             clarification="Clarify gross spend versus net-of-refunds spend before mapping.",
             **base,
         )
-    if "calendar quarter" in normalized or " q1" in f" {normalized}":
+    if "calendar quarter" in normalized or _mentions_quarter_shorthand(normalized):
         return IntentMappingOutput(
             status="ambiguous",
             mapping_id="clarify_calendar_vs_fiscal_quarter",

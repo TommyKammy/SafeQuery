@@ -282,18 +282,23 @@ def _build_preview_lifecycle_audit_events(
     guard_evaluation: SQLGuardEvaluation | None = None,
     candidate_sql: str | None = None,
     intent_mapping: IntentMappingOutput | None = None,
+    generation_blocked_by_intent: bool = False,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
         return []
 
     events: list[SourceAwareAuditEvent] = []
     causation_event_id: UUID | None = None
-    for event_type in (
+    event_types = (
         "query_submitted",
         "generation_requested",
         "generation_completed",
         "guard_evaluated",
-    ):
+    )
+    if generation_blocked_by_intent:
+        event_types = ("query_submitted", "generation_requested")
+
+    for event_type in event_types:
         execution_policy_version = (
             CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
                 resolved_source.source_family
@@ -423,7 +428,8 @@ def _build_preview_lifecycle_audit_events(
             intent_mapping=(
                 intent_mapping.model_dump(mode="json", exclude_none=True)
                 if intent_mapping is not None
-                and event_type in {"generation_requested", "generation_completed", "guard_evaluated"}
+                and event_type
+                in {"generation_requested", "generation_completed", "guard_evaluated"}
                 else None
             ),
         )
@@ -1555,6 +1561,7 @@ def submit_preview_request(
     candidate_state = "preview_ready"
     request_state = "previewed"
     intent_mapping: IntentMappingOutput | None = None
+    generation_blocked_by_intent = False
     if sql_generation_adapter is not None:
         if audit_context is None:
             raise PreviewSubmissionContractError(
@@ -1567,9 +1574,11 @@ def submit_preview_request(
         if intent_mapping.status == "ambiguous":
             candidate_state = "clarification_required"
             request_state = "blocked"
+            generation_blocked_by_intent = True
         elif intent_mapping.status == "unsupported":
             candidate_state = "unsupported"
             request_state = "blocked"
+            generation_blocked_by_intent = True
         else:
             try:
                 prepared_context = prepare_generation_context(
@@ -1647,6 +1656,7 @@ def submit_preview_request(
             guard_evaluation=guard_evaluation,
             candidate_sql=candidate_sql,
             intent_mapping=intent_mapping,
+            generation_blocked_by_intent=generation_blocked_by_intent,
         ),
     )
     request_id, candidate_id = _persist_preview_submission_records(
