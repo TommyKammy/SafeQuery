@@ -76,6 +76,16 @@ These tracks remain optional and may begin only after the source-aware core path
 
 If an optional track is enabled, its governance, audit, and evaluation requirements become mandatory for that deployment.
 
+## Governed Answer Assurance Track
+
+The Assurance Track starts from
+[ADR-0015: Semantic Contract and SQL Guard Responsibility](./adr/ADR-0015-semantic-contract-and-sql-guard-responsibility.md)
+before implementing Semantic Contract schema, mapping, persistence, review, or
+result-validation services. Epic X work must preserve the ADR boundary:
+Semantic Contract authorizes supported business intent, SQL Guard blocks unsafe
+executable SQL, and historical answers remain bound to the semantic contract
+version recorded when they were produced.
+
 ## Later Family Expansion
 
 After the two-source core path is stable, use
