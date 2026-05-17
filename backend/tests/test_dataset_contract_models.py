@@ -12,6 +12,7 @@ def test_dataset_contracts_are_scoped_to_one_registered_source() -> None:
         "registered_source_id",
         "schema_snapshot_id",
         "contract_version",
+        "semantic_contract_version",
         "display_name",
         "owner_binding",
         "security_review_binding",

@@ -51,6 +51,7 @@ from app.services.generation_context import (
     GenerationContextPreparationError,
     prepare_generation_context,
 )
+from app.services.intent_mapping import IntentMappingOutput, map_question_intent
 from app.services.sql_generation_adapter import (
     SQLGenerationAdapter,
     SQLGenerationAdapterConfigurationError,
@@ -176,6 +177,7 @@ class CandidateRecord(BaseModel):
     state: str
     primary_deny_code: Optional[str] = None
     denial_reason: Optional[str] = None
+    intent_mapping: Optional[IntentMappingOutput] = None
     revision_context: Optional["RevisionRecord"] = None
 
 
@@ -279,6 +281,7 @@ def _build_preview_lifecycle_audit_events(
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None,
     guard_evaluation: SQLGuardEvaluation | None = None,
     candidate_sql: str | None = None,
+    intent_mapping: IntentMappingOutput | None = None,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
         return []
@@ -415,6 +418,12 @@ def _build_preview_lifecycle_audit_events(
             denial_reason=(
                 _sanitized_guard_denial_reason(guard_evaluation)
                 if event_type == "guard_evaluated"
+                else None
+            ),
+            intent_mapping=(
+                intent_mapping.model_dump(mode="json", exclude_none=True)
+                if intent_mapping is not None
+                and event_type in {"generation_requested", "generation_completed", "guard_evaluated"}
                 else None
             ),
         )
@@ -1545,71 +1554,86 @@ def submit_preview_request(
     guard_status: GuardStatus = PREVIEW_PENDING_GUARD_STATUS
     candidate_state = "preview_ready"
     request_state = "previewed"
+    intent_mapping: IntentMappingOutput | None = None
     if sql_generation_adapter is not None:
         if audit_context is None:
             raise PreviewSubmissionContractError(
                 "SQL generation preview requires an audit context."
             )
-        try:
-            prepared_context = prepare_generation_context(
-                request_id=audit_context.request_id,
-                question=payload.question,
-                source_id=resolved_source.source_id,
-                authenticated_subject=authenticated_subject,
-                session=session,
-            )
-            adapter_request = build_sql_generation_adapter_request(prepared_context)
-            adapter_response = sql_generation_adapter.generate_sql(adapter_request)
-            candidate_sql = normalize_adapter_generated_sql(
-                adapter_response.candidate_sql
-            )
-            adapter_metadata = build_sql_generation_adapter_run_metadata(
-                adapter_request=adapter_request,
-                adapter_response=adapter_response,
-                adapter_run_id=audit_context.correlation_id,
-            )
-            guard_evaluation = _evaluate_preview_sql_guard(
-                candidate_sql=candidate_sql,
-                resolved_source=resolved_source,
-            )
-            if guard_evaluation.decision == "allow":
-                guard_status = "allow"
-            else:
-                guard_status = "blocked"
-                candidate_state = "blocked"
-                request_state = "blocked"
-        except (
-            GenerationContextPreparationError,
-            SQLGenerationAdapterConfigurationError,
-        ) as exc:
-            failure_code = getattr(exc, "code", "sql_generation_context_unavailable")
-            audit_events = _build_preview_generation_failed_audit_event(
-                resolved_source=resolved_source,
-                dataset_contract=dataset_contract,
-                schema_snapshot=schema_snapshot,
-                audit_context=audit_context,
-                failure_code=failure_code,
-            )
-            _persist_preview_denial_records(
-                session,
-                payload=payload,
-                resolved_source=resolved_source,
-                dataset_contract=dataset_contract,
-                schema_snapshot=schema_snapshot,
-                authenticated_subject=authenticated_subject,
-                audit_context=audit_context,
-                audit_events=audit_events,
-                request_state="preview_generation_failed",
-                entitlement_decision="allow",
-            )
-            raise PreviewSubmissionContractError(
-                str(exc),
-                public_code="preview_generation_failed",
-                public_message=(
-                    "SQL generation failed before an authoritative preview "
-                    "candidate was created."
-                ),
-            ) from exc
+        intent_mapping = map_question_intent(
+            payload.question,
+            semantic_contract_version=dataset_contract.semantic_contract_version,
+        )
+        if intent_mapping.status == "ambiguous":
+            candidate_state = "clarification_required"
+            request_state = "blocked"
+        elif intent_mapping.status == "unsupported":
+            candidate_state = "unsupported"
+            request_state = "blocked"
+        else:
+            try:
+                prepared_context = prepare_generation_context(
+                    request_id=audit_context.request_id,
+                    question=payload.question,
+                    source_id=resolved_source.source_id,
+                    authenticated_subject=authenticated_subject,
+                    session=session,
+                )
+                adapter_request = build_sql_generation_adapter_request(
+                    prepared_context,
+                    intent_mapping=intent_mapping,
+                )
+                adapter_response = sql_generation_adapter.generate_sql(adapter_request)
+                candidate_sql = normalize_adapter_generated_sql(
+                    adapter_response.candidate_sql
+                )
+                adapter_metadata = build_sql_generation_adapter_run_metadata(
+                    adapter_request=adapter_request,
+                    adapter_response=adapter_response,
+                    adapter_run_id=audit_context.correlation_id,
+                )
+                guard_evaluation = _evaluate_preview_sql_guard(
+                    candidate_sql=candidate_sql,
+                    resolved_source=resolved_source,
+                )
+                if guard_evaluation.decision == "allow":
+                    guard_status = "allow"
+                else:
+                    guard_status = "blocked"
+                    candidate_state = "blocked"
+                    request_state = "blocked"
+            except (
+                GenerationContextPreparationError,
+                SQLGenerationAdapterConfigurationError,
+            ) as exc:
+                failure_code = getattr(exc, "code", "sql_generation_context_unavailable")
+                audit_events = _build_preview_generation_failed_audit_event(
+                    resolved_source=resolved_source,
+                    dataset_contract=dataset_contract,
+                    schema_snapshot=schema_snapshot,
+                    audit_context=audit_context,
+                    failure_code=failure_code,
+                )
+                _persist_preview_denial_records(
+                    session,
+                    payload=payload,
+                    resolved_source=resolved_source,
+                    dataset_contract=dataset_contract,
+                    schema_snapshot=schema_snapshot,
+                    authenticated_subject=authenticated_subject,
+                    audit_context=audit_context,
+                    audit_events=audit_events,
+                    request_state="preview_generation_failed",
+                    entitlement_decision="allow",
+                )
+                raise PreviewSubmissionContractError(
+                    str(exc),
+                    public_code="preview_generation_failed",
+                    public_message=(
+                        "SQL generation failed before an authoritative preview "
+                        "candidate was created."
+                    ),
+                ) from exc
 
     audit = AuditRecord(
         source_id=resolved_source.source_id,
@@ -1622,6 +1646,7 @@ def submit_preview_request(
             adapter_metadata=adapter_metadata,
             guard_evaluation=guard_evaluation,
             candidate_sql=candidate_sql,
+            intent_mapping=intent_mapping,
         ),
     )
     request_id, candidate_id = _persist_preview_submission_records(
@@ -1664,6 +1689,7 @@ def submit_preview_request(
             state=candidate_state,
             primary_deny_code=primary_deny_code,
             denial_reason=denial_reason,
+            intent_mapping=intent_mapping,
             revision_context=revision_record,
         ),
         audit=audit,
@@ -1671,7 +1697,13 @@ def submit_preview_request(
             source_id=resolved_source.source_id,
             state=(
                 "pending"
-                if guard_evaluation is None
+                if guard_evaluation is None and (
+                    intent_mapping is None or intent_mapping.status == "mapped"
+                )
+                else "clarification_required"
+                if intent_mapping is not None and intent_mapping.status == "ambiguous"
+                else "unsupported"
+                if intent_mapping is not None and intent_mapping.status == "unsupported"
                 else "allowed"
                 if guard_evaluation.decision == "allow"
                 else "blocked"

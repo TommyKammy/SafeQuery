@@ -37,6 +37,15 @@ def test_adapter_request_accepts_single_source_context_fragments() -> None:
     assert request.model_dump() == {
         "request_id": "req_83_preview",
         "question": "Show approved vendors by quarterly spend",
+        "intent_mapping": {
+            "status": "mapped",
+            "mapping_id": "legacy_adapter_request",
+            "metric": None,
+            "dimensions": [],
+            "filters": [],
+            "ranking_behavior_id": None,
+            "clarification": None,
+        },
         "source": {
             "source_id": "sap-approved-spend",
             "source_family": "postgresql",

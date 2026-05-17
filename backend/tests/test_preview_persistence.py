@@ -171,6 +171,21 @@ class _RecordingHTTPPreviewAdapter:
         )
 
 
+def _load_governed_answer_fixture_by_case(case_type: str) -> dict[str, object]:
+    fixture_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "governed_answer_vendor_spend_fixtures.json"
+    )
+    fixture_set = json.loads(fixture_path.read_text(encoding="utf-8"))
+    matching = [
+        fixture for fixture in fixture_set["fixtures"]
+        if fixture["case_type"] == case_type
+    ]
+    assert matching, f"Expected Epic AA fixture for case_type={case_type}"
+    return matching[0]
+
+
 class _FailingHTTPPreviewAdapter:
     def generate_sql(self, request):
         raise SQLGenerationAdapterConfigurationError(
@@ -444,9 +459,22 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
         assert response_payload["candidate"]["candidate_sql"] == candidate_sql
         assert response_payload["candidate"]["guard_status"] == "allow"
         assert response_payload["candidate"]["state"] == "preview_ready"
+        assert response_payload["candidate"]["intent_mapping"]["status"] == "mapped"
+        assert response_payload["candidate"]["intent_mapping"]["metric"] == (
+            "sum_approved_vendor_spend"
+        )
 
         adapter_payload = adapter.adapter_request.model_dump(mode="json")
         assert adapter_payload["request_id"] == request_id
+        assert adapter_payload["intent_mapping"] == {
+            "status": "mapped",
+            "mapping_id": "show_top_approved_vendors_by_quarterly_spend",
+            "metric": "sum_approved_vendor_spend",
+            "dimensions": ["vendor_name", "fiscal_quarter"],
+            "filters": ["approved_spend_only"],
+            "ranking_behavior_id": "top_approved_vendors_by_quarterly_spend",
+            "clarification": None,
+        }
         assert adapter_payload["source"] == {
             "source_id": "sap-approved-spend",
             "source_family": "postgresql",
@@ -533,6 +561,107 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
         assert persisted_execution_event.audit_payload["semantic_contract_version"] == (
             persisted_candidate.semantic_contract_version
         )
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("case_type", "expected_status", "expected_state"),
+    [
+        ("ambiguous", "ambiguous", "clarification_required"),
+        ("unsupported_answer", "unsupported", "unsupported"),
+    ],
+)
+def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped_fixtures(
+    monkeypatch,
+    case_type: str,
+    expected_status: str,
+    expected_state: str,
+) -> None:
+    fixture = _load_governed_answer_fixture_by_case(case_type)
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    monkeypatch.setenv(
+        "SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        "postgresql://safequery_exec:secret@business-postgres-source:5432/business",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+    adapter = _RecordingHTTPPreviewAdapter()
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: adapter,
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(
+            session,
+            connection_reference="env:SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL",
+        )
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": fixture["question"],
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 200
+        response_payload = response.json()
+        assert adapter.adapter_request is None
+        assert response_payload["candidate"]["candidate_sql"] is None
+        assert response_payload["candidate"]["state"] == expected_state
+        assert response_payload["candidate"]["intent_mapping"]["status"] == (
+            expected_status
+        )
+        assert response_payload["candidate"]["intent_mapping"]["metric"] == (
+            "sum_approved_vendor_spend"
+            if expected_status == "ambiguous"
+            else None
+        )
+        assert response_payload["candidate"]["intent_mapping"]["clarification"] is not None
+
+        persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_approval = session.execute(
+            select(PreviewCandidateApproval)
+        ).scalar_one()
+        assert persisted_candidate.candidate_sql is None
+        assert persisted_candidate.candidate_state == expected_state
+        assert persisted_candidate.guard_status == "pending"
+        assert persisted_approval.approval_state == "invalidated"
     finally:
         session.close()
         engine.dispose()

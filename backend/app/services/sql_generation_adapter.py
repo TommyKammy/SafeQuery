@@ -20,6 +20,7 @@ from pydantic import (
 from typing_extensions import Annotated
 
 from app.core.config import SQLGenerationProvider, SQLGenerationSettings
+from app.services.intent_mapping import IntentMappingOutput
 from app.services.generation_context import PreparedGenerationContext
 
 
@@ -65,6 +66,12 @@ class SQLGenerationAdapterRequest(BaseModel):
 
     request_id: NonEmptyTrimmedString
     question: NonEmptyTrimmedString
+    intent_mapping: IntentMappingOutput = Field(
+        default_factory=lambda: IntentMappingOutput(
+            status="mapped",
+            mapping_id="legacy_adapter_request",
+        )
+    )
     source: SQLGenerationSourceBinding
     context: SQLGenerationContextReferences
 
@@ -371,6 +378,10 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
         }
         payload: dict[str, object] = {
             "question": request.question,
+            "intent_mapping": request.intent_mapping.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
             "source": request.source.model_dump(mode="json"),
             "context": context_payload,
         }
@@ -499,10 +510,17 @@ def resolve_sql_generation_adapter(
 
 def build_sql_generation_adapter_request(
     prepared_context: PreparedGenerationContext,
+    *,
+    intent_mapping: IntentMappingOutput | None = None,
 ) -> SQLGenerationAdapterRequest:
     return SQLGenerationAdapterRequest(
         request_id=prepared_context.request.request_id,
         question=prepared_context.request.question,
+        intent_mapping=(
+            intent_mapping
+            if intent_mapping is not None
+            else IntentMappingOutput(status="mapped", mapping_id="legacy_adapter_request")
+        ),
         source=SQLGenerationSourceBinding(
             source_id=prepared_context.source.source_id,
             source_family=prepared_context.source.source_family,
