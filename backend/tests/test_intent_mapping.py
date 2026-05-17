@@ -253,9 +253,18 @@ def test_intent_mapping_fails_closed_for_unsupported_epic_aa_fixture() -> None:
     assert mapping.clarification is not None
 
 
-def test_intent_mapping_fails_closed_when_no_approved_vendor_mapping_matches() -> None:
-    mapping = map_question_intent(
+@pytest.mark.parametrize(
+    "question",
+    [
         "Show supplier refunds by region.",
+        "What is revenue by region?",
+    ],
+)
+def test_intent_mapping_fails_closed_when_no_approved_vendor_mapping_matches(
+    question: str,
+) -> None:
+    mapping = map_question_intent(
+        question,
         semantic_contract_version="approved_vendor_spend.v1",
     )
 
