@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.services.intent_mapping import map_question_intent
 
 
@@ -74,9 +76,20 @@ def test_intent_mapping_maps_explicit_fiscal_quarter_shorthand() -> None:
     assert mapping.filters == ["approved_spend_only"]
 
 
-def test_intent_mapping_fails_closed_for_unrelated_ambiguity_markers() -> None:
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show refund totals by fiscal quarter.",
+        "Show invoice totals by calendar quarter.",
+        "Show revenue for Q3.",
+        "Show top 2 suppliers including ties.",
+    ],
+)
+def test_intent_mapping_fails_closed_for_unrelated_ambiguity_markers(
+    question: str,
+) -> None:
     mapping = map_question_intent(
-        "Show refund totals by calendar quarter.",
+        question,
         semantic_contract_version="approved_vendor_spend.v1",
     )
 

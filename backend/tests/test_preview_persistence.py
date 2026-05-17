@@ -660,6 +660,9 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
         assert response_payload["audit"]["events"][1]["intent_mapping"]["status"] == (
             expected_status
         )
+        assert response_payload["audit"]["events"][1]["candidate_state"] == (
+            expected_state
+        )
 
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
         persisted_approval = session.execute(
@@ -680,7 +683,7 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             "query_submitted",
             "generation_requested",
         ]
-        assert persisted_events[-1].candidate_state is None
+        assert persisted_events[-1].candidate_state == expected_state
         assert persisted_events[-1].audit_payload["intent_mapping"]["status"] == (
             expected_status
         )
