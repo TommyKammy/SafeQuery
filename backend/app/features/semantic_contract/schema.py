@@ -24,6 +24,13 @@ from app.features.audit.event_model import (
 )
 
 SemanticContractStatus = Literal["draft", "active", "retired"]
+SemanticIntentClassification = Literal["supported", "ambiguous", "unsupported"]
+SemanticRankingDirection = Literal["asc", "desc"]
+SemanticTiesPolicy = Literal[
+    "clarify",
+    "include_all_ties",
+    "stable_secondary_sort",
+]
 TimeGrain = Literal[
     "day",
     "week",
@@ -184,6 +191,51 @@ class SemanticMetric(_SemanticContractModel):
         return self
 
 
+class SemanticRankingBehavior(_SemanticContractModel):
+    ranking_id: SourceIdentifier
+    label: NonEmptyTrimmedString
+    order_metric: SourceIdentifier
+    order_direction: SemanticRankingDirection
+    partition_dimensions: tuple[SourceIdentifier, ...] = Field(default_factory=tuple)
+    limit_per_partition: PositiveInt
+    ties_policy: SemanticTiesPolicy
+
+    @model_validator(mode="after")
+    def validate_partition_dimensions(self) -> "SemanticRankingBehavior":
+        _require_unique(
+            self.partition_dimensions,
+            "Ranking behavior partition dimensions",
+        )
+        return self
+
+
+class SemanticIntentMapping(_SemanticContractModel):
+    mapping_id: SourceIdentifier
+    label: NonEmptyTrimmedString
+    canonical_question: NonEmptyTrimmedString
+    classification: SemanticIntentClassification
+    metric: SourceIdentifier
+    dimensions: tuple[SourceIdentifier, ...] = Field(default_factory=tuple)
+    filters: tuple[SourceIdentifier, ...] = Field(default_factory=tuple)
+    ranking_behavior_id: Optional[SourceIdentifier] = None
+    ambiguity_rule_refs: tuple[SourceIdentifier, ...] = Field(default_factory=tuple)
+
+    @model_validator(mode="after")
+    def validate_mapping_collections(self) -> "SemanticIntentMapping":
+        _require_unique(self.dimensions, "Intent mapping dimensions")
+        _require_unique(self.filters, "Intent mapping filters")
+        _require_unique(self.ambiguity_rule_refs, "Intent mapping ambiguity refs")
+        if self.classification == "supported" and self.ambiguity_rule_refs:
+            raise ValueError(
+                "Supported intent mappings must not require ambiguity rules."
+            )
+        if self.classification == "ambiguous" and not self.ambiguity_rule_refs:
+            raise ValueError(
+                "Ambiguous intent mappings must reference ambiguity rules."
+            )
+        return self
+
+
 class SemanticContractTimeSemantics(_SemanticContractModel):
     default_grain: TimeGrain
     allowed_grains: tuple[TimeGrain, ...]
@@ -223,6 +275,10 @@ class SemanticContractDefinition(_SemanticContractModel):
     dimensions: tuple[SemanticDimension, ...] = Field(default_factory=tuple)
     filters: tuple[SemanticFilter, ...] = Field(default_factory=tuple)
     metrics: tuple[SemanticMetric, ...]
+    ranking_behaviors: tuple[SemanticRankingBehavior, ...] = Field(
+        default_factory=tuple
+    )
+    intent_mappings: tuple[SemanticIntentMapping, ...] = Field(default_factory=tuple)
     time_semantics: SemanticContractTimeSemantics
     sensitive_concepts: tuple[SensitiveSemanticConcept, ...] = Field(
         default_factory=tuple
@@ -295,6 +351,21 @@ class SemanticContractDefinition(_SemanticContractModel):
                 raise ValueError(
                     "Declared ambiguous terms must have matching ambiguity_rules."
                 )
+
+        metrics_by_id = {metric.metric_id: metric for metric in self.metrics}
+        ranking_behaviors_by_id = _index_ranking_behaviors(
+            self.ranking_behaviors,
+            metrics_by_id,
+            dimensions_by_id,
+        )
+        _validate_intent_mappings(
+            self.intent_mappings,
+            metrics_by_id,
+            dimensions_by_id,
+            filters_by_id,
+            ranking_behaviors_by_id,
+            self.ambiguity_rules,
+        )
         if (
             _contract_requires_spend_definition(self)
             and "spend_definition" not in self.ambiguity_rules
@@ -412,6 +483,126 @@ def _require_unique_sensitive_concepts(
         lambda item: item.concept_id,
         "Contract sensitive concepts",
     )
+
+
+def _index_ranking_behaviors(
+    ranking_behaviors: Iterable[SemanticRankingBehavior],
+    metrics_by_id: Mapping[SourceIdentifier, SemanticMetric],
+    dimensions_by_id: Mapping[SourceIdentifier, SemanticDimension],
+) -> dict[SourceIdentifier, SemanticRankingBehavior]:
+    ranking_behaviors_by_id = _unique_concepts_by_id(
+        ranking_behaviors,
+        lambda item: item.ranking_id,
+        "Contract ranking behaviors",
+    )
+    for ranking_behavior in ranking_behaviors:
+        metric = metrics_by_id.get(ranking_behavior.order_metric)
+        if metric is None:
+            raise ValueError(
+                f"Ranking behavior {ranking_behavior.ranking_id} references "
+                "undeclared order metric"
+            )
+        _require_subset(
+            ranking_behavior.partition_dimensions,
+            set(dimensions_by_id),
+            (
+                f"Ranking behavior {ranking_behavior.ranking_id} references "
+                "undeclared partition dimensions"
+            ),
+        )
+        _require_subset(
+            ranking_behavior.partition_dimensions,
+            set(metric.allowed_dimensions),
+            (
+                f"Ranking behavior {ranking_behavior.ranking_id} references "
+                "partition dimensions not allowed by the order metric"
+            ),
+        )
+    return ranking_behaviors_by_id
+
+
+def _validate_intent_mappings(
+    intent_mappings: Iterable[SemanticIntentMapping],
+    metrics_by_id: Mapping[SourceIdentifier, SemanticMetric],
+    dimensions_by_id: Mapping[SourceIdentifier, SemanticDimension],
+    filters_by_id: Mapping[SourceIdentifier, SemanticFilter],
+    ranking_behaviors_by_id: Mapping[SourceIdentifier, SemanticRankingBehavior],
+    ambiguity_rules: Mapping[SourceIdentifier, NonEmptyTrimmedString],
+) -> None:
+    _unique_concepts_by_id(
+        intent_mappings,
+        lambda item: item.mapping_id,
+        "Contract intent mappings",
+    )
+    for intent_mapping in intent_mappings:
+        metric = metrics_by_id.get(intent_mapping.metric)
+        if metric is None:
+            raise ValueError(
+                f"Intent mapping {intent_mapping.mapping_id} references "
+                "undeclared metric"
+            )
+        _require_subset(
+            intent_mapping.dimensions,
+            set(dimensions_by_id),
+            (
+                f"Intent mapping {intent_mapping.mapping_id} references "
+                "undeclared dimensions"
+            ),
+        )
+        _require_subset(
+            intent_mapping.dimensions,
+            set(metric.allowed_dimensions),
+            (
+                f"Intent mapping {intent_mapping.mapping_id} references "
+                "dimensions not allowed by the metric"
+            ),
+        )
+        _require_subset(
+            intent_mapping.filters,
+            set(filters_by_id),
+            (
+                f"Intent mapping {intent_mapping.mapping_id} references "
+                "undeclared filters"
+            ),
+        )
+        _require_subset(
+            intent_mapping.filters,
+            set(metric.default_filters),
+            (
+                f"Intent mapping {intent_mapping.mapping_id} references "
+                "filters not allowed by the metric"
+            ),
+        )
+        if intent_mapping.ranking_behavior_id is not None:
+            ranking_behavior = ranking_behaviors_by_id.get(
+                intent_mapping.ranking_behavior_id
+            )
+            if ranking_behavior is None:
+                raise ValueError(
+                    f"Intent mapping {intent_mapping.mapping_id} references "
+                    "undeclared ranking behavior"
+                )
+            if ranking_behavior.order_metric != intent_mapping.metric:
+                raise ValueError(
+                    f"Intent mapping {intent_mapping.mapping_id} references "
+                    "ranking behavior with a different order metric"
+                )
+            _require_subset(
+                ranking_behavior.partition_dimensions,
+                set(intent_mapping.dimensions),
+                (
+                    f"Intent mapping {intent_mapping.mapping_id} references "
+                    "ranking partition dimensions missing from the mapping"
+                ),
+            )
+        _require_subset(
+            intent_mapping.ambiguity_rule_refs,
+            set(ambiguity_rules),
+            (
+                f"Intent mapping {intent_mapping.mapping_id} references "
+                "undeclared ambiguity rules"
+            ),
+        )
 
 
 def _require_subset(
