@@ -111,6 +111,35 @@ def _mentions_unapproved_vendor_spend(normalized: str) -> bool:
     )
 
 
+def _mentions_approval_timing_ambiguity(normalized: str) -> bool:
+    mentions_approved_vendor_domain = (
+        (
+            _contains_phrase(normalized, "approved")
+            and (
+                _contains_phrase(normalized, "vendor")
+                or _contains_phrase(normalized, "vendors")
+                or _contains_phrase(normalized, "spend")
+            )
+        )
+        or _mentions_approved_vendor_intent(normalized)
+    )
+    return mentions_approved_vendor_domain and (
+        _contains_phrase(normalized, "when the transaction happened")
+        or _contains_phrase(normalized, "transaction time")
+        or _contains_phrase(normalized, "approval timestamp")
+    )
+
+
+def _mentions_vendor_normalization_ambiguity(normalized: str) -> bool:
+    return _mentions_approved_vendor_intent(normalized) and (
+        _contains_phrase(normalized, "same vendor")
+        or _contains_phrase(normalized, "normalize vendor")
+        or _contains_phrase(normalized, "normalize vendors")
+        or _contains_phrase(normalized, "vendor normalization")
+        or _contains_phrase(normalized, "vendor name normalization")
+    )
+
+
 def map_question_intent(question: str, *, semantic_contract_version: str | None) -> IntentMappingOutput:
     normalized = _normalize_question(question)
     if semantic_contract_version is None:
@@ -163,6 +192,28 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
         "metric": "sum_approved_vendor_spend",
         "filters": ["approved_spend_only"],
     }
+    if _mentions_approval_timing_ambiguity(normalized):
+        return IntentMappingOutput(
+            status="ambiguous",
+            mapping_id="clarify_approval_timing",
+            dimensions=["vendor_name"],
+            clarification=(
+                "Clarify whether approval means transaction-time approval or "
+                "current approval status before mapping."
+            ),
+            **base,
+        )
+    if _mentions_vendor_normalization_ambiguity(normalized):
+        return IntentMappingOutput(
+            status="ambiguous",
+            mapping_id="clarify_vendor_name_normalization",
+            dimensions=["vendor_name"],
+            clarification=(
+                "Clarify the authoritative vendor-normalization or vendor-master "
+                "binding before mapping."
+            ),
+            **base,
+        )
     if "refund" in normalized or "after refunds" in normalized:
         return IntentMappingOutput(
             status="ambiguous",

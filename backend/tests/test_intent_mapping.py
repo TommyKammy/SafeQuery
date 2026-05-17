@@ -21,6 +21,14 @@ def _fixture_question(case_type: str) -> str:
     raise AssertionError(f"Expected Epic AA fixture for case_type={case_type}")
 
 
+def _fixture_question_by_scenario_id(scenario_id: str) -> str:
+    fixture_set = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    for fixture in fixture_set["fixtures"]:
+        if fixture["metadata"]["scenario_id"] == scenario_id:
+            return fixture["question"]
+    raise AssertionError(f"Expected Epic AA fixture for scenario_id={scenario_id}")
+
+
 def test_intent_mapping_maps_positive_epic_aa_fixture_to_concepts() -> None:
     mapping = map_question_intent(
         _fixture_question("positive"),
@@ -46,6 +54,33 @@ def test_intent_mapping_keeps_ambiguous_epic_aa_fixture_in_clarification_state()
     assert mapping.status == "ambiguous"
     assert mapping.metric == "sum_approved_vendor_spend"
     assert mapping.dimensions == ["vendor_name", "fiscal_quarter"]
+    assert mapping.filters == ["approved_spend_only"]
+    assert mapping.clarification is not None
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "expected_mapping_id"),
+    [
+        ("gavsf-007-approval-timing-ambiguity", "clarify_approval_timing"),
+        (
+            "gavsf-008-vendor-name-normalization-ambiguity",
+            "clarify_vendor_name_normalization",
+        ),
+    ],
+)
+def test_intent_mapping_keeps_named_ambiguous_epic_aa_fixtures_in_clarification_state(
+    scenario_id: str,
+    expected_mapping_id: str,
+) -> None:
+    mapping = map_question_intent(
+        _fixture_question_by_scenario_id(scenario_id),
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "ambiguous"
+    assert mapping.mapping_id == expected_mapping_id
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["vendor_name"]
     assert mapping.filters == ["approved_spend_only"]
     assert mapping.clarification is not None
 
