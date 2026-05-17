@@ -1616,7 +1616,7 @@ def submit_preview_request(
             intent_mapping
         )
         if intent_blocked_candidate_state is not None:
-            candidate_state = intent_blocked_candidate_state
+            candidate_state = "blocked"
             request_state = "blocked"
         else:
             try:
