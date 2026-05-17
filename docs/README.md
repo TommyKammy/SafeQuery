@@ -81,6 +81,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 - [adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md](./adr/ADR-0012-multi-dialect-connector-and-guard-profile-strategy.md): approved source-family, flavor, and profile strategy for follow-on dialect support
 - [adr/ADR-0013-operator-workflow-and-ui-foundation.md](./adr/ADR-0013-operator-workflow-and-ui-foundation.md): approved product-shell direction that reclassifies Epic A as a state demo and the workflow shell as the product contract
 - [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md): UI stack and OSS adoption boundaries for the SafeQuery-owned operator shell
+- [adr/ADR-0015-semantic-contract-and-sql-guard-responsibility.md](./adr/ADR-0015-semantic-contract-and-sql-guard-responsibility.md): approved Assurance Track boundary between business-intent authorization and executable SQL safety
 - [design/target-source-registry.md](./design/target-source-registry.md): backend-owned registry model, activation semantics, and secret indirection expectations
 - [design/dialect-capability-matrix.md](./design/dialect-capability-matrix.md): compact family and flavor rollout matrix for connector, guard, and evaluation planning
 - [design/dialect-guard-readiness-checklists.md](./design/dialect-guard-readiness-checklists.md): reviewable guard readiness evidence checklist for planned MySQL, MariaDB, Aurora, and Oracle support

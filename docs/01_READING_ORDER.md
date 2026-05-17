@@ -93,14 +93,16 @@ This reading order is intended to help new contributors understand SafeQuery fro
     Read this to understand why the product shell is workflow-first and why the Epic A shell remains a developer state demo.
 37. [adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md](./adr/ADR-0014-ui-implementation-stack-and-oss-adoption-boundaries.md)
     Review how SafeQuery may borrow OSS ergonomics without turning the product into a generic chat shell or moving trust boundaries.
-38. [implementation-roadmap.md](./implementation-roadmap.md)
+38. [adr/ADR-0015-semantic-contract-and-sql-guard-responsibility.md](./adr/ADR-0015-semantic-contract-and-sql-guard-responsibility.md)
+    Read this before implementing Semantic Contract schema, mapping, or persistence so business-intent authorization stays separate from executable SQL safety.
+39. [implementation-roadmap.md](./implementation-roadmap.md)
     Finish this section with the current implementation sequence so roadmap work stays aligned with the reviewed docs direction.
 
 ### 6. Local Setup and Threat Review
 
-39. [local-development.md](./local-development.md)
+40. [local-development.md](./local-development.md)
     Use this once the document set is clear so local startup follows the reviewed topology and role split.
-40. [security/threat-model.md](./security/threat-model.md)
+41. [security/threat-model.md](./security/threat-model.md)
     Finish with the threat model and residual risks for the current source-aware and UX-foundation baseline before pilot readiness review.
 
 ## Source Hierarchy
