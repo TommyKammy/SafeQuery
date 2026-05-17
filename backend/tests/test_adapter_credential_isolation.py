@@ -51,6 +51,7 @@ def test_build_sql_generation_adapter_request_uses_only_adapter_safe_fields() ->
             "filters": [],
             "ranking_behavior_id": None,
             "clarification": None,
+            "unsupported_concepts": None,
         },
         "source": {
             "source_id": "sap-approved-spend",

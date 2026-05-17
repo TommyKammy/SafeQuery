@@ -59,6 +59,7 @@ def test_sql_generation_adapter_request_is_source_aware_and_single_source() -> N
             "filters": [],
             "ranking_behavior_id": None,
             "clarification": None,
+            "unsupported_concepts": None,
         },
         "source": {
             "source_id": "sap-approved-spend",

@@ -297,4 +297,37 @@ def test_intent_mapping_fails_closed_when_no_approved_vendor_mapping_matches(
     assert mapping.dimensions == []
     assert mapping.filters == []
     assert mapping.clarification is not None
-    assert "does not match" in mapping.clarification
+    if mapping.unsupported_concepts:
+        assert "not approved" in mapping.clarification
+    else:
+        assert "does not match" in mapping.clarification
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "expected_unsupported_concepts"),
+    [
+        (
+            "gavsf-015-unapproved-revenue-metric-denied",
+            ["metric:revenue", "dimension:region"],
+        ),
+        (
+            "gavsf-016-unapproved-department-dimension-denied",
+            ["dimension:department"],
+        ),
+    ],
+)
+def test_intent_mapping_records_unsupported_metric_and_dimension_concepts(
+    scenario_id: str,
+    expected_unsupported_concepts: list[str],
+) -> None:
+    mapping = map_question_intent(
+        _fixture_question_by_scenario_id(scenario_id),
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "unsupported"
+    assert mapping.metric is None
+    assert mapping.dimensions == []
+    assert mapping.filters == []
+    assert mapping.unsupported_concepts == expected_unsupported_concepts
+    assert mapping.clarification is not None
