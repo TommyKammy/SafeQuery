@@ -5,9 +5,16 @@ from pathlib import Path
 from typing import Union
 from uuid import uuid4
 
+import pytest
+
 import app.features.evaluation.release_gate as release_gate_module
+from app.cli.release_gate import (
+    _observed_answer_artifacts_from_payload,
+    main as release_gate_cli_main,
+)
 from app.features.evaluation import (
     EvaluationOutcomeRecord,
+    build_release_gate_assurance_report,
     reconstruct_release_gate,
 )
 from app.features.evaluation.harness import (
@@ -134,6 +141,330 @@ def test_release_gate_passes_when_authoritative_records_match_harness() -> None:
     assert decision.status == "pass"
     assert decision.failure_count == 0
     assert decision.failures == ()
+
+
+def test_release_gate_assurance_report_fails_on_unsupported_answer_claims() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "answer_text": (
+                    "FY2025-Q1 approved spend is 125000.00. "
+                    "FY2025-Q2 approved spend is 98000.00. "
+                    "FY2025-Q3 approved spend is 42000.00."
+                ),
+                "result_rows": [
+                    {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+                    {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+                ],
+                "result_metadata": {
+                    "columns": ["fiscal_quarter", "approved_spend"],
+                    "row_count": 2,
+                    "truncated": False,
+                },
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.fixture_coverage_count == {
+        "total": 14,
+        "covered": 1,
+        "not_covered": 13,
+    }
+    assert tuple(level.level for level in report.levels) == (
+        "level_0",
+        "level_1",
+        "level_2",
+        "level_3",
+    )
+    assert report.levels[0].status == "pass"
+    assert report.levels[1].status == "fail"
+    assert report.levels[2].status == "not_covered"
+    assert report.levels[3].status == "not_covered"
+    assert report.failures[0].deny_code == "DENY_UNSUPPORTED_ANSWER_CLAIM"
+    assert report.failures[0].scenario_id == "gavsf-002-vendor-spend-by-quarter"
+    assert "FY2025-Q3" in report.failures[0].detail
+
+
+def test_release_gate_assurance_report_marks_unimplemented_levels_not_covered() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "answer_text": (
+                    "FY2025-Q1 approved spend is 125000.00. "
+                    "FY2025-Q2 approved spend is 98000.00."
+                ),
+                "result_rows": [
+                    {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+                    {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+                ],
+                "result_metadata": {
+                    "columns": ["fiscal_quarter", "approved_spend"],
+                    "row_count": 2,
+                    "truncated": False,
+                },
+            },
+        ),
+    )
+
+    assert report.status == "pass"
+    assert report.levels[0].status == "pass"
+    assert report.levels[1].status == "pass"
+    assert report.levels[2].status == "not_covered"
+    assert report.levels[3].status == "not_covered"
+    assert report.levels[2].covered_fixture_count == 0
+    assert report.levels[3].covered_fixture_count == 0
+    assert report.failures == ()
+
+
+def test_release_gate_assurance_report_fails_on_non_positive_observed_fixture() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-003-approved-vs-unapproved-distinction",
+                "answer_text": "Approved spend and unapproved spend were compared.",
+                "result_rows": [],
+                "result_metadata": {"columns": [], "row_count": 0},
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.levels[0].status == "fail"
+    assert report.levels[0].failure_count == 1
+    assert report.levels[3].status == "not_covered"
+    assert report.levels[3].covered_fixture_count == 0
+    assert report.levels[3].failure_count == 0
+    assert report.failures[0].deny_code == "DENY_UNSUPPORTED_ASSURANCE_FIXTURE_COVERAGE"
+    assert report.failures[0].scenario_id == "gavsf-003-approved-vs-unapproved-distinction"
+
+
+def test_release_gate_assurance_report_preserves_duplicate_observed_artifacts() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "answer_text": (
+                    "FY2025-Q1 approved spend is 125000.00. "
+                    "FY2025-Q2 approved spend is 98000.00. "
+                    "FY2025-Q3 approved spend is 42000.00."
+                ),
+                "result_rows": [
+                    {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+                    {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+                ],
+                "result_metadata": {
+                    "columns": ["fiscal_quarter", "approved_spend"],
+                    "row_count": 2,
+                    "truncated": False,
+                },
+            },
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "answer_text": (
+                    "FY2025-Q1 approved spend is 125000.00. "
+                    "FY2025-Q2 approved spend is 98000.00."
+                ),
+                "result_rows": [
+                    {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+                    {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+                ],
+                "result_metadata": {
+                    "columns": ["fiscal_quarter", "approved_spend"],
+                    "row_count": 2,
+                    "truncated": False,
+                },
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.fixture_coverage_count["covered"] == 1
+    assert report.levels[0].failure_count == 1
+    assert report.levels[1].failure_count == 1
+    assert {
+        failure.deny_code for failure in report.failures
+    } == {
+        "DENY_DUPLICATE_ASSURANCE_ARTIFACT",
+        "DENY_UNSUPPORTED_ANSWER_CLAIM",
+    }
+
+
+def test_release_gate_assurance_report_keeps_duplicate_only_failure_at_level_0() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+    passing_artifact = {
+        "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+        "answer_text": (
+            "FY2025-Q1 approved spend is 125000.00. "
+            "FY2025-Q2 approved spend is 98000.00."
+        ),
+        "result_rows": [
+            {"fiscal_quarter": "FY2025-Q1", "approved_spend": "125000.00"},
+            {"fiscal_quarter": "FY2025-Q2", "approved_spend": "98000.00"},
+        ],
+        "result_metadata": {
+            "columns": ["fiscal_quarter", "approved_spend"],
+            "row_count": 2,
+            "truncated": False,
+        },
+    }
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(passing_artifact, passing_artifact),
+    )
+
+    assert report.status == "fail"
+    assert report.levels[0].status == "fail"
+    assert report.levels[0].failure_count == 1
+    assert report.levels[1].status == "pass"
+    assert report.levels[1].failure_count == 0
+    assert {failure.deny_code for failure in report.failures} == {
+        "DENY_DUPLICATE_ASSURANCE_ARTIFACT"
+    }
+
+
+def test_release_gate_assurance_report_structures_malformed_artifact_failure() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "gavsf-002-vendor-spend-by-quarter",
+                "result_rows": [],
+                "result_metadata": {},
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.levels[0].status == "fail"
+    assert report.levels[0].failure_count == 1
+    assert report.levels[1].status == "not_covered"
+    assert report.levels[1].failure_count == 0
+    assert report.failures[0].deny_code == "DENY_MALFORMED_ASSURANCE_ARTIFACT"
+    assert report.failures[0].scenario_id == "gavsf-002-vendor-spend-by-quarter"
+    assert "answer_text" in report.failures[0].detail
+
+
+def test_release_gate_assurance_report_marks_unknown_fixture_as_level_0_failure() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "governed_answer_vendor_spend_fixtures.json"
+    )
+
+    report = build_release_gate_assurance_report(
+        fixture_set_path=fixture_path,
+        observed_answer_artifacts=(
+            {
+                "scenario_id": "unknown-scenario",
+                "answer_text": "The observed answer came from an unknown fixture.",
+                "result_rows": [],
+                "result_metadata": {"columns": [], "row_count": 0},
+            },
+        ),
+    )
+
+    assert report.status == "fail"
+    assert report.levels[0].status == "fail"
+    assert report.levels[0].failure_count == 1
+    assert report.failures[0].deny_code == "DENY_UNKNOWN_ASSURANCE_FIXTURE"
+
+
+def test_release_gate_cli_rejects_malformed_observed_artifact_envelope() -> None:
+    with pytest.raises(ValueError, match="observed_answer_artifacts"):
+        _observed_answer_artifacts_from_payload({"artifacts": []})
+
+
+def test_release_gate_cli_handles_fixture_set_load_error_as_parser_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing_fixture_path = tmp_path / "missing-fixture-set.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["release-gate", "--fixture-set", str(missing_fixture_path)],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        release_gate_cli_main()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert missing_fixture_path.name in captured.err
+
+
+def test_release_gate_cli_handles_fixture_set_validation_error_as_parser_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    invalid_fixture_path = tmp_path / "invalid-fixture-set.json"
+    invalid_fixture_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["release-gate", "--fixture-set", str(invalid_fixture_path)],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        release_gate_cli_main()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "fixture_set" in captured.err
+
+
+def test_release_gate_cli_handles_fixture_set_unicode_error_as_parser_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    invalid_fixture_path = tmp_path / "invalid-utf8-fixture-set.json"
+    invalid_fixture_path.write_bytes(b"\xff")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["release-gate", "--fixture-set", str(invalid_fixture_path)],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        release_gate_cli_main()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "can't decode" in captured.err
 
 
 def test_release_gate_accepts_scenario_id_from_shared_audit_metadata() -> None:

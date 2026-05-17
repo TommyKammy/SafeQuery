@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any, Iterable as TypingIterable, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.evaluation.comparison import (
@@ -19,11 +21,25 @@ from app.features.evaluation.harness import (
     list_mssql_evaluation_scenarios,
     list_postgresql_evaluation_scenarios,
 )
+from app.features.evaluation.governed_answer import (
+    GovernedAnswerFixture,
+    GovernedAnswerFixtureSet,
+    score_governed_answer_consistency,
+    validate_governed_answer_fixture_set,
+)
 
 
 ReleaseGateStatus = Literal["pass", "fail"]
 AuditEvidenceStatus = Literal["matched", "missing", "stale", "not_evaluated"]
 ScenarioArtifact = Union[MSSQLEvaluationScenario, PostgreSQLEvaluationScenario]
+ReleaseGateAssuranceStatus = Literal["pass", "fail", "not_covered"]
+ReleaseGateAssuranceLevelName = Literal["level_0", "level_1", "level_2", "level_3"]
+_ASSURANCE_LEVEL_0_DENY_CODES = {
+    "DENY_DUPLICATE_ASSURANCE_ARTIFACT",
+    "DENY_MALFORMED_ASSURANCE_ARTIFACT",
+    "DENY_UNSUPPORTED_ASSURANCE_FIXTURE_COVERAGE",
+    "DENY_UNKNOWN_ASSURANCE_FIXTURE",
+}
 
 _SOURCE_REQUIRED_FIELDS = {
     "source.source_id",
@@ -141,6 +157,38 @@ class ReleaseGateDecision(BaseModel):
     diff_artifact: ReleaseGateDiffArtifact
 
 
+class ReleaseGateAssuranceObservedAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_id: str
+    answer_text: str
+    result_rows: tuple[dict[str, Any], ...] = ()
+    result_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReleaseGateAssuranceLevelReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    level: ReleaseGateAssuranceLevelName
+    label: str
+    status: ReleaseGateAssuranceStatus
+    fixture_count: int
+    covered_fixture_count: int
+    not_covered_fixture_count: int
+    failure_count: int
+
+
+class ReleaseGateAssuranceReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: ReleaseGateStatus
+    fixture_set: str
+    semantic_contract_version: str
+    fixture_coverage_count: dict[str, int]
+    levels: tuple[ReleaseGateAssuranceLevelReport, ...]
+    failures: tuple[ReleaseGateFailure, ...]
+
+
 def reconstruct_release_gate(
     *,
     observed_artifacts: TypingIterable[Union[EvaluationOutcomeRecord, Mapping[str, Any]]],
@@ -220,6 +268,61 @@ def reconstruct_release_gate(
     )
 
 
+def build_release_gate_assurance_report(
+    *,
+    fixture_set_path: Path,
+    observed_answer_artifacts: TypingIterable[
+        Union[ReleaseGateAssuranceObservedAnswer, Mapping[str, Any]]
+    ] = (),
+) -> ReleaseGateAssuranceReport:
+    fixture_set = _load_governed_answer_fixture_set(fixture_set_path)
+    observed_answers, failures = _normalize_observed_answer_artifacts(
+        observed_answer_artifacts,
+        fixture_set=fixture_set,
+    )
+    observed_by_scenario_id = _observed_answers_by_scenario_id(observed_answers)
+    failures.extend(
+        _duplicate_observed_answer_failures(
+            fixture_set=fixture_set,
+            observed_by_scenario_id=observed_by_scenario_id,
+        )
+    )
+    failures.extend(
+        _assurance_failures_for_observed_answers(
+            fixture_set=fixture_set,
+            observed_by_scenario_id=observed_by_scenario_id,
+        )
+    )
+    levels = tuple(
+        _assurance_level_report(
+            level=level,
+            label=label,
+            fixtures=fixtures,
+            observed_by_scenario_id=observed_by_scenario_id,
+            failures=failures,
+        )
+        for level, label, fixtures in _assurance_level_fixtures(fixture_set)
+    )
+    covered_count = sum(
+        1
+        for fixture in fixture_set.fixtures
+        if fixture.metadata.scenario_id in observed_by_scenario_id
+    )
+
+    return ReleaseGateAssuranceReport(
+        status="fail" if failures else "pass",
+        fixture_set=fixture_set.fixture_set,
+        semantic_contract_version=fixture_set.semantic_contract_version,
+        fixture_coverage_count={
+            "total": len(fixture_set.fixtures),
+            "covered": covered_count,
+            "not_covered": len(fixture_set.fixtures) - covered_count,
+        },
+        levels=levels,
+        failures=tuple(failures),
+    )
+
+
 def _decision(
     *,
     status: ReleaseGateStatus,
@@ -236,6 +339,283 @@ def _decision(
             status=status,
             failure_count=len(failures),
             scenarios=diff_scenarios,
+        ),
+    )
+
+
+def _load_governed_answer_fixture_set(fixture_set_path: Path) -> GovernedAnswerFixtureSet:
+    fixture_payload = json.loads(fixture_set_path.read_text(encoding="utf-8"))
+    return validate_governed_answer_fixture_set(fixture_payload)
+
+
+def _normalize_observed_answer_artifacts(
+    observed_answer_artifacts: TypingIterable[
+        Union[ReleaseGateAssuranceObservedAnswer, Mapping[str, Any]]
+    ],
+    *,
+    fixture_set: GovernedAnswerFixtureSet,
+) -> tuple[tuple[ReleaseGateAssuranceObservedAnswer, ...], list[ReleaseGateFailure]]:
+    artifacts: list[ReleaseGateAssuranceObservedAnswer] = []
+    failures: list[ReleaseGateFailure] = []
+    for artifact in observed_answer_artifacts:
+        if isinstance(artifact, ReleaseGateAssuranceObservedAnswer):
+            artifacts.append(artifact)
+            continue
+        try:
+            artifacts.append(ReleaseGateAssuranceObservedAnswer.model_validate(artifact))
+        except ValidationError as exc:
+            failures.append(
+                _assurance_artifact_validation_failure_for(
+                    artifact=artifact,
+                    error=exc,
+                    fixture_set=fixture_set,
+                )
+            )
+    return tuple(artifacts), failures
+
+
+def _observed_answers_by_scenario_id(
+    observed_answers: tuple[ReleaseGateAssuranceObservedAnswer, ...],
+) -> dict[str, tuple[ReleaseGateAssuranceObservedAnswer, ...]]:
+    grouped: dict[str, list[ReleaseGateAssuranceObservedAnswer]] = {}
+    for artifact in observed_answers:
+        grouped.setdefault(artifact.scenario_id, []).append(artifact)
+    return {scenario_id: tuple(artifacts) for scenario_id, artifacts in grouped.items()}
+
+
+def _duplicate_observed_answer_failures(
+    *,
+    fixture_set: GovernedAnswerFixtureSet,
+    observed_by_scenario_id: Mapping[str, tuple[ReleaseGateAssuranceObservedAnswer, ...]],
+) -> list[ReleaseGateFailure]:
+    fixture_by_scenario_id = {
+        fixture.metadata.scenario_id: fixture for fixture in fixture_set.fixtures
+    }
+    failures: list[ReleaseGateFailure] = []
+    for scenario_id, artifacts in sorted(observed_by_scenario_id.items()):
+        if len(artifacts) < 2:
+            continue
+        fixture = fixture_by_scenario_id.get(scenario_id)
+        failures.append(
+            ReleaseGateFailure(
+                deny_code="DENY_DUPLICATE_ASSURANCE_ARTIFACT",
+                source_id=fixture_set.source_profile.source_id,
+                source_family=fixture_set.source_profile.source_family,
+                scenario_id=scenario_id,
+                scenario_category=fixture.case_type if fixture is not None else None,
+                detail=(
+                    "Observed governed-answer artifacts must be unique per scenario; "
+                    f"received {len(artifacts)} artifacts."
+                ),
+            )
+        )
+    return failures
+
+
+def _assurance_failures_for_observed_answers(
+    *,
+    fixture_set: GovernedAnswerFixtureSet,
+    observed_by_scenario_id: Mapping[str, tuple[ReleaseGateAssuranceObservedAnswer, ...]],
+) -> list[ReleaseGateFailure]:
+    failures: list[ReleaseGateFailure] = []
+    fixture_by_scenario_id = {
+        fixture.metadata.scenario_id: fixture for fixture in fixture_set.fixtures
+    }
+    for scenario_id, artifacts in observed_by_scenario_id.items():
+        fixture = fixture_by_scenario_id.get(scenario_id)
+        if fixture is None:
+            failures.append(
+                ReleaseGateFailure(
+                    deny_code="DENY_UNKNOWN_ASSURANCE_FIXTURE",
+                    source_id=fixture_set.source_profile.source_id,
+                    source_family=fixture_set.source_profile.source_family,
+                    scenario_id=scenario_id,
+                    scenario_category=None,
+                    detail="Observed governed-answer artifact does not match a fixture.",
+                )
+            )
+            continue
+        if fixture.case_type != "positive":
+            failures.append(
+                ReleaseGateFailure(
+                    deny_code="DENY_UNSUPPORTED_ASSURANCE_FIXTURE_COVERAGE",
+                    source_id=fixture_set.source_profile.source_id,
+                    source_family=fixture_set.source_profile.source_family,
+                    scenario_id=scenario_id,
+                    scenario_category=fixture.case_type,
+                    detail=(
+                        "Observed governed-answer artifact covers a non-positive fixture "
+                        f"({fixture.case_type}), but this release gate only validates "
+                        "positive governed-answer outputs."
+                    ),
+                )
+            )
+            continue
+
+        for observed in artifacts:
+            score = score_governed_answer_consistency(
+                fixture=fixture,
+                answer_text=observed.answer_text,
+                result_rows=observed.result_rows,
+                result_metadata=observed.result_metadata,
+            )
+            if score.passed:
+                continue
+            failures.append(
+                ReleaseGateFailure(
+                    deny_code="DENY_UNSUPPORTED_ANSWER_CLAIM",
+                    source_id=fixture_set.source_profile.source_id,
+                    source_family=fixture_set.source_profile.source_family,
+                    scenario_id=fixture.metadata.scenario_id,
+                    scenario_category=fixture.case_type,
+                    detail=(
+                        "Governed answer made unsupported claims: "
+                        f"{', '.join(score.unsupported_claims)}."
+                    ),
+                )
+            )
+    return failures
+
+
+def _assurance_level_fixtures(
+    fixture_set: GovernedAnswerFixtureSet,
+) -> tuple[
+    tuple[ReleaseGateAssuranceLevelName, str, tuple[GovernedAnswerFixture, ...]],
+    ...,
+]:
+    return (
+        (
+            "level_0",
+            "Fixture contract",
+            tuple(fixture_set.fixtures),
+        ),
+        (
+            "level_1",
+            "Positive governed-answer correctness",
+            tuple(
+                fixture
+                for fixture in fixture_set.fixtures
+                if fixture.case_type == "positive"
+            ),
+        ),
+        (
+            "level_2",
+            "Clarification and guard-denial boundaries",
+            tuple(
+                fixture
+                for fixture in fixture_set.fixtures
+                if fixture.case_type in {"ambiguous", "unsafe"}
+            ),
+        ),
+        (
+            "level_3",
+            "Unsupported answer boundaries",
+            tuple(
+                fixture
+                for fixture in fixture_set.fixtures
+                if fixture.case_type == "unsupported_answer"
+            ),
+        ),
+    )
+
+
+def _assurance_level_report(
+    *,
+    level: ReleaseGateAssuranceLevelName,
+    label: str,
+    fixtures: tuple[GovernedAnswerFixture, ...],
+    observed_by_scenario_id: Mapping[str, tuple[ReleaseGateAssuranceObservedAnswer, ...]],
+    failures: list[ReleaseGateFailure],
+) -> ReleaseGateAssuranceLevelReport:
+    if level == "level_0":
+        covered_fixture_count = len(fixtures)
+        failure_count = sum(
+            1
+            for failure in failures
+            if failure.deny_code in _ASSURANCE_LEVEL_0_DENY_CODES
+        )
+    else:
+        covered_fixture_count = sum(
+            1
+            for fixture in fixtures
+            if _has_assurance_behavior_coverage_for_fixture(
+                fixture,
+                observed_by_scenario_id=observed_by_scenario_id,
+                failures=failures,
+            )
+        )
+        fixture_ids = {fixture.metadata.scenario_id for fixture in fixtures}
+        behavior_failures = tuple(
+            failure
+            for failure in failures
+            if _is_assurance_behavior_failure_for_level(
+                failure,
+                fixture_ids=fixture_ids,
+            )
+        )
+        failure_count = len(behavior_failures)
+    if failure_count:
+        status: ReleaseGateAssuranceStatus = "fail"
+    elif covered_fixture_count:
+        status = "pass"
+    else:
+        status = "not_covered"
+
+    return ReleaseGateAssuranceLevelReport(
+        level=level,
+        label=label,
+        status=status,
+        fixture_count=len(fixtures),
+        covered_fixture_count=covered_fixture_count,
+        not_covered_fixture_count=len(fixtures) - covered_fixture_count,
+        failure_count=failure_count,
+    )
+
+
+def _is_assurance_behavior_failure_for_level(
+    failure: ReleaseGateFailure,
+    *,
+    fixture_ids: set[str],
+) -> bool:
+    return (
+        failure.scenario_id in fixture_ids
+        and failure.deny_code not in _ASSURANCE_LEVEL_0_DENY_CODES
+    )
+
+
+def _has_assurance_behavior_coverage_for_fixture(
+    fixture: GovernedAnswerFixture,
+    *,
+    observed_by_scenario_id: Mapping[str, tuple[ReleaseGateAssuranceObservedAnswer, ...]],
+    failures: list[ReleaseGateFailure],
+) -> bool:
+    scenario_id = fixture.metadata.scenario_id
+    if scenario_id not in observed_by_scenario_id:
+        return False
+    return not any(
+        failure.scenario_id == scenario_id
+        and failure.deny_code == "DENY_UNSUPPORTED_ASSURANCE_FIXTURE_COVERAGE"
+        for failure in failures
+    )
+
+
+def _assurance_artifact_validation_failure_for(
+    *,
+    artifact: Any,
+    error: ValidationError,
+    fixture_set: GovernedAnswerFixtureSet,
+) -> ReleaseGateFailure:
+    errors = error.errors()
+    artifact_map = artifact if isinstance(artifact, Mapping) else {}
+    return ReleaseGateFailure(
+        deny_code="DENY_MALFORMED_ASSURANCE_ARTIFACT",
+        source_id=fixture_set.source_profile.source_id,
+        source_family=fixture_set.source_profile.source_family,
+        scenario_id=_string_or_none(artifact_map.get("scenario_id")),
+        scenario_category=None,
+        detail="; ".join(
+            f"{_error_location(validation_error['loc'])}: {validation_error['msg']}"
+            for validation_error in errors
         ),
     )
 

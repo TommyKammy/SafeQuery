@@ -354,6 +354,20 @@ against both real source containers, and checks persisted execution audit
 evidence. If Docker / Colima is unavailable, it exits with an explicit
 smoke-not-run status instead of reporting a product pass.
 
+Governed-answer assurance release gate:
+
+```bash
+cd backend
+python3 -m app.cli.release_gate
+python3 -m app.cli.release_gate --observed-answer-artifacts <observed-answer-artifacts.json>
+```
+
+The release-gate report separates Level 0 fixture-contract validation, Level 1
+positive governed-answer correctness, Level 2 clarification and guard-denial
+boundaries, and Level 3 unsupported-answer boundaries. Fixture levels with no
+observed artifacts are reported as `not_covered` with explicit coverage counts
+instead of being treated as passed.
+
 Startup-guard verification:
 
 ```bash
