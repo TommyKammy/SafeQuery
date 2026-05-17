@@ -39,6 +39,10 @@ The recommendation depends on these Epic V sources:
 - `evaluation-harness.md`: requires positive, deny, malformed, metadata-only,
   schema-bound, runtime-unavailable, audit reconstruction, release-gate
   reconstruction, and operator-history coverage before activation.
+- `ADR-0015-semantic-contract-and-sql-guard-responsibility.md`: defines the
+  boundary that SQL safety does not prove business-intent correctness and that
+  semantic-contract readiness is required for Level 2 or Level 3 governed
+  answer assurance.
 
 Aurora PostgreSQL is selected for active implementation planning because it has
 the smallest safe planning distance from an existing active baseline:
@@ -50,6 +54,10 @@ the smallest safe planning distance from an existing active baseline:
   Aurora endpoint posture, TLS posture, engine version, timeout behavior,
   cancellation behavior, connector profile evidence, and flavor regression
   coverage.
+- Aurora can inherit PostgreSQL SQL Guard posture only for Level 1 SQL safety
+  until a reviewed semantic contract is bound to the source record. Without
+  semantic-contract readiness, Aurora PostgreSQL must not claim Level 2 or
+  Level 3 governed answer assurance.
 - The decision avoids treating MySQL-family or Oracle-specific dialect work as
   implicitly solved by nearby roadmap text.
 
@@ -122,6 +130,9 @@ The packet should include:
   secret reference pattern without exposing secret values
 - connector-profile and dialect-profile version plan showing exactly what is
   inherited from PostgreSQL and what is Aurora-specific
+- semantic-contract readiness summary that identifies approved mappings,
+  versioning, unsupported-intent handling, and whether the candidate is limited
+  to Level 1 SQL safety only
 - fixture manifest covering allow, deny, malformed, metadata-only,
   schema-bound, runtime-unavailable, audit reconstruction, release-gate
   reconstruction, and operator-history scenarios

@@ -87,15 +87,22 @@ Activation states:
   hint, source label, driver name, or connection shape claims it is available.
 - `activation-candidate`: all required evidence has been assembled for review,
   but connector dispatch remains disabled until the gate is approved.
-- `active-baseline`: the backend-owned registry, connector, guard, audit,
-  evaluation, dataset, and runtime controls are approved together and covered by
-  release-gate reconstruction.
+- `active-baseline`: the backend-owned registry, connector, guard, semantic
+  contract, audit, evaluation, dataset, and runtime controls are approved
+  together and covered by release-gate reconstruction.
 
 Required readiness evidence before `active-baseline`:
 
 - Guard readiness: the family has an approved dialect profile, canonicalization
   behavior, deny catalog mapping, deny corpus, parser-failure behavior, and
   profile-version drift test. The explicit blocker is missing guard readiness.
+- Semantic-contract readiness: the family or explicitly approved flavor
+  inheritance has approved semantic mappings, forward-only contract versioning,
+  historical reconstruction behavior, unsupported-intent handling, and release
+  evidence tied to the active source record. The explicit blocker is missing
+  semantic-contract readiness. Sources without semantic contracts may claim
+  Level 1 SQL safety only; they must not claim Level 2 or Level 3 governed
+  answer assurance.
 - Runtime readiness: the family has backend-owned connector selection, driver
   availability checks, timeout handling, cancellation behavior, source
   unavailable classification, rate or concurrency limits where applicable, and
@@ -157,10 +164,10 @@ No planned or unsupported family may dispatch connector code, appear in active
 execution coverage, or be treated as runtime-capable because it appears in a
 roadmap, matrix, sample config, adapter output, analyst artifact, MLflow trace,
 or operator-facing label. `activation-candidate` is also non-executable until
-the gate is approved. If any required guard, runtime, secrets, audit,
-evaluation, dataset-contract, or row-bounds evidence is missing, malformed,
-stale, or only inferred from a non-authoritative surface, SafeQuery must reject
-activation and keep the family non-executable.
+the gate is approved. If any required guard, semantic-contract, runtime,
+secrets, audit, evaluation, dataset-contract, or row-bounds evidence is missing,
+malformed, stale, or only inferred from a non-authoritative surface, SafeQuery
+must reject activation and keep the family non-executable.
 
 Runtime and secret evidence must be family-specific before activation:
 
