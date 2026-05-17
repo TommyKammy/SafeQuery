@@ -256,7 +256,7 @@ def test_intent_mapping_fails_closed_for_unsupported_epic_aa_fixture() -> None:
 @pytest.mark.parametrize(
     "question",
     [
-        "Show supplier refunds by region.",
+        "Show supplier spend by region.",
         "What is revenue by region?",
     ],
 )
@@ -274,3 +274,4 @@ def test_intent_mapping_fails_closed_when_no_approved_vendor_mapping_matches(
     assert mapping.dimensions == []
     assert mapping.filters == []
     assert mapping.clarification is not None
+    assert "does not match" in mapping.clarification

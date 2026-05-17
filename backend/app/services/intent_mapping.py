@@ -289,7 +289,7 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
     return IntentMappingOutput(
         status="unsupported",
         clarification=(
-            "The question does not map to an approved vendor spend semantic "
-            "contract intent."
+            "The question does not match an approved vendor spend semantic "
+            "contract intent mapping."
         ),
     )
