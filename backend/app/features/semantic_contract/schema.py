@@ -229,22 +229,7 @@ class SemanticContractDefinition(_SemanticContractModel):
 
     @model_validator(mode="after")
     def validate_contract_references(self) -> "SemanticContractDefinition":
-        source_ids = _unique_ids(
-            [item.source_id for item in self.source_bindings],
-            "Contract source bindings",
-        )
-        dimensions_by_id = _unique_concepts_by_id(
-            self.dimensions,
-            lambda item: item.dimension_id,
-            "Contract dimensions",
-        )
-        filters_by_id = _unique_concepts_by_id(
-            self.filters,
-            lambda item: item.filter_id,
-            "Contract filters",
-        )
-        _unique_ids([item.metric_id for item in self.metrics], "Contract metrics")
-        _require_unique_sensitive_concepts(self.sensitive_concepts)
+        source_ids, dimensions_by_id, filters_by_id = _index_contract_references(self)
 
         if not source_ids:
             raise ValueError("Contract must declare at least one allowed source.")
@@ -372,6 +357,32 @@ def _unique_concepts_by_id(
             raise ValueError(f"{label} must not contain duplicate values.")
         concepts_by_id[concept_id] = concept
     return concepts_by_id
+
+
+def _index_contract_references(
+    contract: SemanticContractDefinition,
+) -> tuple[
+    set[SourceIdentifier],
+    dict[SourceIdentifier, SemanticDimension],
+    dict[SourceIdentifier, SemanticFilter],
+]:
+    source_ids = _unique_ids(
+        [item.source_id for item in contract.source_bindings],
+        "Contract source bindings",
+    )
+    dimensions_by_id = _unique_concepts_by_id(
+        contract.dimensions,
+        lambda item: item.dimension_id,
+        "Contract dimensions",
+    )
+    filters_by_id = _unique_concepts_by_id(
+        contract.filters,
+        lambda item: item.filter_id,
+        "Contract filters",
+    )
+    _unique_ids([item.metric_id for item in contract.metrics], "Contract metrics")
+    _require_unique_sensitive_concepts(contract.sensitive_concepts)
+    return source_ids, dimensions_by_id, filters_by_id
 
 
 def _require_unique_sensitive_concepts(
