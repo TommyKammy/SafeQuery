@@ -89,6 +89,23 @@ def _fixtures_by_scenario_id(fixture_set: dict[str, Any]) -> dict[str, dict[str,
     }
 
 
+def _assert_fixture_mappings_follow_semantic_contract(
+    fixture_set: dict[str, Any],
+    semantic_contract: dict[str, Any],
+) -> None:
+    contract = validate_semantic_contract_definition(semantic_contract)
+    metrics_by_id = {metric.metric_id: metric for metric in contract.metrics}
+
+    for fixture in fixture_set["fixtures"]:
+        if fixture["case_type"] not in {"positive", "ambiguous"}:
+            continue
+        mapping = fixture["expected_semantic_mapping"]
+        assert mapping["metric"] in metrics_by_id
+        metric = metrics_by_id[mapping["metric"]]
+        assert set(mapping["dimensions"]) <= set(metric.allowed_dimensions)
+        assert set(mapping["filters"]) <= set(metric.default_filters)
+
+
 def test_governed_answer_vendor_spend_fixture_set_is_schema_valid() -> None:
     fixture_set = _load_fixture_set()
     validated = validate_governed_answer_fixture_set(fixture_set)
@@ -320,20 +337,53 @@ def test_governed_answer_vendor_spend_fixtures_cover_mvp_semantic_contract() -> 
 
 
 def test_governed_answer_fixture_mappings_reference_semantic_contract_concepts() -> None:
-    contract = validate_semantic_contract_definition(_load_semantic_contract())
     fixture_set = _load_fixture_set()
+    _assert_fixture_mappings_follow_semantic_contract(
+        fixture_set,
+        _load_semantic_contract(),
+    )
 
-    metric_ids = {metric.metric_id for metric in contract.metrics}
-    dimension_ids = {dimension.dimension_id for dimension in contract.dimensions}
-    filter_ids = {semantic_filter.filter_id for semantic_filter in contract.filters}
 
-    for fixture in fixture_set["fixtures"]:
-        if fixture["case_type"] not in {"positive", "ambiguous"}:
-            continue
-        mapping = fixture["expected_semantic_mapping"]
-        assert mapping["metric"] in metric_ids
-        assert set(mapping["dimensions"]) <= dimension_ids
-        assert set(mapping["filters"]) <= filter_ids
+def test_fixture_mapping_guard_rejects_metric_incompatible_contract_concepts() -> None:
+    fixture_set = _load_fixture_set()
+    semantic_contract = _load_semantic_contract()
+    semantic_contract["dimensions"].append(
+        {
+            "dimension_id": "invoice_id",
+            "label": "Invoice id",
+            "source_column": "finance.approved_vendor_spend.invoice_id",
+            "allowed_source_ids": ["business-postgres-source"],
+        }
+    )
+    semantic_contract["filters"].append(
+        {
+            "filter_id": "paid_spend_only",
+            "label": "Paid spend only",
+            "expression": "payment_status = 'paid'",
+            "allowed_source_ids": ["business-postgres-source"],
+            "locked": True,
+        }
+    )
+    fixture_set["fixtures"][0]["expected_semantic_mapping"]["dimensions"].append(
+        "invoice_id"
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_fixture_mappings_follow_semantic_contract(
+            fixture_set,
+            semantic_contract,
+        )
+
+    fixture_set = _load_fixture_set()
+    fixture_set["fixtures"][0]["expected_semantic_mapping"]["filters"].append(
+        "paid_spend_only"
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_fixture_mappings_follow_semantic_contract(
+            fixture_set,
+            semantic_contract,
+        )
 
 
 def test_governed_answer_vendor_spend_fixtures_cover_adversarial_fail_closed_suite() -> None:

@@ -417,6 +417,34 @@ def test_spend_definition_detection_catches_camel_compound_terms() -> None:
             ),
             "references undeclared ranking behavior",
         ),
+        (
+            lambda payload: payload["intent_mappings"][0].__setitem__(
+                "metric", "sum_other_approved_vendor_spend"
+            )
+            or payload["metrics"].append(
+                {
+                    "metric_id": "sum_other_approved_vendor_spend",
+                    "label": "Other approved vendor spend",
+                    "expression_owner": "finance_analytics",
+                    "expression": "SUM(other_approved_spend)",
+                    "allowed_source_ids": ["business-postgres-source"],
+                    "allowed_dimensions": ["vendor_name", "fiscal_quarter"],
+                    "default_filters": ["approved_spend_only"],
+                    "time_range_semantics": {
+                        "default_grain": "fiscal_quarter",
+                        "allowed_grains": ["fiscal_quarter"],
+                        "requires_explicit_range": False,
+                    },
+                }
+            ),
+            "references ranking behavior with a different order metric",
+        ),
+        (
+            lambda payload: payload["intent_mappings"][0].__setitem__(
+                "dimensions", ["vendor_name"]
+            ),
+            "references ranking partition dimensions missing from the mapping",
+        ),
     ],
 )
 def test_semantic_contract_schema_fails_closed_for_malformed_definitions(

@@ -573,13 +573,27 @@ def _validate_intent_mappings(
                 "filters not allowed by the metric"
             ),
         )
-        if (
-            intent_mapping.ranking_behavior_id is not None
-            and intent_mapping.ranking_behavior_id not in ranking_behaviors_by_id
-        ):
-            raise ValueError(
-                f"Intent mapping {intent_mapping.mapping_id} references "
-                "undeclared ranking behavior"
+        if intent_mapping.ranking_behavior_id is not None:
+            ranking_behavior = ranking_behaviors_by_id.get(
+                intent_mapping.ranking_behavior_id
+            )
+            if ranking_behavior is None:
+                raise ValueError(
+                    f"Intent mapping {intent_mapping.mapping_id} references "
+                    "undeclared ranking behavior"
+                )
+            if ranking_behavior.order_metric != intent_mapping.metric:
+                raise ValueError(
+                    f"Intent mapping {intent_mapping.mapping_id} references "
+                    "ranking behavior with a different order metric"
+                )
+            _require_subset(
+                ranking_behavior.partition_dimensions,
+                set(intent_mapping.dimensions),
+                (
+                    f"Intent mapping {intent_mapping.mapping_id} references "
+                    "ranking partition dimensions missing from the mapping"
+                ),
             )
         _require_subset(
             intent_mapping.ambiguity_rule_refs,
