@@ -39,6 +39,12 @@ SPEND_CONCEPT_PATTERN = re.compile(
     r"|(?<=[a-z0-9])(?:Spend|spend)(?=$|[^a-z0-9]|[A-Z0-9])"
 )
 SemanticConceptT = TypeVar("SemanticConceptT")
+SEMANTIC_CONTRACT_MODEL_CONFIG = ConfigDict(
+    alias_generator=to_camel,
+    extra="forbid",
+    frozen=True,
+    populate_by_name=True,
+)
 
 
 def _annotation_allows_mutable_collection(annotation: object) -> bool:
@@ -61,12 +67,7 @@ def _is_mutable_collection_type(candidate: object) -> bool:
 
 
 class _SemanticContractModel(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        extra="forbid",
-        frozen=True,
-        populate_by_name=True,
-    )
+    model_config = SEMANTIC_CONTRACT_MODEL_CONFIG
 
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs: object) -> None:
@@ -231,17 +232,20 @@ class SemanticContractDefinition(_SemanticContractModel):
             [item.source_id for item in self.source_bindings],
             "Contract source bindings",
         )
-        dimension_ids = _unique_ids(
-            [item.dimension_id for item in self.dimensions],
+        dimensions_by_id = _unique_concepts_by_id(
+            self.dimensions,
+            lambda item: item.dimension_id,
             "Contract dimensions",
         )
-        filter_ids = _unique_ids(
-            [item.filter_id for item in self.filters],
+        filters_by_id = _unique_concepts_by_id(
+            self.filters,
+            lambda item: item.filter_id,
             "Contract filters",
         )
         _unique_ids([item.metric_id for item in self.metrics], "Contract metrics")
-        _unique_ids(
-            [item.concept_id for item in self.sensitive_concepts],
+        _unique_concepts_by_id(
+            self.sensitive_concepts,
+            lambda item: item.concept_id,
             "Contract sensitive concepts",
         )
 
@@ -278,14 +282,13 @@ class SemanticContractDefinition(_SemanticContractModel):
             )
             _require_subset(
                 metric.allowed_dimensions,
-                dimension_ids,
+                set(dimensions_by_id),
                 f"Metric {metric.metric_id} references undeclared dimensions",
             )
             _require_referenced_concept_source_overlap(
                 metric.allowed_source_ids,
-                (dimension for dimension in self.dimensions),
+                dimensions_by_id,
                 metric.allowed_dimensions,
-                lambda dimension: dimension.dimension_id,
                 lambda dimension: dimension.allowed_source_ids,
                 (
                     f"Metric {metric.metric_id} references dimensions without "
@@ -294,14 +297,13 @@ class SemanticContractDefinition(_SemanticContractModel):
             )
             _require_subset(
                 metric.default_filters,
-                filter_ids,
+                set(filters_by_id),
                 f"Metric {metric.metric_id} references undeclared default filters",
             )
             _require_referenced_concept_source_overlap(
                 metric.allowed_source_ids,
-                (semantic_filter for semantic_filter in self.filters),
+                filters_by_id,
                 metric.default_filters,
-                lambda semantic_filter: semantic_filter.filter_id,
                 lambda semantic_filter: semantic_filter.allowed_source_ids,
                 (
                     f"Metric {metric.metric_id} references default filters without "
@@ -389,6 +391,20 @@ def _unique_ids(
     return set(values)
 
 
+def _unique_concepts_by_id(
+    concepts: Iterable[SemanticConceptT],
+    get_id: Callable[[SemanticConceptT], SourceIdentifier],
+    label: str,
+) -> dict[SourceIdentifier, SemanticConceptT]:
+    concepts_by_id: dict[SourceIdentifier, SemanticConceptT] = {}
+    for concept in concepts:
+        concept_id = get_id(concept)
+        if concept_id in concepts_by_id:
+            raise ValueError(f"{label} must not contain duplicate values.")
+        concepts_by_id[concept_id] = concept
+    return concepts_by_id
+
+
 def _require_subset(
     values: Iterable[object],
     allowed_values: set[object],
@@ -400,18 +416,16 @@ def _require_subset(
 
 def _require_referenced_concept_source_overlap(
     metric_source_ids: Iterable[SourceIdentifier],
-    concepts: Iterable[SemanticConceptT],
+    concepts_by_id: Mapping[SourceIdentifier, SemanticConceptT],
     referenced_ids: Iterable[SourceIdentifier],
-    get_id: Callable[[SemanticConceptT], SourceIdentifier],
     get_source_ids: Callable[[SemanticConceptT], Iterable[SourceIdentifier]],
     message: str,
 ) -> None:
     metric_source_id_set = set(metric_source_ids)
-    concepts_by_id = {get_id(concept): concept for concept in concepts}
     for referenced_id in referenced_ids:
         concept = concepts_by_id.get(referenced_id)
         if concept is None:
-            continue
+            raise ValueError(message)
         if metric_source_id_set.isdisjoint(set(get_source_ids(concept))):
             raise ValueError(message)
 

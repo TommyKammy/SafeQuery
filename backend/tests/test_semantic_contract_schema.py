@@ -85,10 +85,25 @@ def test_validated_semantic_contract_collections_are_immutable() -> None:
         contract.ambiguity_rules["unchecked_rule"] = "mutated after validation."
 
 
+def test_validated_contract_does_not_retain_mutable_payload_collections() -> None:
+    payload = _load_contract()
+
+    contract = validate_semantic_contract_definition(payload)
+    payload["metrics"][0]["allowed_source_ids"].append("undeclared-source")
+    payload["ambiguity_rules"]["unchecked_rule"] = "mutated after validation."
+
+    assert contract.metrics[0].allowed_source_ids == ("business-postgres-source",)
+    assert "unchecked_rule" not in contract.ambiguity_rules
+
+
 def test_semantic_contract_model_rejects_mutable_collection_annotations() -> None:
     with pytest.raises(TypeError, match="immutable collection annotations"):
         class MutableCollectionModel(_SemanticContractModel):
             values: list[str]
+
+    with pytest.raises(TypeError, match="immutable collection annotations"):
+        class MutableMappingModel(_SemanticContractModel):
+            values: dict[str, str]
 
     with pytest.raises(TypeError, match="immutable collection annotations"):
         class NestedMutableCollectionModel(_SemanticContractModel):
