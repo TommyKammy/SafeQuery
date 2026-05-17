@@ -432,11 +432,11 @@ def _require_metric_dimensions_compatible(
         set(dimensions_by_id),
         f"Metric {metric.metric_id} references undeclared dimensions",
     )
-    _require_referenced_concept_source_overlap(
+    _require_referenced_concepts_share_metric_source(
         metric.allowed_source_ids,
         dimensions_by_id,
         metric.allowed_dimensions,
-        lambda dimension: dimension.allowed_source_ids,
+        _get_dimension_source_ids,
         (
             f"Metric {metric.metric_id} references dimensions without "
             "compatible allowed sources"
@@ -453,11 +453,11 @@ def _require_metric_default_filters_compatible(
         set(filters_by_id),
         f"Metric {metric.metric_id} references undeclared default filters",
     )
-    _require_referenced_concept_source_overlap(
+    _require_referenced_concepts_share_metric_source(
         metric.allowed_source_ids,
         filters_by_id,
         metric.default_filters,
-        lambda semantic_filter: semantic_filter.allowed_source_ids,
+        _get_filter_source_ids,
         (
             f"Metric {metric.metric_id} references default filters without "
             "compatible allowed sources"
@@ -465,7 +465,19 @@ def _require_metric_default_filters_compatible(
     )
 
 
-def _require_referenced_concept_source_overlap(
+def _get_dimension_source_ids(
+    dimension: SemanticDimension,
+) -> Iterable[SourceIdentifier]:
+    return dimension.allowed_source_ids
+
+
+def _get_filter_source_ids(
+    semantic_filter: SemanticFilter,
+) -> Iterable[SourceIdentifier]:
+    return semantic_filter.allowed_source_ids
+
+
+def _require_referenced_concepts_share_metric_source(
     metric_source_ids: Iterable[SourceIdentifier],
     concepts_by_id: Mapping[SourceIdentifier, SemanticConceptT],
     referenced_ids: Iterable[SourceIdentifier],
