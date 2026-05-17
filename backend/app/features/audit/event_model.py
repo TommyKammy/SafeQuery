@@ -148,6 +148,7 @@ class SourceAwareAuditEvent(BaseModel):
     source_flavor: Optional[SourceFlavor] = None
     dialect_profile_version: Optional[PositiveInt] = None
     dataset_contract_version: Optional[PositiveInt] = None
+    semantic_contract_version: Optional[NonEmptyTrimmedString] = None
     schema_snapshot_version: Optional[PositiveInt] = None
     execution_policy_version: Optional[PositiveInt] = None
     connector_profile_version: Optional[PositiveInt] = None

@@ -38,6 +38,7 @@ export type OperatorWorkflowAuditEvent = {
   requestId: string;
   resultTruncated: boolean | null;
   rowCount: number | null;
+  semanticContractVersion?: string | null;
   sourceId: string;
 };
 
@@ -54,6 +55,7 @@ export type OperatorWorkflowCandidateAttempt = {
   primaryDenyCode: string | null;
   requestId: string;
   schemaSnapshotVersion: number;
+  semanticContractVersion?: string | null;
   sourceFamily: string;
   sourceFlavor: string | null;
   sourceId: string;
@@ -105,6 +107,7 @@ export type OperatorHistoryItem = {
   primaryDenyCode?: string | null;
   recordId: string;
   requestId?: string | null;
+  semanticContractVersion?: string | null;
   resultTruncated?: boolean | null;
   rowCount?: number | null;
   runState?: string | null;
@@ -205,6 +208,7 @@ function parseAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
     requestId,
     resultTruncated: typeof value.resultTruncated === "boolean" ? value.resultTruncated : null,
     rowCount: readOptionalNonNegativeInteger(value.rowCount) ?? null,
+    semanticContractVersion: readOptionalString(value.semanticContractVersion) ?? null,
     sourceId
   };
 }
@@ -253,6 +257,7 @@ function parseCandidateAttempt(value: unknown): OperatorWorkflowCandidateAttempt
     primaryDenyCode: readOptionalString(value.primaryDenyCode) ?? null,
     requestId,
     schemaSnapshotVersion,
+    semanticContractVersion: readOptionalString(value.semanticContractVersion) ?? null,
     sourceFamily,
     sourceFlavor: readOptionalString(value.sourceFlavor) ?? null,
     sourceId
@@ -468,6 +473,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     primaryDenyCode: readOptionalString(value.primaryDenyCode) ?? null,
     recordId,
     requestId: readOptionalString(value.requestId) ?? null,
+    semanticContractVersion: readOptionalString(value.semanticContractVersion) ?? null,
     resultTruncated:
       typeof value.resultTruncated === "boolean" ? value.resultTruncated : null,
     rowCount: readOptionalNonNegativeInteger(value.rowCount) ?? null,

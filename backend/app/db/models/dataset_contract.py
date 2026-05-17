@@ -52,6 +52,10 @@ class DatasetContract(Base):
         nullable=False,
     )
     contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    semantic_contract_version: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     owner_binding: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     security_review_binding: Mapped[Optional[str]] = mapped_column(
