@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union
@@ -35,6 +36,11 @@ def _all_scenarios() -> tuple[Union[MSSQLEvaluationScenario, PostgreSQLEvaluatio
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _governed_answer_fixture_count(fixture_path: Path) -> int:
+    fixture_payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    return len(fixture_payload["fixtures"])
 
 
 def test_backend_runtime_image_packages_mssql_odbc_runtime() -> None:
@@ -172,10 +178,11 @@ def test_release_gate_assurance_report_fails_on_unsupported_answer_claims() -> N
     )
 
     assert report.status == "fail"
+    fixture_count = _governed_answer_fixture_count(fixture_path)
     assert report.fixture_coverage_count == {
-        "total": 14,
+        "total": fixture_count,
         "covered": 1,
-        "not_covered": 13,
+        "not_covered": fixture_count - 1,
     }
     assert tuple(level.level for level in report.levels) == (
         "level_0",
@@ -203,10 +210,11 @@ def test_release_gate_assurance_report_fails_closed_on_zero_observed_coverage() 
     )
 
     assert report.status == "fail"
+    fixture_count = _governed_answer_fixture_count(fixture_path)
     assert report.fixture_coverage_count == {
-        "total": 14,
+        "total": fixture_count,
         "covered": 0,
-        "not_covered": 14,
+        "not_covered": fixture_count,
     }
     assert report.levels[0].status == "pass"
     assert report.levels[1].status == "not_covered"
