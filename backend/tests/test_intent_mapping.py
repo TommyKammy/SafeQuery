@@ -135,6 +135,26 @@ def test_intent_mapping_maps_explicit_fy_quarter_shorthand(question: str) -> Non
 @pytest.mark.parametrize(
     "question",
     [
+        "Show the top approved vendor spend records.",
+        "Show the approved vendor spend rows with the highest spend.",
+    ],
+)
+def test_intent_mapping_maps_bounded_top_approved_spend_rows(question: str) -> None:
+    mapping = map_question_intent(
+        question,
+        semantic_contract_version="approved_vendor_spend.v1",
+    )
+
+    assert mapping.status == "mapped"
+    assert mapping.mapping_id == "show_top_approved_vendor_spend_rows"
+    assert mapping.metric == "sum_approved_vendor_spend"
+    assert mapping.dimensions == ["vendor_name"]
+    assert mapping.filters == ["approved_spend_only"]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
         "Show refund totals by fiscal quarter.",
         "Show invoice totals by calendar quarter.",
         "Show revenue for Q3.",
@@ -256,6 +276,8 @@ def test_intent_mapping_fails_closed_for_unsupported_epic_aa_fixture() -> None:
 @pytest.mark.parametrize(
     "question",
     [
+        "Show approved vendor spend.",
+        "Summarize approved vendor spend by department.",
         "Show supplier spend by region.",
         "What is revenue by region?",
     ],

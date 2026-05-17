@@ -278,14 +278,28 @@ def map_question_intent(question: str, *, semantic_contract_version: str | None)
             ranking_behavior_id="top_approved_vendors_by_quarterly_spend",
             **base,
         )
-    if approved_vendor_intent:
+    if (
+        (
+            _contains_phrase(normalized, "approved vendor spend")
+            or _contains_phrase(normalized, "approved spend")
+        )
+        and (
+            _contains_phrase(normalized, "top")
+            or _contains_phrase(normalized, "highest spend")
+        )
+        and (
+            _contains_phrase(normalized, "records")
+            or _contains_phrase(normalized, "record")
+            or _contains_phrase(normalized, "rows")
+            or _contains_phrase(normalized, "row")
+        )
+    ):
         return IntentMappingOutput(
             status="mapped",
-            mapping_id="approved_vendor_spend_general",
-            dimensions=[],
+            mapping_id="show_top_approved_vendor_spend_rows",
+            dimensions=["vendor_name"],
             **base,
         )
-
     return IntentMappingOutput(
         status="unsupported",
         clarification=(
