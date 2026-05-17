@@ -120,6 +120,17 @@ def test_non_spend_contract_does_not_require_spend_definition_ambiguity() -> Non
     assert "spend_definition" not in contract.ambiguity_rules
 
 
+def test_metric_expression_owner_does_not_drive_spend_definition_ambiguity() -> None:
+    payload = _make_non_spend_contract(deepcopy(_load_contract()))
+    payload["metrics"][0]["expression_owner"] = "spend_analytics"
+    payload["ambiguity_rules"].pop("spend_definition")
+
+    contract = validate_semantic_contract_definition(payload)
+
+    assert contract.metrics[0].expression_owner == "spend_analytics"
+    assert "spend_definition" not in contract.ambiguity_rules
+
+
 def test_spend_definition_detection_uses_tokens_not_substrings() -> None:
     payload = _make_non_spend_contract(deepcopy(_load_contract()))
     payload["contract_id"] = "suspended_ticket_volume"
@@ -158,6 +169,7 @@ def test_spend_definition_detection_catches_compound_spend_terms() -> None:
     [
         ("sum_spending_total", "SUM(spending_amount)"),
         ("sum_spend2_amount", "SUM(spend2_amount)"),
+        ("sum_totalspending", "SUM(totalspending_amount)"),
     ],
 )
 def test_spend_definition_detection_catches_spend_prefixed_terms(
