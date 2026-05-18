@@ -48,6 +48,12 @@ def test_review_llm_adapter_rejects_malformed_output() -> None:
         parse_review_llm_adapter_output(json.dumps({"status": "ready"}))
 
 
+@pytest.mark.parametrize("payload", [b"\xff", bytearray(b"\xff")])
+def test_review_llm_adapter_rejects_invalid_utf8_bytes(payload: bytes | bytearray) -> None:
+    with pytest.raises(ReviewLLMAdapterOutputError, match="malformed"):
+        parse_review_llm_adapter_output(payload)
+
+
 @pytest.mark.parametrize(
     "field_name",
     [
@@ -59,6 +65,17 @@ def test_review_llm_adapter_rejects_malformed_output() -> None:
 )
 def test_review_llm_adapter_rejects_execution_authorizing_fields(field_name: str) -> None:
     payload = {**_ready_payload(), field_name: True}
+
+    with pytest.raises(ReviewLLMAdapterOutputError, match="execution authority"):
+        parse_review_llm_adapter_output(payload)
+
+
+def test_review_llm_adapter_rejects_deep_execution_authority_without_recursion_error() -> None:
+    nested: dict[str, object] = {"execution_authorized": True}
+    for _ in range(1500):
+        nested = {"wrap": [nested]}
+
+    payload = {**_ready_payload(), "untrusted_context": nested}
 
     with pytest.raises(ReviewLLMAdapterOutputError, match="execution authority"):
         parse_review_llm_adapter_output(payload)

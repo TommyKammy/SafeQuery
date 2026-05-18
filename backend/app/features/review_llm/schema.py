@@ -99,7 +99,7 @@ def parse_review_llm_adapter_output(
 
     try:
         return ReviewLLMAdapterOutput.model_validate(decoded)
-    except ValidationError as exc:
+    except (RecursionError, ValidationError) as exc:
         raise ReviewLLMAdapterOutputError(
             f"Review LLM adapter output is malformed: {exc}"
         ) from exc
@@ -113,7 +113,12 @@ def _decode_review_llm_output(
 
     try:
         decoded = json.loads(output)
-    except (TypeError, json.JSONDecodeError) as exc:
+    except (
+        RecursionError,
+        TypeError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
         raise ReviewLLMAdapterOutputError(
             "Review LLM adapter output is malformed: expected a JSON object."
         ) from exc
@@ -127,22 +132,35 @@ def _decode_review_llm_output(
 
 
 def _find_execution_authority_key(value: object) -> str | None:
-    if isinstance(value, Mapping):
-        for key, nested_value in value.items():
-            normalized_key = str(key).strip()
-            snake_key = "".join(
-                f"_{character.lower()}" if character.isupper() else character
-                for character in normalized_key
-            ).strip("_")
-            if snake_key.casefold() in _EXECUTION_AUTHORITY_KEYS:
-                return str(key)
-            nested_match = _find_execution_authority_key(nested_value)
-            if nested_match is not None:
-                return nested_match
-    elif isinstance(value, list):
-        for item in value:
-            nested_match = _find_execution_authority_key(item)
-            if nested_match is not None:
-                return nested_match
+    stack = [value]
+    seen_container_ids: set[int] = set()
+
+    while stack:
+        current_value = stack.pop()
+        if isinstance(current_value, Mapping):
+            container_id = id(current_value)
+            if container_id in seen_container_ids:
+                continue
+            seen_container_ids.add(container_id)
+
+            for key, nested_value in current_value.items():
+                normalized_key = str(key).strip()
+                snake_key = "".join(
+                    f"_{character.lower()}" if character.isupper() else character
+                    for character in normalized_key
+                ).strip("_")
+                if snake_key.casefold() in _EXECUTION_AUTHORITY_KEYS:
+                    return str(key)
+                if isinstance(nested_value, (Mapping, list)):
+                    stack.append(nested_value)
+        elif isinstance(current_value, list):
+            container_id = id(current_value)
+            if container_id in seen_container_ids:
+                continue
+            seen_container_ids.add(container_id)
+
+            for item in current_value:
+                if isinstance(item, (Mapping, list)):
+                    stack.append(item)
 
     return None
