@@ -258,7 +258,7 @@ def test_answer_plan_redacts_escaped_quoted_secret_values() -> None:
     review = parse_review_llm_adapter_output(_review_payload())
 
     plan = build_answer_plan_from_review(
-        question=r'Inspect {\\"password\\":\\"hunter2\\"} safely.',
+        question=r'Inspect {\\"password\\":\\"hunter2\\"} safely, then use token="alpha \"beta\" gamma".',
         review=review,
         semantic_mapping={
             "contract_version": "approved_vendor_spend.v1",
@@ -275,6 +275,35 @@ def test_answer_plan_redacts_escaped_quoted_secret_values() -> None:
 
     assert "hunter2" not in serialized
     assert "raw-token" not in serialized
+    assert "alpha" not in serialized
+    assert "beta" not in serialized
+    assert "gamma" not in serialized
+
+
+def test_answer_plan_redacts_quoted_credential_uri_with_spaces() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question='Use connection="postgresql://reader:multi word password@db/business" safely.',
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": 'Driver failed for "mssql://reader:space secret@warehouse/finance"',
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "postgresql://reader:multi word password@db/business" not in serialized
+    assert "mssql://reader:space secret@warehouse/finance" not in serialized
+    assert "multi word password" not in serialized
+    assert "space secret" not in serialized
+    assert "warehouse" not in serialized
 
 
 def test_answer_plan_redacts_multiline_key_value_secret_values() -> None:
@@ -401,6 +430,37 @@ def test_answer_plan_rejects_non_string_semantic_evidence_items() -> None:
     assert "raw-token" not in serialized
 
 
+def test_answer_plan_rejects_mapping_metadata_for_string_lists() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Which approved vendors had the highest quarterly spend?",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+            "dimensions": {"customer": "alice", "amount": "999.00"},
+            "filters": {"token": "raw-token"},
+        },
+        candidate_metadata={
+            "candidate_id": "candidate-123",
+            "selected_columns": {"customer": "alice", "amount": "999.00"},
+        },
+        guard_metadata={"guard_decision": "allow"},
+    )
+
+    wire_payload = plan.to_wire_payload()
+    assert wire_payload["semanticEvidence"][0]["dimensions"] == []
+    assert wire_payload["semanticEvidence"][0]["filters"] == []
+    assert wire_payload["candidateSummary"]["selectedColumns"] == []
+    serialized = json.dumps(wire_payload, sort_keys=True).lower()
+    assert "customer" not in serialized
+    assert "amount" not in serialized
+    assert "alice" not in serialized
+    assert "999.00" not in serialized
+    assert "raw-token" not in serialized
+
+
 def test_answer_plan_orders_unordered_string_metadata_deterministically() -> None:
     review = parse_review_llm_adapter_output(_review_payload())
 
@@ -486,3 +546,45 @@ def test_answer_plan_rejects_overlong_source_id_without_failing() -> None:
     candidate_summary = plan.to_wire_payload()["candidateSummary"]
     assert candidate_summary["candidateId"] == "candidate-123"
     assert "sourceId" not in candidate_summary
+
+
+def test_answer_plan_rejects_lossy_row_limit_coercions() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    for row_limit in ("50", 50.8, True):
+        plan = build_answer_plan_from_review(
+            question="Which approved vendors had the highest quarterly spend?",
+            review=review,
+            semantic_mapping={
+                "contract_version": "approved_vendor_spend.v1",
+                "classification": "supported",
+            },
+            candidate_metadata={
+                "candidate_id": "candidate-123",
+                "row_limit": row_limit,
+            },
+            guard_metadata={"guard_decision": "allow"},
+        )
+
+        assert "rowLimit" not in plan.to_wire_payload()["candidateSummary"]
+
+
+def test_answer_plan_normalizes_semantic_classification_before_risk_check() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Show quarterly spend net of refunds.",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": " Unsupported ",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={"guard_decision": "allow"},
+    )
+
+    assert (
+        "Semantic mapping is unsupported; do not present the plan as a final answer."
+        in plan.risks
+    )
+    assert plan.semantic_evidence[0].classification == "unsupported"

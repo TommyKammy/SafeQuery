@@ -33,7 +33,10 @@ _REDACTED = "[redacted]"
 _SOURCE_IDENTIFIER_ADAPTER = TypeAdapter(SourceIdentifier)
 _SUPPORTED_SOURCE_FAMILIES = frozenset(("mssql", "postgresql"))
 _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"']+"),
+    re.compile(
+        r"(?i)\b[a-z][a-z0-9+.-]*://"
+        r"(?:(?=[^\"'\r\n;,}]*@)[^\"'\r\n;,}]+|[^\s\"']+)"
+    ),
     re.compile(
         r"(?i)\b(?:driver|server|database|uid|pwd|password)\s*=\s*"
         r"(?:\{[^}]*\}|\"[^\"]*\"|'[^']*'|[^;,\"'}]+)"
@@ -42,7 +45,7 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"(?i)(?<![a-z0-9])[\"']?(?:access[_-]?token|refresh[_-]?token|"
         r"id[_-]?token|token|secret|password|passwd|pwd|credential|"
         r"client[_-]?secret|api[_-]?key|private[_-]?key)(?:\\*[\"'])?\s*[:=]\s*"
-        r"(?:\\*[\"'][^\"']*(?:\\*[\"'])|\{[^}]*\}|[^;,\"'}]+)"
+        r"(?:\\*\"(?:\\.|[^\"\\])*\\*\"|\\*'(?:\\.|[^'\\])*\\*'|\{[^}]*\}|[^;,}]+)"
     ),
     re.compile(r"(?i)\b(?:basic|bearer)\s+[a-z0-9._~+/=-]+"),
     re.compile(
@@ -166,7 +169,9 @@ def _build_semantic_evidence(
     return AnswerPlanSemanticEvidence(
         contract_version=_optional_sanitized_string(safe_mapping.get("contract_version")),
         mapping_id=_optional_sanitized_string(safe_mapping.get("mapping_id")),
-        classification=_optional_sanitized_string(safe_mapping.get("classification")),
+        classification=_normalized_classification_or_none(
+            safe_mapping.get("classification")
+        ),
         metric=_optional_sanitized_string(safe_mapping.get("metric")),
         dimensions=_sanitize_string_items(safe_mapping.get("dimensions")),
         filters=_sanitize_string_items(safe_mapping.get("filters")),
@@ -271,10 +276,15 @@ def _build_risks(
     semantic_evidence: AnswerPlanSemanticEvidence,
 ) -> tuple[str, ...]:
     risks = list(_sanitize_text_items(review.risk_flags))
-    if semantic_evidence.classification in {"ambiguous", "unsupported"}:
+    classification = (
+        semantic_evidence.classification.casefold()
+        if semantic_evidence.classification
+        else None
+    )
+    if classification in {"ambiguous", "unsupported"}:
         risks.append(
             "Semantic mapping is "
-            f"{semantic_evidence.classification}; do not present the plan as a final answer."
+            f"{classification}; do not present the plan as a final answer."
         )
     if review.status == "blocked":
         risks.append("Review output is blocked and must not be used as an answer.")
@@ -306,7 +316,9 @@ def _sanitize_string_items(value: object) -> tuple[str, ...]:
         return ()
     if isinstance(value, str):
         return _sanitize_text_items((value,))
-    if not isinstance(value, Iterable):
+    if isinstance(value, Mapping):
+        return ()
+    if not isinstance(value, (list, tuple, set, frozenset)):
         return ()
 
     items = tuple(value)
@@ -337,14 +349,19 @@ def _optional_sanitized_string(value: object) -> str | None:
     return sanitized
 
 
+def _normalized_classification_or_none(value: object) -> str | None:
+    sanitized = _optional_sanitized_string(value)
+    if sanitized is None:
+        return None
+    return sanitized.casefold()
+
+
 def _positive_int_or_none(value: object) -> int | None:
     if value is None:
         return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, bool) or not isinstance(value, int):
         return None
-    return parsed if parsed > 0 else None
+    return value if value > 0 else None
 
 
 def _guard_decision_or_none(value: object) -> Optional[Literal["allow", "reject"]]:
