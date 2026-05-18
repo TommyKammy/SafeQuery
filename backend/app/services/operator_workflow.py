@@ -12,6 +12,7 @@ from app.db.models.preview import (
     PreviewAuditEvent,
     PreviewCandidate,
     PreviewCandidateApproval,
+    PreviewReviewDecision,
     PreviewRequest,
 )
 from app.db.models.schema_snapshot import SchemaSnapshot
@@ -105,6 +106,28 @@ class OperatorWorkflowHistoryItem(BaseModel):
     candidate_attempts: list["OperatorWorkflowCandidateAttemptSummary"] = Field(
         default_factory=list,
         serialization_alias="candidateAttempts",
+    )
+    review_evidence: list["OperatorWorkflowReviewEvidence"] = Field(
+        default_factory=list,
+        serialization_alias="reviewEvidence",
+    )
+
+
+class OperatorWorkflowReviewEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_decision_id: str = Field(serialization_alias="reviewDecisionId")
+    review_status: str = Field(serialization_alias="reviewStatus")
+    review_contract_version: str = Field(serialization_alias="reviewContractVersion")
+    audit_event_id: str = Field(serialization_alias="auditEventId")
+    assumptions: list[str] = Field(default_factory=list)
+    risk_flags: list[str] = Field(
+        default_factory=list,
+        serialization_alias="riskFlags",
+    )
+    clarifying_questions: list[str] = Field(
+        default_factory=list,
+        serialization_alias="clarifyingQuestions",
     )
 
 
@@ -457,6 +480,41 @@ def _read_payload_items(value: object) -> list[dict[str, object]]:
     return [item for item in value if isinstance(item, dict)]
 
 
+def _read_text_items(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def _review_evidence_summary(
+    review: PreviewReviewDecision,
+) -> OperatorWorkflowReviewEvidence:
+    return OperatorWorkflowReviewEvidence(
+        review_decision_id=review.review_decision_id,
+        review_status=review.review_status,
+        review_contract_version=review.review_contract_version,
+        audit_event_id=str(review.audit_event_id),
+        assumptions=_read_text_items(review.assumptions),
+        risk_flags=_read_text_items(review.risk_flags),
+        clarifying_questions=_read_text_items(review.clarifying_questions),
+    )
+
+
+def _review_evidence_by_candidate_id(
+    reviews: list[PreviewReviewDecision],
+) -> dict[str, list[OperatorWorkflowReviewEvidence]]:
+    evidence_by_candidate: dict[str, list[OperatorWorkflowReviewEvidence]] = {}
+    for review in sorted(
+        reviews,
+        key=lambda item: (_as_utc_datetime(item.occurred_at), item.review_decision_id),
+        reverse=True,
+    ):
+        evidence_by_candidate.setdefault(review.candidate_id, []).append(
+            _review_evidence_summary(review)
+        )
+    return evidence_by_candidate
+
+
 def _execution_run_id_for_event(event: PreviewAuditEvent) -> str:
     for item in _read_payload_items(event.audit_payload.get("executed_evidence")):
         if (
@@ -748,6 +806,7 @@ def _build_operator_history(
     requests = session.execute(select(PreviewRequest)).scalars().all()
     candidates = session.execute(select(PreviewCandidate)).scalars().all()
     approvals = session.execute(select(PreviewCandidateApproval)).scalars().all()
+    review_decisions = session.execute(select(PreviewReviewDecision)).scalars().all()
     audit_events = (
         session.execute(
             select(PreviewAuditEvent).order_by(
@@ -775,6 +834,7 @@ def _build_operator_history(
         for candidate in candidates
         if candidate.candidate_id in candidate_attempts
     }
+    review_evidence = _review_evidence_by_candidate_id(review_decisions)
 
     history: list[OperatorWorkflowHistoryItem] = []
     for event, run_state in _terminal_run_events(audit_events):
@@ -798,6 +858,11 @@ def _build_operator_history(
                 retrieved_citations=_retrieved_citations_for_event(event),
                 candidate_attempts=(
                     candidate_attempts.get(event.candidate_id, [])
+                    if event.candidate_id is not None
+                    else []
+                ),
+                review_evidence=(
+                    review_evidence.get(event.candidate_id, [])
                     if event.candidate_id is not None
                     else []
                 ),
@@ -841,6 +906,7 @@ def _build_operator_history(
                     source_id=candidate.revised_from_source_id,
                 ),
                 candidate_attempts=candidate_attempts.get(candidate.candidate_id, []),
+                review_evidence=review_evidence.get(candidate.candidate_id, []),
             )
         )
 

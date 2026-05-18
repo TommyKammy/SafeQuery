@@ -15,6 +15,7 @@ from app.db.models.preview import (
     PreviewAuditEvent,
     PreviewCandidate,
     PreviewCandidateApproval,
+    PreviewReviewDecision,
     PreviewRequest,
 )
 from app.db.models.schema_snapshot import SchemaSnapshot
@@ -31,6 +32,7 @@ from app.features.guard import (
     evaluate_postgresql_sql_guard,
 )
 from app.features.operator_history.payloads import GuardStatus
+from app.features.review_llm.schema import ReviewLLMAdapterOutput
 from app.services.candidate_lifecycle import (
     CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY,
     CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
@@ -1027,6 +1029,110 @@ def persist_execution_audit_events(
         session.rollback()
         raise PreviewSubmissionContractError(
             "Execution audit events could not be persisted consistently."
+        ) from exc
+
+
+def persist_review_decision(
+    session: Session,
+    *,
+    candidate_id: str,
+    review: ReviewLLMAdapterOutput,
+    audit_event_id: UUID,
+    occurred_at: datetime,
+) -> str:
+    try:
+        preview_candidate = session.execute(
+            select(PreviewCandidate).where(
+                PreviewCandidate.candidate_id == candidate_id
+            )
+        ).scalar_one_or_none()
+        if preview_candidate is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision cannot be persisted without a bound preview candidate.",
+            )
+
+        assert preview_candidate is not None
+        preview_request = session.get(
+            PreviewRequest,
+            preview_candidate.preview_request_id,
+        )
+        if preview_request is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision cannot be persisted without a bound preview request.",
+            )
+
+        assert preview_request is not None
+        audit_event = session.execute(
+            select(PreviewAuditEvent).where(
+                PreviewAuditEvent.event_id == audit_event_id
+            )
+        ).scalar_one_or_none()
+        if audit_event is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision cannot be persisted without an audit event anchor.",
+            )
+        assert audit_event is not None
+        if audit_event.request_id != preview_candidate.request_id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision audit anchor must stay bound to the preview request.",
+            )
+        if audit_event.candidate_id != preview_candidate.candidate_id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision audit anchor must stay bound to the preview candidate.",
+            )
+        if audit_event.source_id != preview_candidate.source_id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision audit anchor must stay bound to the preview source.",
+            )
+
+        existing = session.execute(
+            select(PreviewReviewDecision).where(
+                PreviewReviewDecision.candidate_id == preview_candidate.candidate_id
+            )
+        ).scalar_one_or_none()
+        review_decision_id = f"review-{preview_candidate.candidate_id}"
+        if existing is None:
+            existing = PreviewReviewDecision(
+                review_decision_id=review_decision_id,
+                candidate_id=preview_candidate.candidate_id,
+                preview_candidate_id=preview_candidate.id,
+            )
+            session.add(existing)
+        elif existing.preview_candidate_id != preview_candidate.id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision cannot be rebound to a different preview candidate.",
+            )
+
+        existing.request_id = preview_candidate.request_id
+        existing.audit_event_id = audit_event.event_id
+        existing.registered_source_id = preview_candidate.registered_source_id
+        existing.source_id = preview_candidate.source_id
+        existing.source_family = preview_candidate.source_family
+        existing.source_flavor = preview_candidate.source_flavor
+        existing.dataset_contract_version = preview_candidate.dataset_contract_version
+        existing.semantic_contract_version = preview_candidate.semantic_contract_version
+        existing.schema_snapshot_version = preview_candidate.schema_snapshot_version
+        existing.review_contract_version = review.contract_version
+        existing.review_status = review.status
+        existing.review_confidence = review.confidence
+        existing.assumptions = list(review.assumptions)
+        existing.risk_flags = list(review.risk_flags)
+        existing.clarifying_questions = list(review.clarifying_questions)
+        existing.review_payload = review.to_wire_payload()
+        existing.occurred_at = occurred_at
+        session.commit()
+        return review_decision_id
+    except IntegrityError as exc:
+        session.rollback()
+        raise PreviewSubmissionContractError(
+            "Review decision could not be persisted consistently."
         ) from exc
 
 

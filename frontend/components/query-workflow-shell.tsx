@@ -11,6 +11,7 @@ import type {
   OperatorWorkflowExecutedEvidence,
   OperatorHistoryItem,
   OperatorWorkflowRevisionContext,
+  OperatorWorkflowReviewEvidence,
   OperatorWorkflowRetrievedCitation,
   OperatorWorkflowSnapshot,
   SourceOption
@@ -163,6 +164,7 @@ type AuthoritativeCandidatePreview = {
   executedEvidence: OperatorWorkflowExecutedEvidence[];
   guardStatus: string;
   requestId?: string;
+  reviewEvidence: OperatorWorkflowReviewEvidence[];
   retrievedCitations: OperatorWorkflowRetrievedCitation[];
   sourceId: string;
   sourceLabel?: string;
@@ -175,6 +177,7 @@ type AuthoritativeRunContext = {
   lifecycleState: string;
   lifecycleTimestamp: string;
   primaryDenyCode?: string | null;
+  reviewEvidence: OperatorWorkflowReviewEvidence[];
   retrievedCitations: OperatorWorkflowRetrievedCitation[];
   resultTruncated?: boolean | null;
   resultRows?: ResultRow[];
@@ -1087,6 +1090,7 @@ function findAuthoritativeCandidatePreview(
     executedEvidence: candidate.executedEvidence,
     guardStatus: candidate.guardStatus ?? "pending",
     requestId: candidate.requestId ?? undefined,
+    reviewEvidence: candidate.reviewEvidence,
     retrievedCitations: candidate.retrievedCitations,
     sourceId: candidate.sourceId,
     sourceLabel: candidate.sourceLabel
@@ -1120,6 +1124,7 @@ function findAuthoritativeRunContext(
     lifecycleState: run.lifecycleState,
     lifecycleTimestamp: run.occurredAt,
     primaryDenyCode: run.primaryDenyCode,
+    reviewEvidence: run.reviewEvidence,
     retrievedCitations: run.retrievedCitations,
     resultTruncated: run.resultTruncated,
     rowCount: run.rowCount,
@@ -1687,6 +1692,7 @@ function renderAuditEvidencePanel(
   auditEvents: OperatorWorkflowAuditEvent[],
   executedEvidence: OperatorWorkflowExecutedEvidence[],
   retrievedCitations: OperatorWorkflowRetrievedCitation[],
+  reviewEvidence: OperatorWorkflowReviewEvidence[],
   history: OperatorHistoryItem[],
   question: string
 ) {
@@ -1738,7 +1744,8 @@ function renderAuditEvidencePanel(
 
       {auditEvents.length === 0 &&
       executedEvidence.length === 0 &&
-      retrievedCitations.length === 0 ? (
+      retrievedCitations.length === 0 &&
+      reviewEvidence.length === 0 ? (
         <div className="placeholder-block">
           <p className="placeholder-title">No audit evidence selected</p>
           <p>Open a history row with persisted audit context to inspect lifecycle evidence.</p>
@@ -1798,6 +1805,26 @@ function renderAuditEvidencePanel(
               <span>{citation.assetId}</span>
               <span>{citation.authority}</span>
               <span>Cannot authorize execution: {String(citation.canAuthorizeExecution)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {reviewEvidence.length > 0 ? (
+        <div className="evidence-list" aria-label="review evidence">
+          {reviewEvidence.map((review) => (
+            <div className="evidence-item" key={review.reviewDecisionId}>
+              <span className="meta-label">Review evidence</span>
+              <strong>{review.reviewStatus}</strong>
+              <span>{review.reviewDecisionId}</span>
+              <span>{review.reviewContractVersion}</span>
+              <span>Audit event {review.auditEventId}</span>
+              {review.riskFlags.map((risk) => (
+                <span key={`risk:${risk}`}>{risk}</span>
+              ))}
+              {review.clarifyingQuestions.map((question) => (
+                <span key={`clarifying:${question}`}>{question}</span>
+              ))}
             </div>
           ))}
         </div>
@@ -2180,6 +2207,8 @@ export function QueryWorkflowShell({
     historyRunContext?.executedEvidence ?? candidatePreview?.executedEvidence ?? [];
   const selectedRetrievedCitations =
     historyRunContext?.retrievedCitations ?? candidatePreview?.retrievedCitations ?? [];
+  const selectedReviewEvidence =
+    historyRunContext?.reviewEvidence ?? candidatePreview?.reviewEvidence ?? [];
   const firstRunGuidance = getFirstRunGuidance(operatorWorkflow);
   const operatorRecoveryGuidance = getOperatorRecoveryGuidance(
     normalizedState,
@@ -2344,6 +2373,7 @@ export function QueryWorkflowShell({
           executedEvidence: [],
           guardStatus: result.guardStatus,
           requestId: result.requestId,
+          reviewEvidence: [],
           retrievedCitations: [],
           sourceId: result.sourceId,
           sourceLabel: selectedSource.displayLabel
@@ -2370,6 +2400,7 @@ export function QueryWorkflowShell({
           executedEvidence: [],
           guardStatus: result.guardStatus,
           requestId: result.requestId,
+          reviewEvidence: [],
           retrievedCitations: [],
           sourceId: result.sourceId,
           sourceLabel: selectedSource.displayLabel
@@ -2395,6 +2426,7 @@ export function QueryWorkflowShell({
           executedEvidence: [],
           guardStatus: result.guardStatus,
           requestId: result.requestId,
+          reviewEvidence: [],
           retrievedCitations: [],
           sourceId: result.sourceId,
           sourceLabel: selectedSource.displayLabel
@@ -2429,6 +2461,7 @@ export function QueryWorkflowShell({
         executedEvidence: [],
         guardStatus: result.guardStatus,
         requestId: result.requestId,
+        reviewEvidence: [],
         retrievedCitations: [],
         sourceId: result.sourceId,
         sourceLabel: selectedSource.displayLabel
@@ -2495,6 +2528,7 @@ export function QueryWorkflowShell({
             executedEvidence: [],
             lifecycleState: "canceled",
             lifecycleTimestamp: new Date().toISOString(),
+            reviewEvidence: candidatePreview.reviewEvidence,
             retrievedCitations: [],
             runIdentity: candidatePreview.candidateId,
             runState: "canceled",
@@ -2553,6 +2587,7 @@ export function QueryWorkflowShell({
         executedEvidence: result.executedEvidence,
         lifecycleState: nextState,
         lifecycleTimestamp: new Date().toISOString(),
+        reviewEvidence: candidatePreview.reviewEvidence,
         retrievedCitations: [],
         resultTruncated: result.resultTruncated,
         resultRows: result.rows,
@@ -3034,6 +3069,7 @@ export function QueryWorkflowShell({
             selectedAuditEvents,
             selectedExecutedEvidence,
             selectedRetrievedCitations,
+            selectedReviewEvidence,
             operatorWorkflow.history,
             submittedQuestion
           )}
