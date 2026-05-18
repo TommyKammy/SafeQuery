@@ -34,26 +34,13 @@ This SQL-backed path is the required Phase 1 core flow. Governed search, analyst
 
    The adapter returns candidate SQL to the application. This output is not yet trusted for execution.
 
-6. Optional Review LLM critique
-
-   If the Review LLM is enabled, the backend sends a separate minimized review
-   request through the Review LLM adapter after generation. The review prompt
-   emphasizes critique, uncertainty, assumptions, and boundary risks. The review
-   input excludes generation chain-of-thought, hidden scratchpads, source
-   credentials, connection strings, result rows, and runtime secrets.
-
-   Review uses `SAFEQUERY_REVIEW_LLM_*` configuration, which can point to a
-   different model or runtime from `SAFEQUERY_SQL_GENERATION_*`. This separation
-   mitigates correlated failure but does not prove independence or make the
-   Review LLM authoritative.
-
-7. Canonicalization and bounded-SQL preparation
+6. Canonicalization and bounded-SQL preparation
 
    Before guard evaluation, the backend canonicalizes the candidate SQL and applies any required row-bounding rewrite for the Phase 1 bounded execution contract.
 
    The SQL that is hashed, guarded, previewed, and executed is the same canonical SQL.
 
-8. SQL Guard evaluation
+7. SQL Guard evaluation
 
    The application validates candidate SQL using application-owned guardrails such as:
 
@@ -64,6 +51,22 @@ This SQL-backed path is the required Phase 1 core flow. Governed search, analyst
    - execution limit checks
 
    Guard evaluation runs against the canonicalized candidate SQL prepared in the previous step.
+
+8. Optional Review LLM critique
+
+   If the Review LLM is enabled, the backend sends a separate minimized review
+   request through the Review LLM adapter after canonicalization and SQL Guard
+   evaluation. The review prompt emphasizes critique, uncertainty, assumptions,
+   and boundary risks. The review input excludes generation chain-of-thought,
+   hidden scratchpads, source credentials, connection strings, result rows, and
+   runtime secrets.
+
+   Review uses `SAFEQUERY_REVIEW_LLM_*` configuration, which can point to a
+   different model or runtime from `SAFEQUERY_SQL_GENERATION_*`. This separation
+   mitigates correlated failure but does not prove independence or make the
+   Review LLM authoritative. Review output can add blocking or clarification
+   evidence, but it cannot turn a SQL Guard denial into approval or authorize
+   execution on its own.
 
 9. Candidate persistence
 
