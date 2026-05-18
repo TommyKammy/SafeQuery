@@ -48,6 +48,18 @@ from app.features.evaluation.release_gate import (
     build_release_gate_assurance_report,
     reconstruct_release_gate,
 )
+from app.features.evaluation.review_llm_calibration import (
+    ReviewLLMCalibrationCategory,
+    ReviewLLMCalibrationCategoryReport,
+    ReviewLLMCalibrationEvidence,
+    ReviewLLMCalibrationFixture,
+    ReviewLLMCalibrationFixtureSet,
+    ReviewLLMCalibrationFormatStatus,
+    ReviewLLMCalibrationReport,
+    ReviewLLMCalibrationStatus,
+    build_review_llm_calibration_report,
+    validate_review_llm_calibration_fixture_set,
+)
 
 __all__ = [
     "EvaluationComparisonKey",
@@ -81,6 +93,14 @@ __all__ = [
     "ReleaseGateDiffArtifact",
     "ReleaseGateDiffScenario",
     "ReleaseGateFailure",
+    "ReviewLLMCalibrationCategory",
+    "ReviewLLMCalibrationCategoryReport",
+    "ReviewLLMCalibrationEvidence",
+    "ReviewLLMCalibrationFixture",
+    "ReviewLLMCalibrationFixtureSet",
+    "ReviewLLMCalibrationFormatStatus",
+    "ReviewLLMCalibrationReport",
+    "ReviewLLMCalibrationStatus",
     "SourceRegressionMatrixEntry",
     "compare_evaluation_outcomes",
     "build_release_gate_assurance_report",
@@ -88,6 +108,8 @@ __all__ = [
     "list_postgresql_evaluation_scenarios",
     "list_source_regression_matrix",
     "reconstruct_release_gate",
+    "build_review_llm_calibration_report",
     "score_governed_answer_consistency",
+    "validate_review_llm_calibration_fixture_set",
     "validate_governed_answer_fixture_set",
 ]

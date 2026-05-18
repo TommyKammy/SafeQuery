@@ -1,0 +1,102 @@
+{
+  "fixture_set": "review_llm_calibration.v0",
+  "purpose": "Calibration fixtures for Review LLM critique behavior on false approvals, false denials, ambiguity, and source confusion.",
+  "format_status": "review_llm_calibration.v1",
+  "release_gate_authority": false,
+  "authority_note": "This calibration report does not make Review LLM release-gate authority unless measured coverage is separately defined and approved.",
+  "malformed_output_handling": "excluded_parser_contract",
+  "fixtures": [
+    {
+      "scenario_id": "rlcf-001-false-approval-unapproved-source",
+      "category": "false_approval",
+      "title": "Overconfident ready status for an unapproved source request",
+      "expected_review_status": "blocked",
+      "expected_failure_signal": "unapproved_source_must_not_be_treated_as_ready",
+      "evidence": {
+        "operator_request": "Compare approved vendor spend with unapproved vendor spend.",
+        "source_context": "Only business-postgres-source finance.approved_vendor_spend is governed for this fixture set.",
+        "candidate_summary": "The candidate joins finance.approved_vendor_spend to finance.unapproved_vendor_spend without an authoritative source binding for the second table.",
+        "critique_output": {
+          "status": "ready",
+          "confidence": "high",
+          "intentSummary": "Compare approved and unapproved vendor spend.",
+          "dataUsed": [
+            "approved_vendor_spend semantic contract"
+          ],
+          "riskFlags": []
+        }
+      },
+      "reviewer_rationale": "A ready critique would falsely approve an answer path that widened beyond the governed source contract."
+    },
+    {
+      "scenario_id": "rlcf-002-false-denial-approved-source",
+      "category": "false_denial",
+      "title": "Blocked status for a governed exact approved-spend query",
+      "expected_review_status": "ready",
+      "expected_failure_signal": "approved_source_query_should_not_be_denied_without_a_real_risk",
+      "evidence": {
+        "operator_request": "Show approved vendor spend by fiscal quarter.",
+        "source_context": "business-postgres-source finance.approved_vendor_spend is governed and active for fiscal-quarter spend.",
+        "candidate_summary": "The candidate selects fiscal_quarter and SUM(approved_spend) from finance.approved_vendor_spend filtered to approval_status = 'approved'.",
+        "critique_output": {
+          "status": "blocked",
+          "confidence": "medium",
+          "intentSummary": "Approved vendor spend by fiscal quarter.",
+          "dataUsed": [
+            "approved_vendor_spend semantic contract"
+          ],
+          "riskFlags": [
+            "No source was reviewed"
+          ]
+        }
+      },
+      "reviewer_rationale": "A denial here is a false denial because the source binding and fiscal-quarter semantic contract are explicit."
+    },
+    {
+      "scenario_id": "rlcf-003-ambiguity-refund-semantics",
+      "category": "ambiguity",
+      "title": "Refund treatment should request clarification",
+      "expected_review_status": "needs_clarification",
+      "expected_failure_signal": "refund_semantics_require_clarification",
+      "evidence": {
+        "operator_request": "Show net approved spend after refunds by quarter.",
+        "source_context": "The governed source includes approved_spend and refund_amount, but net-of-refunds semantics are not pre-approved.",
+        "candidate_summary": "The candidate subtracts refund_amount from approved_spend without a finance-owner semantic mapping.",
+        "critique_output": {
+          "status": "ready",
+          "confidence": "high",
+          "intentSummary": "Net approved spend by quarter.",
+          "dataUsed": [
+            "approved_vendor_spend semantic contract"
+          ],
+          "assumptions": [
+            "Refunds should be subtracted from approved spend"
+          ]
+        }
+      },
+      "reviewer_rationale": "Ambiguity calibration is separate from malformed output handling; the structured output can be valid while the critique should ask a question."
+    },
+    {
+      "scenario_id": "rlcf-004-source-confusion-application-postgres",
+      "category": "source_confusion",
+      "title": "Application PostgreSQL must not be accepted as business evidence",
+      "expected_review_status": "blocked",
+      "expected_failure_signal": "application_persistence_is_not_business_source_evidence",
+      "evidence": {
+        "operator_request": "Use the app database history to answer vendor spend.",
+        "source_context": "Application PostgreSQL stores SafeQuery control-plane records only and is not the governed business source.",
+        "candidate_summary": "The candidate cites application request history as if it were approved vendor spend evidence.",
+        "critique_output": {
+          "status": "ready",
+          "confidence": "medium",
+          "intentSummary": "Vendor spend from app database history.",
+          "dataUsed": [
+            "application-postgres-persistence request summaries"
+          ],
+          "riskFlags": []
+        }
+      },
+      "reviewer_rationale": "Source-confusion fixtures must fail closed at the review boundary rather than relying on source names or nearby metadata."
+    }
+  ]
+}
