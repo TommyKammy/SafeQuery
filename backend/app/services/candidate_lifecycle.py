@@ -9,7 +9,11 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models.preview import PreviewCandidate, PreviewCandidateApproval
+from app.db.models.preview import (
+    PreviewCandidate,
+    PreviewCandidateApproval,
+    PreviewReviewDecision,
+)
 from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.auth.context import AuthenticatedSubject
 from app.features.guard.deny_taxonomy import (
@@ -19,6 +23,8 @@ from app.features.guard.deny_taxonomy import (
     DENY_CANDIDATE_REPLAYED,
     DENY_ENTITLEMENT_CHANGED,
     DENY_POLICY_VERSION_STALE,
+    DENY_REVIEW_BLOCKED,
+    DENY_REVIEW_NEEDS_CLARIFICATION,
     DENY_SOURCE_ACTIVATION_POSTURE,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_SUBJECT_MISMATCH,
@@ -113,6 +119,8 @@ def _denial_cause_for_code(deny_code: str) -> str:
         DENY_CANDIDATE_REPLAYED: "candidate_replayed",
         DENY_ENTITLEMENT_CHANGED: "entitlement_changed",
         DENY_POLICY_VERSION_STALE: "policy_stale",
+        DENY_REVIEW_BLOCKED: "review_blocked",
+        DENY_REVIEW_NEEDS_CLARIFICATION: "review_needs_clarification",
         DENY_SOURCE_ACTIVATION_POSTURE: "source_activation_posture",
         DENY_SOURCE_BINDING_MISMATCH: "source_binding_mismatch",
         DENY_SUBJECT_MISMATCH: "subject_mismatch",
@@ -383,8 +391,9 @@ def _raise_authoritative_approval_error(
     message: str,
     approval: PreviewCandidateApproval | None,
     audit_context: CandidateLifecycleAuditContext | None,
+    candidate: CandidateLifecycleRecord | None = None,
 ) -> None:
-    candidate = CandidateLifecycleRecord(
+    candidate_record = candidate or CandidateLifecycleRecord(
         owner_subject_id=(
             approval.owner_subject_id if approval is not None else "unknown"
         ),
@@ -428,8 +437,35 @@ def _raise_authoritative_approval_error(
     _raise_revalidation_error(
         deny_code=deny_code,
         message=message,
-        candidate=candidate,
+        candidate=candidate_record,
         audit_context=audit_context,
+    )
+
+
+def _candidate_lifecycle_from_preview_candidate(
+    preview_candidate: PreviewCandidate,
+) -> CandidateLifecycleRecord:
+    return CandidateLifecycleRecord(
+        owner_subject_id=preview_candidate.authenticated_subject_id,
+        approved_at=datetime.now(timezone.utc),
+        approval_expires_at=datetime.now(timezone.utc),
+        source=SourceBoundCandidateMetadata(
+            source_id=preview_candidate.source_id,
+            source_family=preview_candidate.source_family,
+            source_flavor=preview_candidate.source_flavor,
+            dataset_contract_version=preview_candidate.dataset_contract_version,
+            schema_snapshot_version=preview_candidate.schema_snapshot_version,
+            execution_policy_version=(
+                CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
+                    preview_candidate.source_family
+                )
+            ),
+            connector_profile_version=(
+                CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY.get(
+                    preview_candidate.source_family
+                )
+            ),
+        ),
     )
 
 
@@ -476,6 +512,34 @@ def _approved_sql_from_approval(
     return approval.approved_sql
 
 
+def _deny_if_review_blocks_execution(
+    *,
+    session: Session,
+    approval: PreviewCandidateApproval,
+    audit_context: CandidateLifecycleAuditContext | None,
+) -> None:
+    review_decision = session.scalar(
+        select(PreviewReviewDecision).where(
+            PreviewReviewDecision.preview_candidate_id == approval.preview_candidate_id
+        )
+    )
+    review_status = review_decision.review_status if review_decision is not None else None
+    if review_status == "blocked":
+        _raise_authoritative_approval_error(
+            deny_code=DENY_REVIEW_BLOCKED,
+            message="Review LLM blocked this candidate before execution.",
+            approval=approval,
+            audit_context=audit_context,
+        )
+    if review_status == "needs_clarification":
+        _raise_authoritative_approval_error(
+            deny_code=DENY_REVIEW_NEEDS_CLARIFICATION,
+            message="Review LLM requires clarification before execution.",
+            approval=approval,
+            audit_context=audit_context,
+        )
+
+
 def revalidate_authoritative_candidate_approval(
     *,
     session: Session,
@@ -503,11 +567,19 @@ def revalidate_authoritative_candidate_approval(
         .one_or_none()
     )
     if approval is None:
+        preview_candidate = session.scalar(
+            select(PreviewCandidate).where(PreviewCandidate.candidate_id == candidate_id)
+        )
         _raise_authoritative_approval_error(
             deny_code=DENY_CANDIDATE_NOT_APPROVED,
             message="Candidate has no authoritative preview approval record.",
             approval=None,
             audit_context=audit_context,
+            candidate=(
+                _candidate_lifecycle_from_preview_candidate(preview_candidate)
+                if preview_candidate is not None
+                else None
+            ),
         )
 
     assert approval is not None
@@ -516,6 +588,13 @@ def revalidate_authoritative_candidate_approval(
         _raise_authoritative_approval_error(
             deny_code=DENY_CANDIDATE_NOT_APPROVED,
             message="Candidate is not in an authoritative preview-ready state.",
+            approval=approval,
+            audit_context=audit_context,
+        )
+    if preview_candidate.guard_status != "allow":
+        _raise_authoritative_approval_error(
+            deny_code=DENY_CANDIDATE_NOT_APPROVED,
+            message="Candidate SQL Guard status is not execution-eligible.",
             approval=approval,
             audit_context=audit_context,
         )
@@ -543,6 +622,11 @@ def revalidate_authoritative_candidate_approval(
         )
     approved_sql = _approved_sql_from_approval(
         approval,
+        audit_context=audit_context,
+    )
+    _deny_if_review_blocks_execution(
+        session=session,
+        approval=approval,
         audit_context=audit_context,
     )
 

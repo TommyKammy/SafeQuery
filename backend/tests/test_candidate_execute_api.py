@@ -19,6 +19,7 @@ from app.db.models.preview import (
     PreviewAuditEvent,
     PreviewCandidate,
     PreviewCandidateApproval,
+    PreviewReviewDecision,
     PreviewRequest,
 )
 from app.db.models.schema_snapshot import SchemaSnapshot, SchemaSnapshotReviewStatus
@@ -201,6 +202,76 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
                 approved_at=now - timedelta(minutes=1),
                 approval_expires_at=now + timedelta(minutes=10),
                 approval_state="approved",
+            )
+        )
+        self.session.commit()
+
+    def _seed_review_decision(self, review_status: str) -> None:
+        candidate = (
+            self.session.query(PreviewCandidate)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        audit_event = PreviewAuditEvent(
+            id=uuid4(),
+            event_id=uuid4(),
+            lifecycle_order=1,
+            preview_request_id=candidate.preview_request_id,
+            preview_candidate_id=candidate.id,
+            request_id=candidate.request_id,
+            candidate_id=candidate.candidate_id,
+            event_type="guard_evaluated",
+            occurred_at=datetime.now(timezone.utc),
+            correlation_id="review-correlation-123",
+            causation_event_id=None,
+            authenticated_subject_id=candidate.authenticated_subject_id,
+            session_id="session-123",
+            auth_source="test-helper",
+            governance_bindings="group:safequery-demo-local-operators",
+            entitlement_decision="allow",
+            entitlement_source_bindings="demo-business-postgres",
+            adapter_provider="test",
+            adapter_model="safequery-test-review",
+            adapter_version="test.review.v1",
+            adapter_run_id=None,
+            prompt_version="test-review-prompt.v1",
+            prompt_fingerprint=None,
+            application_version="safequery-api/test",
+            source_id=candidate.source_id,
+            source_family=candidate.source_family,
+            source_flavor=candidate.source_flavor,
+            dataset_contract_version=candidate.dataset_contract_version,
+            schema_snapshot_version=candidate.schema_snapshot_version,
+            primary_deny_code=None,
+            denial_cause=None,
+            candidate_state=candidate.candidate_state,
+            audit_payload={"event_type": "guard_evaluated"},
+        )
+        self.session.add(audit_event)
+        self.session.flush()
+        self.session.add(
+            PreviewReviewDecision(
+                id=uuid4(),
+                review_decision_id=f"review-candidate-123-{review_status}",
+                preview_candidate_id=candidate.id,
+                candidate_id=candidate.candidate_id,
+                request_id=candidate.request_id,
+                audit_event_id=audit_event.event_id,
+                registered_source_id=candidate.registered_source_id,
+                source_id=candidate.source_id,
+                source_family=candidate.source_family,
+                source_flavor=candidate.source_flavor,
+                dataset_contract_version=candidate.dataset_contract_version,
+                semantic_contract_version=candidate.semantic_contract_version,
+                schema_snapshot_version=candidate.schema_snapshot_version,
+                review_contract_version="review_llm_adapter_output.v1",
+                review_status=review_status,
+                review_confidence="high",
+                assumptions=[],
+                risk_flags=[],
+                clarifying_questions=[],
+                review_payload={"status": review_status},
+                occurred_at=datetime.now(timezone.utc),
             )
         )
         self.session.commit()
@@ -471,6 +542,152 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.session.refresh(approval)
         self.assertEqual(approval.approval_state, "approved")
         self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_rejects_review_blocked_without_consuming_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        self._seed_review_decision("blocked")
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(lambda **_: calls.append("called")).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_REVIEW_BLOCKED",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][0]["denial_cause"],
+            "review_blocked",
+        )
+        persisted_event = self.session.query(PreviewAuditEvent).filter_by(
+            event_type="execution_denied"
+        ).one()
+        self.assertEqual(persisted_event.primary_deny_code, "DENY_REVIEW_BLOCKED")
+        self.assertEqual(persisted_event.denial_cause, "review_blocked")
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_rejects_review_needs_clarification_without_consuming_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        self._seed_review_decision("needs_clarification")
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(lambda **_: calls.append("called")).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_REVIEW_NEEDS_CLARIFICATION",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][0]["denial_cause"],
+            "review_needs_clarification",
+        )
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_review_ready_does_not_override_guard_denied(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        candidate = (
+            self.session.query(PreviewCandidate)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        candidate.guard_status = "reject"
+        self.session.commit()
+        self._seed_review_decision("ready")
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(lambda **_: calls.append("called")).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_CANDIDATE_NOT_APPROVED",
+        )
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_review_ready_does_not_override_missing_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        self._seed_review_decision("ready")
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.session.delete(approval)
+        self.session.commit()
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(lambda **_: calls.append("called")).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_CANDIDATE_NOT_APPROVED",
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .count(),
+            0,
+        )
 
     def test_execute_candidate_api_rejects_missing_connector_config_without_consuming_approval(
         self,
