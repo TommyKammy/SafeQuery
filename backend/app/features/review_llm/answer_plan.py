@@ -311,7 +311,9 @@ def _sanitize_string_items(value: object) -> tuple[str, ...]:
 
 
 def _sanitize_text(value: object) -> str:
-    sanitized = str(value).strip()
+    if not isinstance(value, str):
+        return ""
+    sanitized = value.strip()
     for pattern in _SECRET_VALUE_PATTERNS:
         sanitized = pattern.sub(_REDACTED, sanitized)
     return sanitized
@@ -323,7 +325,9 @@ def _optional_sanitized_string(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     sanitized = _sanitize_text(value)
-    return sanitized or None
+    if not sanitized:
+        return None
+    return sanitized
 
 
 def _positive_int_or_none(value: object) -> int | None:
