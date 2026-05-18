@@ -1871,7 +1871,7 @@ def submit_preview_request(
                     intent_mapping=intent_mapping,
                 )
                 adapter_response = sql_generation_adapter.generate_sql(adapter_request)
-                review_decision = adapter_response.review_decision
+                review_decision = getattr(adapter_response, "review_decision", None)
                 candidate_sql = normalize_adapter_generated_sql(
                     adapter_response.candidate_sql
                 )
