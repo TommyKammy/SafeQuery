@@ -481,7 +481,7 @@ def _read_payload_items(value: object) -> list[dict[str, object]]:
     return [item for item in value if isinstance(item, dict)]
 
 
-def _read_text_items(value: object) -> list[str]:
+def _read_sanitized_review_text_items(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return list(sanitize_review_llm_surface_text_items(value))
@@ -495,9 +495,9 @@ def _review_evidence_summary(
         review_status=review.review_status,
         review_contract_version=review.review_contract_version,
         audit_event_id=str(review.audit_event_id),
-        assumptions=_read_text_items(review.assumptions),
-        risk_flags=_read_text_items(review.risk_flags),
-        clarifying_questions=_read_text_items(review.clarifying_questions),
+        assumptions=_read_sanitized_review_text_items(review.assumptions),
+        risk_flags=_read_sanitized_review_text_items(review.risk_flags),
+        clarifying_questions=_read_sanitized_review_text_items(review.clarifying_questions),
     )
 
 
