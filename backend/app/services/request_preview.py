@@ -15,6 +15,7 @@ from app.db.models.preview import (
     PreviewAuditEvent,
     PreviewCandidate,
     PreviewCandidateApproval,
+    PreviewReviewDecision,
     PreviewRequest,
 )
 from app.db.models.schema_snapshot import SchemaSnapshot
@@ -31,6 +32,7 @@ from app.features.guard import (
     evaluate_postgresql_sql_guard,
 )
 from app.features.operator_history.payloads import GuardStatus
+from app.features.review_llm.schema import ReviewLLMAdapterOutput
 from app.services.candidate_lifecycle import (
     CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY,
     CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
@@ -100,6 +102,8 @@ _DEFAULT_INTENT_DENIAL_REASON_BY_STATUS = {
     "ambiguous": "The requested business concept requires clarification before SQL generation.",
     "unsupported": "The requested business concept is not approved for the selected semantic contract.",
 }
+_REVIEW_DECISION_ID_PREFIX = "review-"
+_MAX_REVIEW_DECISION_ID_LENGTH = 255
 
 
 def _resolve_sql_guard_controls(source_family: str) -> tuple[str, Any]:
@@ -110,6 +114,13 @@ def _resolve_sql_guard_controls(source_family: str) -> tuple[str, Any]:
             f"Unsupported source family '{source_family}' cannot be guarded."
         )
     return guard_version, evaluator
+
+
+def _review_decision_id_for_candidate(preview_candidate: PreviewCandidate) -> str:
+    candidate_scoped_id = f"{_REVIEW_DECISION_ID_PREFIX}{preview_candidate.candidate_id}"
+    if len(candidate_scoped_id) <= _MAX_REVIEW_DECISION_ID_LENGTH:
+        return candidate_scoped_id
+    return f"{_REVIEW_DECISION_ID_PREFIX}{preview_candidate.id}"
 
 
 def _sanitized_guard_denial_reason(
@@ -941,6 +952,32 @@ def _persist_preview_audit_events(
         )
 
 
+def _bind_preview_candidate_to_audit_events(
+    audit_events: list[SourceAwareAuditEvent],
+    *,
+    candidate_id: str,
+    candidate_owner_subject: str,
+) -> None:
+    for index, event in enumerate(audit_events):
+        if event.event_type not in {"generation_completed", "guard_evaluated"}:
+            continue
+        if event.query_candidate_id is not None:
+            if event.query_candidate_id != candidate_id:
+                raise PreviewSubmissionContractError(
+                    "Preview audit events must stay bound to the preview candidate."
+                )
+            continue
+
+        audit_events[index] = event.model_copy(
+            update={
+                "query_candidate_id": candidate_id,
+                "candidate_owner_subject": (
+                    event.candidate_owner_subject or candidate_owner_subject
+                ),
+            }
+        )
+
+
 def _next_audit_lifecycle_order(
     session: Session,
     *,
@@ -1030,12 +1067,144 @@ def persist_execution_audit_events(
         ) from exc
 
 
+def persist_review_decision(
+    session: Session,
+    *,
+    candidate_id: str,
+    review: ReviewLLMAdapterOutput,
+    audit_event_id: UUID,
+    occurred_at: datetime,
+) -> str:
+    try:
+        preview_candidate = session.execute(
+            select(PreviewCandidate).where(
+                PreviewCandidate.candidate_id == candidate_id
+            )
+        ).scalar_one_or_none()
+        if preview_candidate is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision cannot be persisted without a bound preview candidate.",
+            )
+
+        assert preview_candidate is not None
+        preview_request = session.get(
+            PreviewRequest,
+            preview_candidate.preview_request_id,
+        )
+        if preview_request is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision cannot be persisted without a bound preview request.",
+            )
+
+        assert preview_request is not None
+        audit_event = session.execute(
+            select(PreviewAuditEvent).where(
+                PreviewAuditEvent.event_id == audit_event_id
+            )
+        ).scalar_one_or_none()
+        if audit_event is None:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision cannot be persisted without an audit event anchor.",
+            )
+        assert audit_event is not None
+        if audit_event.event_type != "guard_evaluated":
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision requires a guard audit event anchor.",
+            )
+        if audit_event.request_id != preview_candidate.request_id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision audit anchor must stay bound to the preview request.",
+            )
+        if audit_event.candidate_id != preview_candidate.candidate_id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision audit anchor must stay bound to the preview candidate.",
+            )
+        if audit_event.preview_candidate_id != preview_candidate.id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision audit anchor must stay bound to the preview candidate.",
+            )
+        if audit_event.source_id != preview_candidate.source_id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision audit anchor must stay bound to the preview source.",
+            )
+
+        existing = session.execute(
+            select(PreviewReviewDecision).where(
+                PreviewReviewDecision.candidate_id == preview_candidate.candidate_id
+            )
+        ).scalar_one_or_none()
+        review_decision_id = _review_decision_id_for_candidate(preview_candidate)
+        if existing is None:
+            existing = PreviewReviewDecision(
+                review_decision_id=review_decision_id,
+                candidate_id=preview_candidate.candidate_id,
+                preview_candidate_id=preview_candidate.id,
+            )
+            session.add(existing)
+        elif existing.preview_candidate_id != preview_candidate.id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision cannot be rebound to a different preview candidate.",
+            )
+        else:
+            review_decision_id = existing.review_decision_id
+
+        existing.request_id = preview_candidate.request_id
+        existing.audit_event_id = audit_event.event_id
+        existing.registered_source_id = preview_candidate.registered_source_id
+        existing.source_id = preview_candidate.source_id
+        existing.source_family = preview_candidate.source_family
+        existing.source_flavor = preview_candidate.source_flavor
+        existing.dataset_contract_version = preview_candidate.dataset_contract_version
+        existing.semantic_contract_version = preview_candidate.semantic_contract_version
+        existing.schema_snapshot_version = preview_candidate.schema_snapshot_version
+        existing.review_contract_version = review.contract_version
+        existing.review_status = review.status
+        existing.review_confidence = review.confidence
+        existing.assumptions = list(review.assumptions)
+        existing.risk_flags = list(review.risk_flags)
+        existing.clarifying_questions = list(review.clarifying_questions)
+        existing.review_payload = review.to_wire_payload()
+        existing.occurred_at = occurred_at
+        session.commit()
+        return review_decision_id
+    except IntegrityError as exc:
+        session.rollback()
+        raise PreviewSubmissionContractError(
+            "Review decision could not be persisted consistently."
+        ) from exc
+
+
 def _raise_preview_persistence_contract_error(
     session: Session,
     message: str,
 ) -> None:
     session.rollback()
     raise PreviewSubmissionContractError(message)
+
+
+def _review_decision_audit_event_id(
+    audit_events: list[SourceAwareAuditEvent],
+    *,
+    candidate_id: str,
+) -> UUID:
+    for event in reversed(audit_events):
+        if (
+            event.event_type == "guard_evaluated"
+            and event.query_candidate_id == candidate_id
+        ):
+            return event.event_id
+    raise PreviewSubmissionContractError(
+        "Review decision requires a bound guard audit event anchor."
+    )
 
 
 def _persist_candidate_approval_record(
@@ -1149,6 +1318,11 @@ def _persist_preview_submission_records(
     subject_id = authenticated_subject.normalized_subject_id()
     governance_bindings = _joined_governance_bindings(
         sorted(authenticated_subject.normalized_governance_bindings())
+    )
+    _bind_preview_candidate_to_audit_events(
+        audit_events,
+        candidate_id=candidate_id,
+        candidate_owner_subject=subject_id,
     )
     if revision_record is not None and (
         request_id == revision_record.request_id
@@ -1662,6 +1836,7 @@ def submit_preview_request(
     candidate_sql: str | None = None
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None
     guard_evaluation: SQLGuardEvaluation | None = None
+    review_decision: ReviewLLMAdapterOutput | None = None
     guard_status: GuardStatus = PREVIEW_PENDING_GUARD_STATUS
     candidate_state = "preview_ready"
     request_state = "previewed"
@@ -1696,6 +1871,7 @@ def submit_preview_request(
                     intent_mapping=intent_mapping,
                 )
                 adapter_response = sql_generation_adapter.generate_sql(adapter_request)
+                review_decision = adapter_response.review_decision
                 candidate_sql = normalize_adapter_generated_sql(
                     adapter_response.candidate_sql
                 )
@@ -1789,6 +1965,21 @@ def submit_preview_request(
         candidate_state=candidate_state,
         guard_status=guard_status,
     )
+    if review_decision is not None:
+        persist_review_decision(
+            session,
+            candidate_id=candidate_id,
+            review=review_decision,
+            audit_event_id=_review_decision_audit_event_id(
+                audit.events,
+                candidate_id=candidate_id,
+            ),
+            occurred_at=(
+                audit_context.occurred_at
+                if audit_context is not None
+                else datetime.now(timezone.utc)
+            ),
+        )
     primary_deny_code = _primary_guard_deny_code(guard_evaluation)
     denial_reason = _sanitized_guard_denial_reason(guard_evaluation)
     if intent_blocked_candidate_state is not None:

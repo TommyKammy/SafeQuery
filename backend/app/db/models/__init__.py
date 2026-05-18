@@ -3,6 +3,7 @@ from app.db.models.preview import (
     PreviewAuditEvent,
     PreviewCandidate,
     PreviewCandidateApproval,
+    PreviewReviewDecision,
     PreviewRequest,
 )
 from app.db.models.retrieval_corpus import RetrievalCorpusAsset
@@ -15,6 +16,7 @@ __all__ = [
     "PreviewAuditEvent",
     "PreviewCandidate",
     "PreviewCandidateApproval",
+    "PreviewReviewDecision",
     "PreviewRequest",
     "RegisteredSource",
     "RetrievalCorpusAsset",

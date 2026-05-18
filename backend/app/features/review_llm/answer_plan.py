@@ -57,6 +57,14 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"client[_ -]?secret|api[_ -]?key|private[_ -]?key)(?![a-z0-9])"
     ),
 )
+_RAW_WORKSTATION_PATH_PATTERN = re.compile(
+    r"(?i)(?:"
+    r"(?:^|(?<=[\s'\"(=]))/(?:[^/\s:;,'\")]+/)+[^\s:;,'\")]*"
+    r"|[a-z]:[\\/](?:[^\\/\s:;,'\")]+[\\/])*[^\\/\s:;,'\")]+"
+    r"|\\\\[^\\\s/:;,'\")]+\\[^\\\s:;,'\")]+(?:\\[^\\\s:;,'\")]+)*"
+    r"|(?<!\S)~[\\/][^\s:;,'\")]+"
+    r")"
+)
 _UNSAFE_INPUT_KEYS = frozenset(
     {
         "connection",
@@ -164,6 +172,10 @@ def build_answer_plan_from_review(
         advisory_only=True,
         can_authorize_execution=False,
     )
+
+
+def sanitize_review_llm_surface_text_items(values: Iterable[object]) -> tuple[str, ...]:
+    return _sanitize_text_items(values)
 
 
 def _build_semantic_evidence(
@@ -339,6 +351,7 @@ def _sanitize_text(value: object) -> str:
     sanitized = value.strip()
     for pattern in _SECRET_VALUE_PATTERNS:
         sanitized = pattern.sub(_REDACTED, sanitized)
+    sanitized = _RAW_WORKSTATION_PATH_PATTERN.sub(_REDACTED, sanitized)
     return sanitized
 
 

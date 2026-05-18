@@ -349,6 +349,21 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
                         "select vendor_id from approved_vendor_spend limit 50"
                     ),
                     "model": "safequery-local-sql",
+                    "review_decision": {
+                        "contract_version": "review_llm_adapter_output.v1",
+                        "status": "needs_clarification",
+                        "confidence": "medium",
+                        "intent_summary": "show approved vendors",
+                        "assumptions": ["Vendor means normalized vendor_id."],
+                        "risk_flags": ["Vendor names may be sensitive."],
+                        "clarifying_questions": [
+                            "Should inactive vendors be included?"
+                        ],
+                        "diagnostics": {
+                            "adapter_version": "review-adapter.v1",
+                            "model": "safequery-review-test",
+                        },
+                    },
                 }
             ).encode("utf-8")
 
@@ -363,12 +378,15 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
 
     response = adapter.generate_sql(request)
 
-    assert response.model_dump(exclude_none=True) == {
+    assert response.model_dump(exclude={"review_decision"}, exclude_none=True) == {
         "candidate_sql": "select vendor_id from approved_vendor_spend limit 50",
         "provider": "local_llm",
         "adapter_version": "local_llm.v1",
         "model": "safequery-local-sql",
     }
+    assert response.review_decision is not None
+    assert response.review_decision.status == "needs_clarification"
+    assert response.review_decision.risk_flags == ["Vendor names may be sensitive."]
     assert [call[0] for call in calls] == [
         "http://local-llm:8080/generate-sql",
         "http://local-llm:8080/generate-sql",
@@ -377,6 +395,70 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
     assert calls[0][2]["request"]["question"] == "Show approved vendors"
     assert "datasets" not in calls[0][2]["request"]["context"]
     assert "credentials" not in json.dumps(calls[0][2])
+
+
+def test_local_llm_generation_ignores_malformed_review_decision(monkeypatch) -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "local_llm",
+            "local_llm_base_url": "http://local-llm:8080",
+            "retry_count": 0,
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_80_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+        ),
+    )
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "candidate_sql": (
+                        "select vendor_id from approved_vendor_spend limit 50"
+                    ),
+                    "review_decision": {
+                        "status": "ready",
+                        "confidence": "low",
+                    },
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        adapter_module,
+        "urlopen",
+        lambda request, timeout=None: Response(),
+    )
+
+    response = adapter.generate_sql(request)
+
+    assert (
+        response.candidate_sql
+        == "select vendor_id from approved_vendor_spend limit 50"
+    )
+    assert response.review_decision is None
 
 
 def test_local_llm_generation_retries_malformed_json_response(monkeypatch) -> None:
@@ -613,6 +695,75 @@ def test_vanna_generation_uses_curated_context_and_bounded_request(
     }
     assert "credentials" not in json.dumps(seen["body"])
     assert "execution_result" not in json.dumps(response.model_dump())
+
+
+def test_vanna_generation_ignores_malformed_review_decision(monkeypatch) -> None:
+    adapter = resolve_sql_generation_adapter(
+        {
+            "provider": "vanna",
+            "vanna_base_url": "http://vanna:8084",
+            "retry_count": 0,
+        }
+    )
+    request = SQLGenerationAdapterRequest(
+        request_id="req_82_preview",
+        question="Show approved vendors",
+        source=SQLGenerationSourceBinding(
+            source_id="sap-approved-spend",
+            source_family="postgresql",
+        ),
+        context=SQLGenerationContextReferences(
+            dataset_contract={
+                "context_id": "contract_finance_v1",
+                "source_id": "sap-approved-spend",
+            },
+            schema_snapshot={
+                "context_id": "snapshot_finance_v3",
+                "source_id": "sap-approved-spend",
+            },
+            datasets=[
+                {
+                    "schema_name": "finance",
+                    "dataset_name": "approved_vendor_spend",
+                    "dataset_kind": "table",
+                },
+            ],
+        ),
+    )
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "sql": "select vendor_id from approved_vendor_spend limit 50",
+                    "review_decision": {
+                        "contract_version": "review_llm_adapter_output.v1",
+                        "status": "unknown",
+                    },
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        adapter_module,
+        "urlopen",
+        lambda request, timeout=None: Response(),
+    )
+
+    response = adapter.generate_sql(request)
+
+    assert (
+        response.candidate_sql
+        == "select vendor_id from approved_vendor_spend limit 50"
+    )
+    assert response.review_decision is None
 
 
 def test_vanna_generation_fails_closed_for_execution_material_response(

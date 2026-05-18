@@ -86,6 +86,16 @@ export type OperatorWorkflowRetrievedCitation = {
   sourceFlavor: string | null;
 };
 
+export type OperatorWorkflowReviewEvidence = {
+  auditEventId: string;
+  assumptions: string[];
+  clarifyingQuestions: string[];
+  reviewContractVersion: string;
+  reviewDecisionId: string;
+  reviewStatus: string;
+  riskFlags: string[];
+};
+
 export type OperatorWorkflowRevisionContext = {
   candidateId?: string | null;
   requestId?: string | null;
@@ -106,6 +116,7 @@ export type OperatorHistoryItem = {
   occurredAt: string;
   primaryDenyCode?: string | null;
   recordId: string;
+  reviewEvidence: OperatorWorkflowReviewEvidence[];
   requestId?: string | null;
   semanticContractVersion?: string | null;
   resultTruncated?: boolean | null;
@@ -341,6 +352,55 @@ function parseRetrievedCitation(value: unknown): OperatorWorkflowRetrievedCitati
   };
 }
 
+function readStringArray(value: unknown): string[] | null {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const strings = value.filter((item): item is string => {
+    return typeof item === "string" && item.trim().length > 0;
+  });
+  return strings.length === value.length ? strings : null;
+}
+
+function parseReviewEvidence(value: unknown): OperatorWorkflowReviewEvidence | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const auditEventId = readOptionalString(value.auditEventId);
+  const reviewContractVersion = readOptionalString(value.reviewContractVersion);
+  const reviewDecisionId = readOptionalString(value.reviewDecisionId);
+  const reviewStatus = readOptionalString(value.reviewStatus);
+  const assumptions = readStringArray(value.assumptions);
+  const clarifyingQuestions = readStringArray(value.clarifyingQuestions);
+  const riskFlags = readStringArray(value.riskFlags);
+
+  if (
+    !auditEventId ||
+    !reviewContractVersion ||
+    !reviewDecisionId ||
+    !reviewStatus ||
+    assumptions === null ||
+    clarifyingQuestions === null ||
+    riskFlags === null
+  ) {
+    return null;
+  }
+
+  return {
+    auditEventId,
+    assumptions,
+    clarifyingQuestions,
+    reviewContractVersion,
+    reviewDecisionId,
+    reviewStatus,
+    riskFlags
+  };
+}
+
 function parseRevisionContext(value: unknown): OperatorWorkflowRevisionContext | null {
   if (value === undefined || value === null) {
     return null;
@@ -437,6 +497,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
   const candidateAttempts = parseArray(value.candidateAttempts, parseCandidateAttempt);
   const executedEvidence = parseArray(value.executedEvidence, parseExecutedEvidence);
   const retrievedCitations = parseArray(value.retrievedCitations, parseRetrievedCitation);
+  const reviewEvidence = parseArray(value.reviewEvidence, parseReviewEvidence);
   const revisionContext = parseRevisionContext(value.revisionContext);
   const analystResponse =
     value.analystResponse === undefined || value.analystResponse === null
@@ -454,7 +515,8 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     auditEvents === null ||
     candidateAttempts === null ||
     executedEvidence === null ||
-    retrievedCitations === null
+    retrievedCitations === null ||
+    reviewEvidence === null
   ) {
     return null;
   }
@@ -472,6 +534,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     occurredAt,
     primaryDenyCode: readOptionalString(value.primaryDenyCode) ?? null,
     recordId,
+    reviewEvidence,
     requestId: readOptionalString(value.requestId) ?? null,
     semanticContractVersion: readOptionalString(value.semanticContractVersion) ?? null,
     resultTruncated:

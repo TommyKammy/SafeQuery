@@ -6,6 +6,7 @@ from app.features.review_llm.answer_plan import (
     AnswerPlanPayload,
     AnswerPlanSemanticEvidence,
     build_answer_plan_from_review,
+    sanitize_review_llm_surface_text_items,
 )
 from app.features.review_llm.schema import (
     ReviewLLMAdapterDiagnostics,
@@ -24,4 +25,5 @@ __all__ = [
     "ReviewLLMAdapterOutputError",
     "build_answer_plan_from_review",
     "parse_review_llm_adapter_output",
+    "sanitize_review_llm_surface_text_items",
 ]

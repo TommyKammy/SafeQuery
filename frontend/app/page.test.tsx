@@ -2077,6 +2077,20 @@ describe("HomePage", () => {
                         localPath: unsafeLocalPath
                       }
                     ],
+                    reviewEvidence: [
+                      {
+                        auditEventId: "00000000-0000-4000-8000-000000000012",
+                        assumptions: [
+                          "Vendor means normalized vendor_id.",
+                          "Inactive vendors stay excluded."
+                        ],
+                        clarifyingQuestions: ["Should inactive vendors be included?"],
+                        reviewContractVersion: "review_llm_adapter_output.v1",
+                        reviewDecisionId: "review-candidate-selected",
+                        reviewStatus: "needs_clarification",
+                        riskFlags: ["Duplicate risk label", "Duplicate risk label"]
+                      }
+                    ],
                     resultTruncated: false,
                     rowCount: 12,
                     runState: "completed",
@@ -2120,6 +2134,16 @@ describe("HomePage", () => {
     expect(screen.getByLabelText(/retrieved citation context/i)).toHaveTextContent(
       "advisory_context"
     );
+    expect(screen.getByLabelText(/review evidence/i)).toHaveTextContent(
+      "Vendor means normalized vendor_id."
+    );
+    expect(screen.getByLabelText(/review evidence/i)).toHaveTextContent(
+      "Inactive vendors stay excluded."
+    );
+    expect(screen.getByLabelText(/review evidence/i)).toHaveTextContent(
+      "Should inactive vendors be included?"
+    );
+    expect(screen.getAllByText("Duplicate risk label")).toHaveLength(2);
     const evidencePanel = screen.getByRole("heading", {
       name: /operator evidence context/i
     }).closest("section");
