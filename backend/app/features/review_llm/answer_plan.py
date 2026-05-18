@@ -4,7 +4,14 @@ from collections.abc import Iterable, Mapping
 import re
 from typing import Any, Literal, Optional, cast
 
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    TypeAdapter,
+    ValidationError,
+)
 
 from app.features.audit.event_model import (
     NonEmptyTrimmedString,
@@ -23,7 +30,7 @@ _MODEL_CONFIG = ConfigDict(
     populate_by_name=True,
 )
 _REDACTED = "[redacted]"
-_SOURCE_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+_SOURCE_IDENTIFIER_ADAPTER = TypeAdapter(SourceIdentifier)
 _SUPPORTED_SOURCE_FAMILIES = frozenset(("mssql", "postgresql"))
 _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"']+"),
@@ -34,10 +41,10 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?i)(?<![a-z0-9])[\"']?(?:access[_-]?token|refresh[_-]?token|"
         r"id[_-]?token|token|secret|password|passwd|pwd|credential|"
-        r"client[_-]?secret|api[_-]?key|private[_-]?key)[\"']?\s*[:=]\s*"
-        r"(?:[\"'][^\"']*[\"']|\{[^}]*\}|[^;,\r\n\"'}]+)"
+        r"client[_-]?secret|api[_-]?key|private[_-]?key)(?:\\?[\"'])?\s*[:=]\s*"
+        r"(?:\\?[\"'][^\"'\r\n]*(?:\\?[\"'])|\{[^}]*\}|[^;,\r\n\"'}]+)"
     ),
-    re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/-]+"),
+    re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+"),
     re.compile(
         r"(?i)(?<![a-z0-9])(?:password|passwd|pwd|secret|token|credential|"
         r"client[_ -]?secret|api[_ -]?key|private[_ -]?key)(?![a-z0-9])"
@@ -351,10 +358,11 @@ def _source_identifier_or_none(value: object) -> SourceIdentifier | None:
         return None
     if not isinstance(value, str):
         return None
-    normalized = str(value).strip()
-    if _SOURCE_IDENTIFIER_PATTERN.fullmatch(normalized):
-        return cast(SourceIdentifier, normalized)
-    return None
+    normalized = value.strip()
+    try:
+        return cast(SourceIdentifier, _SOURCE_IDENTIFIER_ADAPTER.validate_python(normalized))
+    except ValidationError:
+        return None
 
 
 def _source_family_or_none(value: object) -> str | None:

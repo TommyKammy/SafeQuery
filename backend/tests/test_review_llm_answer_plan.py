@@ -254,6 +254,53 @@ def test_answer_plan_redacts_spaced_secret_values_and_dsn_attributes() -> None:
     assert "multi word phrase" not in serialized
 
 
+def test_answer_plan_redacts_escaped_quoted_secret_values() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question=r'Inspect {\"password\":\"hunter2\"} safely.',
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": r'Driver returned {\"token\":\"raw-token\"}.',
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "hunter2" not in serialized
+    assert "raw-token" not in serialized
+
+
+def test_answer_plan_redacts_full_bearer_token_with_equals() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Use Bearer abc=def safely.",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": "Authorization failed for Bearer opaque-token==",
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "abc=def" not in serialized
+    assert "opaque-token==" not in serialized
+    assert "=def" not in serialized
+
+
 def test_answer_plan_rejects_non_string_selected_columns() -> None:
     review = parse_review_llm_adapter_output(_review_payload())
 
@@ -369,3 +416,25 @@ def test_answer_plan_rejects_non_string_scalar_metadata() -> None:
     assert "customer-row" not in serialized
     assert "raw-token" not in serialized
     assert "hunter2" not in serialized
+
+
+def test_answer_plan_rejects_overlong_source_id_without_failing() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Which approved vendors had the highest quarterly spend?",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={
+            "candidate_id": "candidate-123",
+            "source_id": "a" * 300,
+        },
+        guard_metadata={"guard_decision": "allow"},
+    )
+
+    candidate_summary = plan.to_wire_payload()["candidateSummary"]
+    assert candidate_summary["candidateId"] == "candidate-123"
+    assert "sourceId" not in candidate_summary
