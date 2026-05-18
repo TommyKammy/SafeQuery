@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
 from app.features.audit.event_model import (
     NonEmptyTrimmedString,
-    SourceFamily,
     SourceIdentifier,
     to_camel,
 )
@@ -24,7 +23,8 @@ _MODEL_CONFIG = ConfigDict(
     populate_by_name=True,
 )
 _REDACTED = "[redacted]"
-_SUPPORTED_SOURCE_FAMILIES: frozenset[SourceFamily] = frozenset(("mssql", "postgresql"))
+_SOURCE_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+_SUPPORTED_SOURCE_FAMILIES = frozenset(("mssql", "postgresql"))
 _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"']+"),
     re.compile(r"(?i)\b(?:driver|server|database|uid|pwd|password)\s*=[^;\s\"']+"),
@@ -75,7 +75,7 @@ class AnswerPlanCandidateSummary(BaseModel):
 
     candidate_id: Optional[NonEmptyTrimmedString] = None
     source_id: Optional[SourceIdentifier] = None
-    source_family: Optional[SourceFamily] = None
+    source_family: Optional[NonEmptyTrimmedString] = None
     selected_columns: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
     row_limit: Optional[PositiveInt] = None
 
@@ -169,7 +169,7 @@ def _build_candidate_summary(
     safe_metadata = _filter_safe_mapping(candidate_metadata)
     return AnswerPlanCandidateSummary(
         candidate_id=_optional_sanitized_string(safe_metadata.get("candidate_id")),
-        source_id=_optional_sanitized_string(safe_metadata.get("source_id")),
+        source_id=_source_identifier_or_none(safe_metadata.get("source_id")),
         source_family=_source_family_or_none(safe_metadata.get("source_family")),
         selected_columns=_sanitize_text_items(
             _as_iterable(safe_metadata.get("selected_columns"))
@@ -333,10 +333,19 @@ def _guard_decision_or_none(value: object) -> Optional[Literal["allow", "reject"
     return None
 
 
-def _source_family_or_none(value: object) -> SourceFamily | None:
+def _source_identifier_or_none(value: object) -> SourceIdentifier | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if _SOURCE_IDENTIFIER_PATTERN.fullmatch(normalized):
+        return cast(SourceIdentifier, normalized)
+    return None
+
+
+def _source_family_or_none(value: object) -> str | None:
     sanitized = _optional_sanitized_string(value)
     if sanitized in _SUPPORTED_SOURCE_FAMILIES:
-        return cast(SourceFamily, sanitized)
+        return sanitized
     return None
 
 

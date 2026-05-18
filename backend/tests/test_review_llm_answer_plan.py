@@ -198,3 +198,26 @@ def test_answer_plan_omits_unknown_source_family_without_failing() -> None:
     assert candidate_summary["candidateId"] == "candidate-123"
     assert candidate_summary["sourceId"] == "business-mysql-source"
     assert "sourceFamily" not in candidate_summary
+
+
+def test_answer_plan_preserves_valid_source_id_with_secret_keyword() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Show quarterly spend for the configured source.",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={
+            "candidate_id": "candidate-123",
+            "source_id": "secret-source",
+            "source_family": "mysql",
+        },
+        guard_metadata={"guard_decision": "allow"},
+    )
+
+    candidate_summary = plan.to_wire_payload()["candidateSummary"]
+    assert candidate_summary["sourceId"] == "secret-source"
+    assert "sourceFamily" not in candidate_summary
