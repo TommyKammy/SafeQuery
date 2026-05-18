@@ -69,6 +69,7 @@ If documents drift, do not silently let lower-level docs override upstream inten
 
 - [adr/ADR-0010-mlflow-observability-and-evaluation-plane.md](./adr/ADR-0010-mlflow-observability-and-evaluation-plane.md): MLflow as observability, evaluation, and model-lifecycle plane within the current baseline
 - [design/search-and-analyst-capabilities.md](./design/search-and-analyst-capabilities.md): governed semantic retrieval and analyst-style orchestration in the current source-aware baseline
+- [design/review-llm-adapter-contract.md](./design/review-llm-adapter-contract.md): critique-only structured output contract for Review LLM adapter output
 - [design/evaluation-harness.md](./design/evaluation-harness.md): evaluation goals, datasets, and scoring for the current baseline
 - [pilot-safety-verification-checklist.md](./pilot-safety-verification-checklist.md): pilot-readiness verification checklist for the completed 2-source core path
 - [pilot-deployment-profile.md](./pilot-deployment-profile.md): pilot deployment assumptions and environment contract for safe local/pilot operation
