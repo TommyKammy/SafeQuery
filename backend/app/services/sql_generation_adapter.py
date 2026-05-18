@@ -20,6 +20,7 @@ from pydantic import (
 from typing_extensions import Annotated
 
 from app.core.config import SQLGenerationProvider, SQLGenerationSettings
+from app.features.review_llm.schema import ReviewLLMAdapterOutput
 from app.services.intent_mapping import IntentMappingOutput
 from app.services.generation_context import PreparedGenerationContext
 
@@ -102,6 +103,7 @@ class SQLGenerationAdapterResponse(BaseModel):
     provider: SQLGenerationProvider
     adapter_version: NonEmptyTrimmedString
     model: Optional[NonEmptyTrimmedString] = None
+    review_decision: Optional[ReviewLLMAdapterOutput] = None
 
 
 class SQLGenerationAdapterRunMetadata(BaseModel):
@@ -309,6 +311,7 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
             provider="local_llm",
             adapter_version=self.adapter_version,
             model=model,
+            review_decision=decoded.get("review_decision"),
         )
 
     def _generate_vanna_sql(
@@ -437,6 +440,7 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
             provider="vanna",
             adapter_version=self.adapter_version,
             model=model,
+            review_decision=decoded.get("review_decision"),
         )
 
 

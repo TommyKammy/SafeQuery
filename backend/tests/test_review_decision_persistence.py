@@ -36,6 +36,9 @@ from app.services.sql_generation_adapter import SQLGenerationAdapterResponse
 
 
 class _PreviewAdapter:
+    def __init__(self, review_decision=None):
+        self.review_decision = review_decision
+
     def generate_sql(self, request):
         return SQLGenerationAdapterResponse(
             candidate_sql=(
@@ -44,6 +47,7 @@ class _PreviewAdapter:
             provider="local_llm",
             adapter_version="test.adapter.v1",
             model="safequery-test-sql",
+            review_decision=self.review_decision,
         )
 
 
@@ -372,6 +376,62 @@ def test_review_decision_id_stays_within_column_length_for_long_candidate_id() -
         session.close()
 
 
+def test_preview_submission_persists_adapter_review_decision() -> None:
+    session = _session()
+    try:
+        _seed_source(session)
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+        review = parse_review_llm_adapter_output(_review_payload())
+
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Compare approved vendor spend by vendor this quarter.",
+                source_id="sap-approved-spend",
+            ),
+            authenticated_subject=subject,
+            session=session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                request_id="preview-request-457",
+                correlation_id="preview-request-457-correlation",
+                user_subject="user:alice",
+                session_id="preview-request-457-session",
+                query_candidate_id="preview-candidate-457",
+                candidate_owner_subject="user:alice",
+                auth_source="test-helper",
+            ),
+            sql_generation_adapter=_PreviewAdapter(review_decision=review),
+        )
+
+        persisted_review = session.scalar(select(PreviewReviewDecision))
+        guard_event = session.scalar(
+            select(PreviewAuditEvent).where(
+                PreviewAuditEvent.candidate_id == response.candidate.candidate_id,
+                PreviewAuditEvent.event_type == "guard_evaluated",
+            )
+        )
+        assert persisted_review is not None
+        assert guard_event is not None
+        assert persisted_review.candidate_id == response.candidate.candidate_id
+        assert persisted_review.audit_event_id == guard_event.event_id
+        assert persisted_review.review_status == "needs_clarification"
+
+        candidate_history = next(
+            item
+            for item in get_operator_workflow_snapshot(session).history
+            if item.item_type == "candidate"
+            and item.record_id == response.candidate.candidate_id
+        )
+        assert [item.review_status for item in candidate_history.review_evidence] == [
+            "needs_clarification"
+        ]
+    finally:
+        session.close()
+
+
 def test_review_decision_rejects_unbound_audit_anchor_without_partial_write() -> None:
     session = _session()
     try:
@@ -399,13 +459,19 @@ def test_review_decision_rejects_unbound_audit_anchor_without_partial_write() ->
             ),
             sql_generation_adapter=_PreviewAdapter(),
         )
+        preview_candidate = session.scalar(
+            select(PreviewCandidate).where(
+                PreviewCandidate.candidate_id == response.candidate.candidate_id
+            )
+        )
+        assert preview_candidate is not None
         unbound_event = PreviewAuditEvent(
             event_id=uuid4(),
             lifecycle_order=99,
-            preview_request_id=uuid4(),
+            preview_request_id=preview_candidate.preview_request_id,
             preview_candidate_id=None,
             request_id=response.request.request_id,
-            candidate_id="different-candidate",
+            candidate_id=response.candidate.candidate_id,
             event_type="guard_evaluated",
             occurred_at=datetime(2026, 1, 2, 3, 4, 59, tzinfo=timezone.utc),
             correlation_id="preview-request-457-correlation",

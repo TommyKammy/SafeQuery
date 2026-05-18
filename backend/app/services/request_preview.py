@@ -1094,6 +1094,11 @@ def persist_review_decision(
                 session,
                 "Review decision audit anchor must stay bound to the preview candidate.",
             )
+        if audit_event.preview_candidate_id != preview_candidate.id:
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision audit anchor must stay bound to the preview candidate.",
+            )
         if audit_event.source_id != preview_candidate.source_id:
             _raise_preview_persistence_contract_error(
                 session,
@@ -1153,6 +1158,22 @@ def _raise_preview_persistence_contract_error(
 ) -> None:
     session.rollback()
     raise PreviewSubmissionContractError(message)
+
+
+def _review_decision_audit_event_id(
+    audit_events: list[SourceAwareAuditEvent],
+    *,
+    candidate_id: str,
+) -> UUID:
+    for event in reversed(audit_events):
+        if (
+            event.event_type == "guard_evaluated"
+            and event.query_candidate_id == candidate_id
+        ):
+            return event.event_id
+    raise PreviewSubmissionContractError(
+        "Review decision requires a bound guard audit event anchor."
+    )
 
 
 def _persist_candidate_approval_record(
@@ -1779,6 +1800,7 @@ def submit_preview_request(
     candidate_sql: str | None = None
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None
     guard_evaluation: SQLGuardEvaluation | None = None
+    review_decision: ReviewLLMAdapterOutput | None = None
     guard_status: GuardStatus = PREVIEW_PENDING_GUARD_STATUS
     candidate_state = "preview_ready"
     request_state = "previewed"
@@ -1813,6 +1835,7 @@ def submit_preview_request(
                     intent_mapping=intent_mapping,
                 )
                 adapter_response = sql_generation_adapter.generate_sql(adapter_request)
+                review_decision = adapter_response.review_decision
                 candidate_sql = normalize_adapter_generated_sql(
                     adapter_response.candidate_sql
                 )
@@ -1906,6 +1929,21 @@ def submit_preview_request(
         candidate_state=candidate_state,
         guard_status=guard_status,
     )
+    if review_decision is not None:
+        persist_review_decision(
+            session,
+            candidate_id=candidate_id,
+            review=review_decision,
+            audit_event_id=_review_decision_audit_event_id(
+                audit.events,
+                candidate_id=candidate_id,
+            ),
+            occurred_at=(
+                audit_context.occurred_at
+                if audit_context is not None
+                else datetime.now(timezone.utc)
+            ),
+        )
     primary_deny_code = _primary_guard_deny_code(guard_evaluation)
     denial_reason = _sanitized_guard_denial_reason(guard_evaluation)
     if intent_blocked_candidate_state is not None:

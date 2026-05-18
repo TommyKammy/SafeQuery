@@ -349,6 +349,21 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
                         "select vendor_id from approved_vendor_spend limit 50"
                     ),
                     "model": "safequery-local-sql",
+                    "review_decision": {
+                        "contract_version": "review_llm_adapter_output.v1",
+                        "status": "needs_clarification",
+                        "confidence": "medium",
+                        "intent_summary": "show approved vendors",
+                        "assumptions": ["Vendor means normalized vendor_id."],
+                        "risk_flags": ["Vendor names may be sensitive."],
+                        "clarifying_questions": [
+                            "Should inactive vendors be included?"
+                        ],
+                        "diagnostics": {
+                            "adapter_version": "review-adapter.v1",
+                            "model": "safequery-review-test",
+                        },
+                    },
                 }
             ).encode("utf-8")
 
@@ -363,12 +378,15 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
 
     response = adapter.generate_sql(request)
 
-    assert response.model_dump(exclude_none=True) == {
+    assert response.model_dump(exclude={"review_decision"}, exclude_none=True) == {
         "candidate_sql": "select vendor_id from approved_vendor_spend limit 50",
         "provider": "local_llm",
         "adapter_version": "local_llm.v1",
         "model": "safequery-local-sql",
     }
+    assert response.review_decision is not None
+    assert response.review_decision.status == "needs_clarification"
+    assert response.review_decision.risk_flags == ["Vendor names may be sensitive."]
     assert [call[0] for call in calls] == [
         "http://local-llm:8080/generate-sql",
         "http://local-llm:8080/generate-sql",
