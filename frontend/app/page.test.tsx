@@ -243,6 +243,17 @@ describe("HomePage", () => {
                     sourceLabel: "SAP spend cube / approved_vendor_spend"
                   },
                   {
+                    guardStatus: "pending",
+                    itemType: "candidate",
+                    label: "Ambiguous candidate",
+                    lifecycleState: "clarification_required",
+                    occurredAt: "2026-04-21T14:25:00Z",
+                    recordId: "candidate-clarification-123",
+                    requestId: "request-clarification-123",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  },
+                  {
                     itemType: "run",
                     label: "Failed run",
                     lifecycleState: "failed",
@@ -266,12 +277,23 @@ describe("HomePage", () => {
 
     const history = screen.getByLabelText(/operator history/i);
     const deniedCandidateLink = within(history).getByRole("link", { name: /blocked candidate/i });
+    const ambiguousCandidateLink = within(history).getByRole("link", {
+      name: /ambiguous candidate/i
+    });
     const failedRunLink = within(history).getByRole("link", { name: /failed run/i });
 
     expect(deniedCandidateLink).toHaveAttribute("href", expect.stringContaining("state=review_denied"));
     expect(deniedCandidateLink).toHaveAttribute(
       "href",
       expect.stringContaining("history_record_id=candidate-123")
+    );
+    expect(ambiguousCandidateLink).toHaveAttribute(
+      "href",
+      expect.stringContaining("state=review_denied")
+    );
+    expect(ambiguousCandidateLink).toHaveAttribute(
+      "href",
+      expect.stringContaining("history_record_id=candidate-clarification-123")
     );
     expect(failedRunLink).toHaveAttribute("href", expect.stringContaining("state=failed"));
     expect(failedRunLink).toHaveAttribute("href", expect.stringContaining("history_record_id=run-123"));
@@ -960,6 +982,11 @@ describe("HomePage", () => {
       {
         candidateState: "pending_generation",
         expectedCopy: /preview generation pending/i,
+        requestState: "submitted"
+      },
+      {
+        candidateState: "clarification_required",
+        expectedCopy: /clarification required/i,
         requestState: "submitted"
       },
       {

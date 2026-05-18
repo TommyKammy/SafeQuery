@@ -554,6 +554,8 @@ def _intent_blocked_candidate_state(
 ) -> str | None:
     if intent_mapping is None or intent_mapping.status == "mapped":
         return None
+    if intent_mapping.status == "ambiguous":
+        return "clarification_required"
     return "blocked"
 
 
@@ -754,6 +756,7 @@ def _resolve_revision_record(
             )
         if request.request_state not in {
             "blocked",
+            "clarification_required",
             "preview_denied",
             "preview_generation_failed",
             "preview_malformed",
@@ -794,7 +797,11 @@ def _resolve_revision_record(
             raise PreviewSubmissionContractError(
                 "Revision context lifecycle_state does not match candidate_state."
             )
-        if candidate.candidate_state not in {"blocked", "preview_ready"}:
+        if candidate.candidate_state not in {
+            "blocked",
+            "clarification_required",
+            "preview_ready",
+        }:
             raise PreviewSubmissionContractError(
                 "Preview candidate state is not eligible for revision."
             )
@@ -1673,8 +1680,8 @@ def submit_preview_request(
             intent_mapping
         )
         if intent_blocked_candidate_state is not None:
-            candidate_state = "blocked"
-            request_state = "blocked"
+            candidate_state = intent_blocked_candidate_state
+            request_state = intent_blocked_candidate_state
         else:
             try:
                 prepared_context = prepare_generation_context(

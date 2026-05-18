@@ -13,10 +13,18 @@ from app.features.audit.event_model import (
     SourceIdentifier,
 )
 
-RequestState = Literal["drafting", "submitted", "previewed", "blocked", "superseded"]
+RequestState = Literal[
+    "drafting",
+    "submitted",
+    "previewed",
+    "clarification_required",
+    "blocked",
+    "superseded",
+]
 CandidateState = Literal[
     "pending_generation",
     "preview_ready",
+    "clarification_required",
     "blocked",
     "expired",
     "invalidated",
