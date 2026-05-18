@@ -34,13 +34,26 @@ This SQL-backed path is the required Phase 1 core flow. Governed search, analyst
 
    The adapter returns candidate SQL to the application. This output is not yet trusted for execution.
 
-6. Canonicalization and bounded-SQL preparation
+6. Optional Review LLM critique
+
+   If the Review LLM is enabled, the backend sends a separate minimized review
+   request through the Review LLM adapter after generation. The review prompt
+   emphasizes critique, uncertainty, assumptions, and boundary risks. The review
+   input excludes generation chain-of-thought, hidden scratchpads, source
+   credentials, connection strings, result rows, and runtime secrets.
+
+   Review uses `SAFEQUERY_REVIEW_LLM_*` configuration, which can point to a
+   different model or runtime from `SAFEQUERY_SQL_GENERATION_*`. This separation
+   mitigates correlated failure but does not prove independence or make the
+   Review LLM authoritative.
+
+7. Canonicalization and bounded-SQL preparation
 
    Before guard evaluation, the backend canonicalizes the candidate SQL and applies any required row-bounding rewrite for the Phase 1 bounded execution contract.
 
    The SQL that is hashed, guarded, previewed, and executed is the same canonical SQL.
 
-7. SQL Guard evaluation
+8. SQL Guard evaluation
 
    The application validates candidate SQL using application-owned guardrails such as:
 
@@ -52,13 +65,13 @@ This SQL-backed path is the required Phase 1 core flow. Governed search, analyst
 
    Guard evaluation runs against the canonicalized candidate SQL prepared in the previous step.
 
-8. Candidate persistence
+9. Candidate persistence
 
    The backend computes a SQL hash for the canonical SQL, stores an opaque `query_candidate_id`, and records candidate ownership and validity metadata including owner subject, authorization snapshot, guard version, schema snapshot version, approval timestamp, approval expiration timestamp, replay limits, and invalidation fields.
 
    In the baseline lifecycle, this persistence step creates the approved execution-eligible candidate. Preview happens after approval metadata is already fixed.
 
-9. Preview response
+10. Preview response
 
    The application returns the candidate SQL and guard outcome to the frontend so the user can inspect them. In Phase 1, the preview is read-only and not editable in place.
 
@@ -66,13 +79,13 @@ This SQL-backed path is the required Phase 1 core flow. Governed search, analyst
 
    Admin and audit interfaces should default to metadata-first display and must not re-expose full result payloads unless an explicit lower-level design authorizes that behavior.
 
-10. Explicit execution request
+11. Explicit execution request
 
    If the approved candidate remains visible and unexpired, the user may explicitly trigger execution through the UI. The execution request submits the `query_candidate_id`, not raw SQL text. No silent automatic execution is assumed in the first PoC.
 
    Execute requests keep the candidate-bound source and authenticated subject checks separate from preview submission. Dedicated execute-request rate-limit and concurrency enforcement is not active in this release; it is tracked as follow-up implementation work in [implementation-roadmap.md](../implementation-roadmap.md).
 
-11. Controlled SQL execution
+12. Controlled SQL execution
 
    The backend verifies that the candidate is already approved, unexpired, non-invalidated, owned by the current authenticated subject, still allowed under current authorization policy, and still below replay limits.
 
@@ -82,11 +95,11 @@ This SQL-backed path is the required Phase 1 core flow. Governed search, analyst
 
    If allow-list state, schema snapshot policy, guard rules, role mapping, or kill-switch posture changed since approval, the backend denies execution or requires explicit revalidation rather than trusting stale approval state.
 
-12. Result delivery
+13. Result delivery
 
     The backend returns bounded results and metadata to the frontend for display. Phase 1 result handling applies row, byte, timeout, and cancellation controls.
 
-13. Final audit persistence
+14. Final audit persistence
 
     The application records guard decisions, execution decisions, execution metadata, and any error or denial outcome in PostgreSQL.
 
@@ -142,6 +155,8 @@ stateDiagram-v2
 - Single-use execution is protected by an atomic claim step before execution begins.
 - Previewed SQL is read-only in Phase 1.
 - Previewed SQL is the executable bounded canonical SQL in Phase 1.
+- Review LLM critique is advisory and uses separate prompt and runtime
+  configuration from generation.
 - The normative state vocabulary lives in [query-lifecycle-state-machine.md](./query-lifecycle-state-machine.md).
 - Execution authority always remains in the backend.
 - End users do not connect directly to SQL Server.

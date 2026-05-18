@@ -56,6 +56,7 @@ from app.features.execution import (
     preflight_execution_runtime_controls,
     select_execution_connector,
 )
+from app.features.review_llm import resolve_review_llm_adapter
 from app.services.candidate_lifecycle import (
     CandidateLifecycleAuditContext,
     CandidateLifecycleRevalidationError,
@@ -457,6 +458,11 @@ def create_app() -> FastAPI:
         if settings.sql_generation.provider == "disabled"
         else resolve_sql_generation_adapter(settings.sql_generation)
     )
+    review_llm_adapter = (
+        None
+        if settings.review_llm.provider == "disabled"
+        else resolve_review_llm_adapter(settings.review_llm)
+    )
 
     app.add_middleware(
         CORSMiddleware,
@@ -686,6 +692,7 @@ def create_app() -> FastAPI:
                 session,
                 audit_context=audit_context,
                 sql_generation_adapter=sql_generation_adapter,
+                review_llm_adapter=review_llm_adapter,
             )
         except PreviewSubmissionEntitlementError as exc:
             raise api_error(

@@ -38,6 +38,7 @@ class ProductionIdentityBridgeSettings(BaseModel):
 
 
 SQLGenerationProvider = Literal["disabled", "local_llm", "vanna"]
+ReviewLLMProvider = Literal["disabled", "local_llm"]
 
 _PLACEHOLDER_CREDENTIAL_VALUES = frozenset(
     {
@@ -80,6 +81,17 @@ class SQLGenerationSettings(BaseModel):
     circuit_breaker_failure_threshold: int = Field(default=3, ge=1, le=10)
 
 
+class ReviewLLMSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: ReviewLLMProvider = "disabled"
+    local_llm_base_url: Optional[AnyHttpUrl] = None
+    local_llm_model: Optional[str] = None
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
+    retry_count: int = Field(default=1, ge=0, le=3)
+    circuit_breaker_failure_threshold: int = Field(default=3, ge=1, le=10)
+
+
 class SourceRoleTelemetry(BaseModel):
     application_postgres_persistence: Literal["configured"] = "configured"
     business_postgres_source_generation: Literal["configured", "unconfigured"]
@@ -117,6 +129,16 @@ class Settings(BaseSettings):
         ge=1,
         le=10,
     )
+    review_llm_provider: ReviewLLMProvider = "disabled"
+    review_llm_local_llm_base_url: Optional[AnyHttpUrl] = None
+    review_llm_local_llm_model: Optional[str] = None
+    review_llm_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    review_llm_retry_count: int = Field(default=1, ge=0, le=3)
+    review_llm_circuit_breaker_failure_threshold: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+    )
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
@@ -141,6 +163,7 @@ class Settings(BaseSettings):
     @field_validator(
         "sql_generation_local_llm_model",
         "sql_generation_vanna_model",
+        "review_llm_local_llm_model",
         mode="before",
     )
     @classmethod
@@ -332,6 +355,15 @@ class Settings(BaseSettings):
                 "when SAFEQUERY_SQL_GENERATION_PROVIDER=vanna."
             )
 
+        if (
+            self.review_llm_provider == "local_llm"
+            and self.review_llm_local_llm_base_url is None
+        ):
+            raise ValueError(
+                "SAFEQUERY_REVIEW_LLM_LOCAL_LLM_BASE_URL must be configured "
+                "when SAFEQUERY_REVIEW_LLM_PROVIDER=local_llm."
+            )
+
         return self
 
     @property
@@ -409,6 +441,19 @@ class Settings(BaseSettings):
             retry_count=self.sql_generation_retry_count,
             circuit_breaker_failure_threshold=(
                 self.sql_generation_circuit_breaker_failure_threshold
+            ),
+        )
+
+    @property
+    def review_llm(self) -> ReviewLLMSettings:
+        return ReviewLLMSettings(
+            provider=self.review_llm_provider,
+            local_llm_base_url=self.review_llm_local_llm_base_url,
+            local_llm_model=self.review_llm_local_llm_model,
+            timeout_seconds=self.review_llm_timeout_seconds,
+            retry_count=self.review_llm_retry_count,
+            circuit_breaker_failure_threshold=(
+                self.review_llm_circuit_breaker_failure_threshold
             ),
         )
 

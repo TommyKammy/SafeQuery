@@ -115,6 +115,14 @@ Optional values with reviewed defaults in code or compose:
 - `BUSINESS_MSSQL_SOURCE_SA_PASSWORD`
 - `SAFEQUERY_BUSINESS_POSTGRES_SOURCE_URL`
 - `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING`
+- `SAFEQUERY_SQL_GENERATION_PROVIDER`
+- `SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL`
+- `SAFEQUERY_SQL_GENERATION_LOCAL_LLM_MODEL`
+- `SAFEQUERY_SQL_GENERATION_VANNA_BASE_URL`
+- `SAFEQUERY_SQL_GENERATION_VANNA_MODEL`
+- `SAFEQUERY_REVIEW_LLM_PROVIDER`
+- `SAFEQUERY_REVIEW_LLM_LOCAL_LLM_BASE_URL`
+- `SAFEQUERY_REVIEW_LLM_LOCAL_LLM_MODEL`
 
 Keep the local roles distinct from the start:
 
@@ -126,6 +134,9 @@ Keep the local roles distinct from the start:
 - business MSSQL source uses
   `SAFEQUERY_BUSINESS_MSSQL_SOURCE_CONNECTION_STRING` and the
   `business-mssql-source` service for source-specific connector work
+- SQL generation uses `SAFEQUERY_SQL_GENERATION_*` settings, while optional
+  Review LLM critique uses `SAFEQUERY_REVIEW_LLM_*` settings so reviewer
+  model/runtime changes do not alter generation configuration
 
 This role split does not make the application database a business target.
 The backend image packages `pyodbc` and Microsoft ODBC Driver 18 for SQL

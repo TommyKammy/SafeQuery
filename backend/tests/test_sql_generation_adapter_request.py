@@ -169,6 +169,35 @@ def test_sql_generation_adapter_response_shape_is_typed_and_credential_free() ->
         raise AssertionError("Expected response validation to reject credentials.")
 
 
+def test_sql_generation_adapter_response_rejects_review_decision() -> None:
+    try:
+        SQLGenerationAdapterResponse.model_validate(
+            {
+                "candidate_sql": "select vendor_id from approved_vendor_spend limit 50",
+                "provider": "local_llm",
+                "adapter_version": "local_llm.v1",
+                "model": "safequery-local-sql",
+                "review_decision": {
+                    "contract_version": "review_llm_adapter_output.v1",
+                    "status": "ready",
+                    "confidence": "high",
+                    "intent_summary": "Show approved vendors.",
+                    "diagnostics": {
+                        "adapter_version": "review-adapter.v1",
+                        "model": "same-generation-model",
+                    },
+                },
+            }
+        )
+    except ValidationError as exc:
+        assert exc.errors()[0]["loc"] == ("review_decision",)
+        assert exc.errors()[0]["type"] == "extra_forbidden"
+    else:
+        raise AssertionError(
+            "Expected generation responses to reject embedded review decisions."
+        )
+
+
 def test_sql_generation_adapter_run_metadata_fingerprints_safe_request_projection() -> None:
     request = SQLGenerationAdapterRequest(
         request_id="req_79_preview",
@@ -378,15 +407,12 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
 
     response = adapter.generate_sql(request)
 
-    assert response.model_dump(exclude={"review_decision"}, exclude_none=True) == {
+    assert response.model_dump(exclude_none=True) == {
         "candidate_sql": "select vendor_id from approved_vendor_spend limit 50",
         "provider": "local_llm",
         "adapter_version": "local_llm.v1",
         "model": "safequery-local-sql",
     }
-    assert response.review_decision is not None
-    assert response.review_decision.status == "needs_clarification"
-    assert response.review_decision.risk_flags == ["Vendor names may be sensitive."]
     assert [call[0] for call in calls] == [
         "http://local-llm:8080/generate-sql",
         "http://local-llm:8080/generate-sql",
@@ -397,7 +423,7 @@ def test_local_llm_generation_retries_with_bounded_timeout(monkeypatch) -> None:
     assert "credentials" not in json.dumps(calls[0][2])
 
 
-def test_local_llm_generation_ignores_malformed_review_decision(monkeypatch) -> None:
+def test_local_llm_generation_ignores_embedded_review_decision(monkeypatch) -> None:
     adapter = resolve_sql_generation_adapter(
         {
             "provider": "local_llm",
@@ -458,7 +484,7 @@ def test_local_llm_generation_ignores_malformed_review_decision(monkeypatch) -> 
         response.candidate_sql
         == "select vendor_id from approved_vendor_spend limit 50"
     )
-    assert response.review_decision is None
+    assert "review_decision" not in response.model_dump()
 
 
 def test_local_llm_generation_retries_malformed_json_response(monkeypatch) -> None:
@@ -697,7 +723,7 @@ def test_vanna_generation_uses_curated_context_and_bounded_request(
     assert "execution_result" not in json.dumps(response.model_dump())
 
 
-def test_vanna_generation_ignores_malformed_review_decision(monkeypatch) -> None:
+def test_vanna_generation_ignores_embedded_review_decision(monkeypatch) -> None:
     adapter = resolve_sql_generation_adapter(
         {
             "provider": "vanna",
@@ -763,7 +789,7 @@ def test_vanna_generation_ignores_malformed_review_decision(monkeypatch) -> None
         response.candidate_sql
         == "select vendor_id from approved_vendor_spend limit 50"
     )
-    assert response.review_decision is None
+    assert "review_decision" not in response.model_dump()
 
 
 def test_vanna_generation_fails_closed_for_execution_material_response(

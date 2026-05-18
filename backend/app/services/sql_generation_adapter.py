@@ -20,11 +20,6 @@ from pydantic import (
 from typing_extensions import Annotated
 
 from app.core.config import SQLGenerationProvider, SQLGenerationSettings
-from app.features.review_llm.schema import (
-    ReviewLLMAdapterOutput,
-    ReviewLLMAdapterOutputError,
-    parse_review_llm_adapter_output,
-)
 from app.services.intent_mapping import IntentMappingOutput
 from app.services.generation_context import PreparedGenerationContext
 
@@ -107,7 +102,6 @@ class SQLGenerationAdapterResponse(BaseModel):
     provider: SQLGenerationProvider
     adapter_version: NonEmptyTrimmedString
     model: Optional[NonEmptyTrimmedString] = None
-    review_decision: Optional[ReviewLLMAdapterOutput] = None
 
 
 class SQLGenerationAdapterRunMetadata(BaseModel):
@@ -189,19 +183,6 @@ def _require_adapter_response_has_no_execution_material(
                 f"adapter boundary material '{forbidden_key}'."
             ),
             )
-
-
-def _parse_optional_review_decision(value: object) -> ReviewLLMAdapterOutput | None:
-    if value is None:
-        return None
-    if isinstance(value, ReviewLLMAdapterOutput):
-        return value
-    if not isinstance(value, (str, bytes, bytearray, Mapping)):
-        return None
-    try:
-        return parse_review_llm_adapter_output(value)
-    except ReviewLLMAdapterOutputError:
-        return None
 
 
 class SQLGenerationAdapter(Protocol):
@@ -328,9 +309,6 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
             provider="local_llm",
             adapter_version=self.adapter_version,
             model=model,
-            review_decision=_parse_optional_review_decision(
-                decoded.get("review_decision")
-            ),
         )
 
     def _generate_vanna_sql(
@@ -459,9 +437,6 @@ class ConfiguredSQLGenerationAdapter(BaseModel):
             provider="vanna",
             adapter_version=self.adapter_version,
             model=model,
-            review_decision=_parse_optional_review_decision(
-                decoded.get("review_decision")
-            ),
         )
 
 

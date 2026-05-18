@@ -18,6 +18,10 @@ def test_review_llm_adapter_contract_documents_critique_only_boundary() -> None:
         "Low confidence cannot be returned with `ready`",
         "Malformed output must fail closed",
         "SQL Guard and backend candidate lifecycle remain the enforcement boundary",
+        "Review uses a separate prompt boundary and model configuration from SQL generation",
+        "SAFEQUERY_REVIEW_LLM_*",
+        "It does not eliminate correlated failure",
+        "source credentials, connection strings, result rows, or runtime secrets",
     ]:
         assert phrase in normalized
 
