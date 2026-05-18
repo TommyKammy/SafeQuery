@@ -354,6 +354,54 @@ def test_answer_plan_redacts_basic_auth_credentials() -> None:
     assert "yxbponnly3jlda" not in serialized
 
 
+def test_answer_plan_redacts_basic_auth_credentials_with_colon_payload() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Retry with Authorization: Basic user:password safely.",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": "Authorization failed for Basic api:multi-word-password",
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "user:password" not in serialized
+    assert ":password" not in serialized
+    assert "api:multi-word-password" not in serialized
+    assert "multi-word-password" not in serialized
+
+
+def test_answer_plan_redacts_quoted_basic_and_bearer_credentials() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question='Retry with Authorization: Bearer "abc.def" safely.',
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": 'Authorization failed for Basic "dXNlcjpwYXNz"',
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "abc.def" not in serialized
+    assert "dxnlcjpwyxnz" not in serialized
+
+
 def test_answer_plan_redacts_full_bearer_token_with_equals() -> None:
     review = parse_review_llm_adapter_output(_review_payload())
 
@@ -376,6 +424,57 @@ def test_answer_plan_redacts_full_bearer_token_with_equals() -> None:
     assert "abc=def" not in serialized
     assert "opaque-token==" not in serialized
     assert "=def" not in serialized
+
+
+def test_answer_plan_redacts_uri_credentials_with_escaped_quotes() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question=r'Use postgresql://user:abc\\"def@host/db safely.',
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": r'Driver failed for mssql://reader:north\\"wind@warehouse/finance',
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "abc" not in serialized
+    assert "def@host" not in serialized
+    assert "north" not in serialized
+    assert "wind@warehouse" not in serialized
+    assert "warehouse/finance" not in serialized
+
+
+def test_answer_plan_redacts_dsn_password_values_with_escaped_quotes() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question=r'Use Password="abc\\"def" safely.',
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": r"ODBC failed with Pwd='cedar\\'redwood'; retry later",
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "abc" not in serialized
+    assert "def" not in serialized
+    assert "cedar" not in serialized
+    assert "redwood" not in serialized
 
 
 def test_answer_plan_rejects_non_string_selected_columns() -> None:

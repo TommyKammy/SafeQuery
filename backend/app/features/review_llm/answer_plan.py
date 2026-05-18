@@ -35,11 +35,12 @@ _SUPPORTED_SOURCE_FAMILIES = frozenset(("mssql", "postgresql"))
 _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?i)\b[a-z][a-z0-9+.-]*://"
-        r"(?:(?=[^\"'\r\n;,}]*@)[^\"'\r\n;,}]+|[^\s\"']+)"
+        r"(?:(?=(?:\\+[\"']|\\.|[^\"'\r\n;,}])*@)"
+        r"(?:\\+[\"']|\\.|[^\"'\r\n;,}])+|[^\s\"']+)"
     ),
     re.compile(
         r"(?i)\b(?:driver|server|database|uid|pwd|password)\s*=\s*"
-        r"(?:\{[^}]*\}|\"[^\"]*\"|'[^']*'|[^;,\"'}]+)"
+        r"(?:\{[^}]*\}|\"(?:\\+\"|\\.|[^\"\\])*\"|'(?:\\+'|\\.|[^'\\])*'|[^;,\"'}]+)"
     ),
     re.compile(
         r"(?i)(?<![a-z0-9])[\"']?(?:access[_-]?token|refresh[_-]?token|"
@@ -47,7 +48,10 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"client[_-]?secret|api[_-]?key|private[_-]?key)(?:\\*[\"'])?\s*[:=]\s*"
         r"(?:\\*\"(?:\\.|[^\"\\])*\\*\"|\\*'(?:\\.|[^'\\])*\\*'|\{[^}]*\}|[^;,}]+)"
     ),
-    re.compile(r"(?i)\b(?:basic|bearer)\s+[a-z0-9._~+/=-]+"),
+    re.compile(
+        r"(?i)\b(?:basic|bearer)\s+"
+        r"(?:\"(?:\\+\"|\\.|[^\"\\])*\"|'(?:\\+'|\\.|[^'\\])*'|[^\s;,}]+)"
+    ),
     re.compile(
         r"(?i)(?<![a-z0-9])(?:password|passwd|pwd|secret|token|credential|"
         r"client[_ -]?secret|api[_ -]?key|private[_ -]?key)(?![a-z0-9])"
