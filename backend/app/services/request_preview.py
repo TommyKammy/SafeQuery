@@ -102,6 +102,8 @@ _DEFAULT_INTENT_DENIAL_REASON_BY_STATUS = {
     "ambiguous": "The requested business concept requires clarification before SQL generation.",
     "unsupported": "The requested business concept is not approved for the selected semantic contract.",
 }
+_REVIEW_DECISION_ID_PREFIX = "review-"
+_MAX_REVIEW_DECISION_ID_LENGTH = 255
 
 
 def _resolve_sql_guard_controls(source_family: str) -> tuple[str, Any]:
@@ -112,6 +114,13 @@ def _resolve_sql_guard_controls(source_family: str) -> tuple[str, Any]:
             f"Unsupported source family '{source_family}' cannot be guarded."
         )
     return guard_version, evaluator
+
+
+def _review_decision_id_for_candidate(preview_candidate: PreviewCandidate) -> str:
+    candidate_scoped_id = f"{_REVIEW_DECISION_ID_PREFIX}{preview_candidate.candidate_id}"
+    if len(candidate_scoped_id) <= _MAX_REVIEW_DECISION_ID_LENGTH:
+        return candidate_scoped_id
+    return f"{_REVIEW_DECISION_ID_PREFIX}{preview_candidate.id}"
 
 
 def _sanitized_guard_denial_reason(
@@ -1096,7 +1105,7 @@ def persist_review_decision(
                 PreviewReviewDecision.candidate_id == preview_candidate.candidate_id
             )
         ).scalar_one_or_none()
-        review_decision_id = f"review-{preview_candidate.candidate_id}"
+        review_decision_id = _review_decision_id_for_candidate(preview_candidate)
         if existing is None:
             existing = PreviewReviewDecision(
                 review_decision_id=review_decision_id,
@@ -1109,6 +1118,8 @@ def persist_review_decision(
                 session,
                 "Review decision cannot be rebound to a different preview candidate.",
             )
+        else:
+            review_decision_id = existing.review_decision_id
 
         existing.request_id = preview_candidate.request_id
         existing.audit_event_id = audit_event.event_id

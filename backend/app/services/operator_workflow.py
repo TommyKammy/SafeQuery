@@ -18,6 +18,7 @@ from app.db.models.preview import (
 from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
 from app.features.auth.governance_bindings import normalize_governance_binding
+from app.features.review_llm import sanitize_review_llm_surface_text_items
 from app.services.source_registry import effective_source_activation_posture
 
 
@@ -483,7 +484,7 @@ def _read_payload_items(value: object) -> list[dict[str, object]]:
 def _read_text_items(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, str) and item.strip()]
+    return list(sanitize_review_llm_surface_text_items(value))
 
 
 def _review_evidence_summary(

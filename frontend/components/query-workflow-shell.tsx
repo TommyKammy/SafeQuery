@@ -1819,11 +1819,14 @@ function renderAuditEvidencePanel(
               <span>{review.reviewDecisionId}</span>
               <span>{review.reviewContractVersion}</span>
               <span>Audit event {review.auditEventId}</span>
-              {review.riskFlags.map((risk) => (
-                <span key={`risk:${risk}`}>{risk}</span>
+              {review.assumptions.map((assumption, index) => (
+                <span key={`${review.reviewDecisionId}:assumption:${index}`}>{assumption}</span>
               ))}
-              {review.clarifyingQuestions.map((question) => (
-                <span key={`clarifying:${question}`}>{question}</span>
+              {review.riskFlags.map((risk, index) => (
+                <span key={`${review.reviewDecisionId}:risk:${index}`}>{risk}</span>
+              ))}
+              {review.clarifyingQuestions.map((question, index) => (
+                <span key={`${review.reviewDecisionId}:clarifying:${index}`}>{question}</span>
               ))}
             </div>
           ))}
