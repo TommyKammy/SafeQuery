@@ -279,3 +279,93 @@ def test_answer_plan_rejects_non_string_selected_columns() -> None:
     serialized = json.dumps(candidate_summary, sort_keys=True).lower()
     assert "alice" not in serialized
     assert "999.00" not in serialized
+
+
+def test_answer_plan_rejects_non_string_semantic_evidence_items() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Which approved vendors had the highest quarterly spend?",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+            "dimensions": [{"customer": "alice", "amount": "999.00"}],
+            "filters": ["approved_spend_only", {"token": "raw-token"}],
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={"guard_decision": "allow"},
+    )
+
+    semantic_evidence = plan.to_wire_payload()["semanticEvidence"][0]
+    assert semantic_evidence["dimensions"] == []
+    assert semantic_evidence["filters"] == []
+    serialized = json.dumps(semantic_evidence, sort_keys=True).lower()
+    assert "alice" not in serialized
+    assert "999.00" not in serialized
+    assert "raw-token" not in serialized
+
+
+def test_answer_plan_orders_unordered_string_metadata_deterministically() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Which approved vendors had the highest quarterly spend?",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+            "dimensions": {"vendor_name", "fiscal_quarter"},
+            "filters": frozenset(("approved_spend_only", "current_quarter")),
+        },
+        candidate_metadata={
+            "candidate_id": "candidate-123",
+            "selected_columns": {"approved_spend", "vendor_name"},
+        },
+        guard_metadata={"guard_decision": "allow"},
+    )
+
+    semantic_evidence = plan.to_wire_payload()["semanticEvidence"][0]
+    candidate_summary = plan.to_wire_payload()["candidateSummary"]
+    assert semantic_evidence["dimensions"] == ["fiscal_quarter", "vendor_name"]
+    assert semantic_evidence["filters"] == ["approved_spend_only", "current_quarter"]
+    assert candidate_summary["selectedColumns"] == ["approved_spend", "vendor_name"]
+
+
+def test_answer_plan_rejects_non_string_scalar_metadata() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Which approved vendors had the highest quarterly spend?",
+        review=review,
+        semantic_mapping={
+            "contract_version": {"customer": "alice", "amount": "999.00"},
+            "mapping_id": {"mapping": "customer-row"},
+            "classification": "supported",
+            "metric": {"token": "raw-token"},
+        },
+        candidate_metadata={
+            "candidate_id": {"customer": "alice", "amount": "999.00"},
+            "source_id": {"source": "business-postgres-source"},
+        },
+        guard_metadata={
+            "guard_decision": "allow",
+            "guard_version": {"version": "row-like-object"},
+            "denial_reason": {"password": "hunter2"},
+        },
+    )
+
+    wire_payload = plan.to_wire_payload()
+    assert wire_payload["semanticEvidence"][0] == {
+        "classification": "supported",
+        "dimensions": [],
+        "filters": [],
+    }
+    assert wire_payload["candidateSummary"]["selectedColumns"] == []
+    assert wire_payload["guardSummary"] == {"guardDecision": "allow"}
+    serialized = json.dumps(wire_payload, sort_keys=True).lower()
+    assert "alice" not in serialized
+    assert "999.00" not in serialized
+    assert "customer-row" not in serialized
+    assert "raw-token" not in serialized
+    assert "hunter2" not in serialized

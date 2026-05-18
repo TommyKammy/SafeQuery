@@ -161,8 +161,8 @@ def _build_semantic_evidence(
         mapping_id=_optional_sanitized_string(safe_mapping.get("mapping_id")),
         classification=_optional_sanitized_string(safe_mapping.get("classification")),
         metric=_optional_sanitized_string(safe_mapping.get("metric")),
-        dimensions=_sanitize_text_items(_as_iterable(safe_mapping.get("dimensions"))),
-        filters=_sanitize_text_items(_as_iterable(safe_mapping.get("filters"))),
+        dimensions=_sanitize_string_items(safe_mapping.get("dimensions")),
+        filters=_sanitize_string_items(safe_mapping.get("filters")),
     )
 
 
@@ -305,6 +305,8 @@ def _sanitize_string_items(value: object) -> tuple[str, ...]:
     items = tuple(value)
     if not all(isinstance(item, str) for item in items):
         return ()
+    if isinstance(value, (set, frozenset)):
+        items = tuple(sorted(items))
     return _sanitize_text_items(items)
 
 
@@ -318,18 +320,10 @@ def _sanitize_text(value: object) -> str:
 def _optional_sanitized_string(value: object) -> str | None:
     if value is None:
         return None
+    if not isinstance(value, str):
+        return None
     sanitized = _sanitize_text(value)
     return sanitized or None
-
-
-def _as_iterable(value: object) -> Iterable[object]:
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        return (value,)
-    if isinstance(value, Iterable):
-        return value
-    return (value,)
 
 
 def _positive_int_or_none(value: object) -> int | None:
@@ -350,6 +344,8 @@ def _guard_decision_or_none(value: object) -> Optional[Literal["allow", "reject"
 
 def _source_identifier_or_none(value: object) -> SourceIdentifier | None:
     if value is None:
+        return None
+    if not isinstance(value, str):
         return None
     normalized = str(value).strip()
     if _SOURCE_IDENTIFIER_PATTERN.fullmatch(normalized):
