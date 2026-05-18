@@ -44,8 +44,7 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"client[_-]?secret|api[_-]?key|private[_-]?key)(?:\\*[\"'])?\s*[:=]\s*"
         r"(?:\\*[\"'][^\"']*(?:\\*[\"'])|\{[^}]*\}|[^;,\"'}]+)"
     ),
-    re.compile(r"(?i)\bbasic\s+[a-z0-9._~+/=-]+"),
-    re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+"),
+    re.compile(r"(?i)\b(?:basic|bearer)\s+[a-z0-9._~+/=-]+"),
     re.compile(
         r"(?i)(?<![a-z0-9])(?:password|passwd|pwd|secret|token|credential|"
         r"client[_ -]?secret|api[_ -]?key|private[_ -]?key)(?![a-z0-9])"
