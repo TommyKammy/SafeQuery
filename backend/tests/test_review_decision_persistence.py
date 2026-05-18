@@ -645,3 +645,55 @@ def test_review_decision_rejects_unbound_audit_anchor_without_partial_write() ->
         assert session.scalars(select(PreviewReviewDecision)).all() == []
     finally:
         session.close()
+
+
+def test_review_decision_rejects_non_guard_audit_anchor_without_partial_write() -> None:
+    session = _session()
+    try:
+        _seed_source(session)
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Compare approved vendor spend by vendor this quarter.",
+                source_id="sap-approved-spend",
+            ),
+            authenticated_subject=subject,
+            session=session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                request_id="preview-request-457",
+                correlation_id="preview-request-457-correlation",
+                user_subject="user:alice",
+                session_id="preview-request-457-session",
+                query_candidate_id="preview-candidate-457",
+                candidate_owner_subject="user:alice",
+                auth_source="test-helper",
+            ),
+            sql_generation_adapter=_PreviewAdapter(),
+        )
+        generation_event = session.scalar(
+            select(PreviewAuditEvent).where(
+                PreviewAuditEvent.candidate_id == response.candidate.candidate_id,
+                PreviewAuditEvent.event_type == "generation_completed",
+            )
+        )
+        assert generation_event is not None
+
+        with pytest.raises(
+            PreviewSubmissionContractError,
+            match="requires a guard audit event anchor",
+        ):
+            persist_review_decision(
+                session,
+                candidate_id=response.candidate.candidate_id,
+                review=parse_review_llm_adapter_output(_review_payload()),
+                audit_event_id=generation_event.event_id,
+                occurred_at=datetime(2026, 1, 2, 3, 5, 0, tzinfo=timezone.utc),
+            )
+
+        assert session.scalars(select(PreviewReviewDecision)).all() == []
+    finally:
+        session.close()

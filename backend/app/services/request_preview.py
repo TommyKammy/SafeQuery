@@ -1110,6 +1110,11 @@ def persist_review_decision(
                 "Review decision cannot be persisted without an audit event anchor.",
             )
         assert audit_event is not None
+        if audit_event.event_type != "guard_evaluated":
+            _raise_preview_persistence_contract_error(
+                session,
+                "Review decision requires a guard audit event anchor.",
+            )
         if audit_event.request_id != preview_candidate.request_id:
             _raise_preview_persistence_contract_error(
                 session,
