@@ -258,7 +258,7 @@ def test_answer_plan_redacts_escaped_quoted_secret_values() -> None:
     review = parse_review_llm_adapter_output(_review_payload())
 
     plan = build_answer_plan_from_review(
-        question=r'Inspect {\"password\":\"hunter2\"} safely.',
+        question=r'Inspect {\\"password\\":\\"hunter2\\"} safely.',
         review=review,
         semantic_mapping={
             "contract_version": "approved_vendor_spend.v1",
@@ -267,7 +267,7 @@ def test_answer_plan_redacts_escaped_quoted_secret_values() -> None:
         candidate_metadata={"candidate_id": "candidate-123"},
         guard_metadata={
             "guard_decision": "reject",
-            "denial_reason": r'Driver returned {\"token\":\"raw-token\"}.',
+            "denial_reason": r'Driver returned {\\"token\\":\\"raw-token\\"}.',
         },
     )
 
@@ -275,6 +275,54 @@ def test_answer_plan_redacts_escaped_quoted_secret_values() -> None:
 
     assert "hunter2" not in serialized
     assert "raw-token" not in serialized
+
+
+def test_answer_plan_redacts_multiline_key_value_secret_values() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Use password=northwind\nsouthwind safely.",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": "Driver failed with token: redwood\ncedar; retry later",
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "northwind" not in serialized
+    assert "southwind" not in serialized
+    assert "redwood" not in serialized
+    assert "cedar" not in serialized
+
+
+def test_answer_plan_redacts_basic_auth_credentials() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Retry with Basic dXNlcjpwYXNzLXNlY3JldA== safely.",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": "Authorization failed for Basic YXBpOnNlY3JldA==",
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "dxnlcjpwyxnzlxnly3jlda" not in serialized
+    assert "yxbponnly3jlda" not in serialized
 
 
 def test_answer_plan_redacts_full_bearer_token_with_equals() -> None:

@@ -36,14 +36,15 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"']+"),
     re.compile(
         r"(?i)\b(?:driver|server|database|uid|pwd|password)\s*=\s*"
-        r"(?:\{[^}]*\}|\"[^\"]*\"|'[^']*'|[^;,\r\n\"'}]+)"
+        r"(?:\{[^}]*\}|\"[^\"]*\"|'[^']*'|[^;,\"'}]+)"
     ),
     re.compile(
         r"(?i)(?<![a-z0-9])[\"']?(?:access[_-]?token|refresh[_-]?token|"
         r"id[_-]?token|token|secret|password|passwd|pwd|credential|"
-        r"client[_-]?secret|api[_-]?key|private[_-]?key)(?:\\?[\"'])?\s*[:=]\s*"
-        r"(?:\\?[\"'][^\"'\r\n]*(?:\\?[\"'])|\{[^}]*\}|[^;,\r\n\"'}]+)"
+        r"client[_-]?secret|api[_-]?key|private[_-]?key)(?:\\*[\"'])?\s*[:=]\s*"
+        r"(?:\\*[\"'][^\"']*(?:\\*[\"'])|\{[^}]*\}|[^;,\"'}]+)"
     ),
+    re.compile(r"(?i)\bbasic\s+[a-z0-9._~+/=-]+"),
     re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+"),
     re.compile(
         r"(?i)(?<![a-z0-9])(?:password|passwd|pwd|secret|token|credential|"
