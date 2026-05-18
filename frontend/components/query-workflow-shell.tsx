@@ -112,7 +112,7 @@ type PreviewSubmissionStatus =
       candidateState: string;
       requestState: string;
       sourceId: string;
-      status: "denied" | "pending";
+      status: "clarification_required" | "denied" | "pending";
     }
   | {
       code: string;
@@ -838,6 +838,13 @@ function isDeniedPreviewState(result: PreviewSubmissionResult): boolean {
   );
 }
 
+function isClarificationRequiredPreviewState(result: PreviewSubmissionResult): boolean {
+  const requestState = result.requestState.toLowerCase();
+  const candidateState = result.candidateState.toLowerCase();
+
+  return requestState === "clarification_required" || candidateState === "clarification_required";
+}
+
 function isReadyPreviewState(result: PreviewSubmissionResult): boolean {
   return result.candidateState.toLowerCase() === "preview_ready";
 }
@@ -1231,6 +1238,7 @@ function isRevisableRequestLifecycleState(lifecycleState: string): boolean {
   const normalizedLifecycleState = lifecycleState.toLowerCase();
   return (
     normalizedLifecycleState === "blocked" ||
+    normalizedLifecycleState === "clarification_required" ||
     normalizedLifecycleState === "preview_denied" ||
     normalizedLifecycleState === "preview_generation_failed" ||
     normalizedLifecycleState === "preview_malformed" ||
@@ -2322,6 +2330,32 @@ export function QueryWorkflowShell({
         return;
       }
 
+      if (isClarificationRequiredPreviewState(result)) {
+        setSubmittedQuestion(submittedQuestionText);
+        setSubmittedSourceId(result.sourceId);
+        setSubmittedState("review_denied");
+        setRevisionDraft(result.revisionContext ?? revisionDraft);
+        setSubmittedCandidatePreview({
+          auditEvents: [],
+          candidateId: result.candidateId,
+          candidateSql: result.candidateSql,
+          candidateState: result.candidateState,
+          executedEvidence: [],
+          guardStatus: result.guardStatus,
+          requestId: result.requestId,
+          retrievedCitations: [],
+          sourceId: result.sourceId,
+          sourceLabel: selectedSource.displayLabel
+        });
+        setPreviewSubmission({
+          candidateState: result.candidateState,
+          requestState: result.requestState,
+          sourceId: result.sourceId,
+          status: "clarification_required"
+        });
+        return;
+      }
+
       if (isDeniedPreviewState(result)) {
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
@@ -2762,6 +2796,16 @@ export function QueryWorkflowShell({
                     Request state {previewSubmission.requestState}; candidate state{" "}
                     {previewSubmission.candidateState}. The shell stays in query review until SQL
                     preview is ready.
+                  </p>
+                </div>
+              ) : null}
+              {previewSubmission.status === "clarification_required" ? (
+                <div className="state-callout state-callout-warning" role="status">
+                  <p className="state-callout-title">Clarification required</p>
+                  <p>
+                    Request state {previewSubmission.requestState}; candidate state{" "}
+                    {previewSubmission.candidateState}. Answer the clarifying question before SQL
+                    generation can continue.
                   </p>
                 </div>
               ) : null}

@@ -274,8 +274,8 @@ def test_http_preview_submission_persists_request_and_candidate_records() -> Non
         assert response_payload["candidate"]["guard_status"] == "pending"
         assert response_payload["candidate"]["candidate_sql"] is None
 
-        persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
+        persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_approval = session.execute(
             select(PreviewCandidateApproval)
         ).scalar_one()
@@ -659,9 +659,19 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
 
         assert response.status_code == 200
         response_payload = response.json()
+        expected_candidate_state = (
+            "clarification_required"
+            if expected_status == "ambiguous"
+            else "blocked"
+        )
         assert adapter.adapter_request is None
         assert response_payload["candidate"]["candidate_sql"] is None
-        assert response_payload["candidate"]["state"] == "blocked"
+        assert response_payload["candidate"]["state"] == expected_candidate_state
+        assert response_payload["candidate"]["primary_deny_code"] == (
+            "DENY_AMBIGUOUS_INTENT"
+            if expected_status == "ambiguous"
+            else "DENY_UNSUPPORTED_INTENT"
+        )
         assert response_payload["candidate"]["intent_mapping"]["status"] == (
             expected_status
         )
@@ -671,6 +681,13 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             else None
         )
         assert response_payload["candidate"]["intent_mapping"]["clarification"] is not None
+        assert "/Users/" not in response_payload["candidate"]["denial_reason"]
+        assert "secret" not in response_payload["candidate"]["denial_reason"].lower()
+        assert response_payload["evaluation"]["state"] == (
+            "ambiguous_intent"
+            if expected_status == "ambiguous"
+            else "unsupported_intent"
+        )
         assert [event["event_type"] for event in response_payload["audit"]["events"]] == [
             "query_submitted",
             "generation_requested",
@@ -685,9 +702,13 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             expected_status
         )
         assert response_payload["audit"]["events"][1]["candidate_state"] == (
-            "blocked"
+            expected_candidate_state
+        )
+        assert response_payload["audit"]["events"][1]["primary_deny_code"] == (
+            response_payload["candidate"]["primary_deny_code"]
         )
 
+        persisted_request = session.execute(select(PreviewRequest)).scalar_one()
         persisted_candidate = session.execute(select(PreviewCandidate)).scalar_one()
         persisted_approval = session.execute(
             select(PreviewCandidateApproval)
@@ -699,8 +720,9 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             .scalars()
             .all()
         )
+        assert persisted_request.request_state == expected_candidate_state
         assert persisted_candidate.candidate_sql is None
-        assert persisted_candidate.candidate_state == "blocked"
+        assert persisted_candidate.candidate_state == expected_candidate_state
         assert persisted_candidate.guard_status == "pending"
         assert persisted_approval.approval_state == "invalidated"
         assert [event.event_type for event in persisted_events] == [
@@ -711,7 +733,7 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             event.event_type for event in persisted_events
         }
         assert "guard_evaluated" not in {event.event_type for event in persisted_events}
-        assert persisted_events[-1].candidate_state == "blocked"
+        assert persisted_events[-1].candidate_state == expected_candidate_state
         assert persisted_events[-1].audit_payload["intent_mapping"]["status"] == (
             expected_status
         )
@@ -727,7 +749,7 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
                     "item_type": "candidate",
                     "request_id": response_payload["request"]["request_id"],
                     "candidate_id": response_payload["candidate"]["candidate_id"],
-                    "lifecycle_state": "blocked",
+                    "lifecycle_state": expected_candidate_state,
                 },
             },
         )
@@ -741,7 +763,7 @@ def test_http_preview_intent_mapping_blocks_before_sql_generation_for_non_mapped
             "candidate_id": response_payload["candidate"]["candidate_id"],
             "run_id": None,
             "source_id": "sap-approved-spend",
-            "lifecycle_state": "blocked",
+            "lifecycle_state": expected_candidate_state,
         }
     finally:
         session.close()

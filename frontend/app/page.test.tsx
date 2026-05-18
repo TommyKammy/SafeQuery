@@ -963,6 +963,11 @@ describe("HomePage", () => {
         requestState: "submitted"
       },
       {
+        candidateState: "clarification_required",
+        expectedCopy: /clarification required/i,
+        requestState: "submitted"
+      },
+      {
         candidateState: "denied",
         expectedCopy: /preview denied/i,
         requestState: "blocked"
