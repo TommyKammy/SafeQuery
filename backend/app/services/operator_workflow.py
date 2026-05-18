@@ -484,7 +484,10 @@ def _read_payload_items(value: object) -> list[dict[str, object]]:
 def _read_sanitized_review_text_items(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
-    return list(sanitize_review_llm_surface_text_items(value))
+    sanitized: list[str] = []
+    for item in value:
+        sanitized.extend(sanitize_review_llm_surface_text_items((item,)))
+    return sanitized
 
 
 def _review_evidence_summary(

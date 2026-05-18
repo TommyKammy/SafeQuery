@@ -320,6 +320,94 @@ def test_operator_review_evidence_sanitizes_llm_text_before_payload_exposure() -
         session.close()
 
 
+def test_operator_review_evidence_preserves_duplicate_sanitized_items() -> None:
+    session = _session()
+    try:
+        _seed_source(session)
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Compare approved vendor spend by vendor this quarter.",
+                source_id="sap-approved-spend",
+            ),
+            authenticated_subject=subject,
+            session=session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                request_id="preview-request-457",
+                correlation_id="preview-request-457-correlation",
+                user_subject="user:alice",
+                session_id="preview-request-457-session",
+                query_candidate_id="preview-candidate-457",
+                candidate_owner_subject="user:alice",
+                auth_source="test-helper",
+            ),
+            sql_generation_adapter=_PreviewAdapter(),
+        )
+        audit_event = session.scalar(
+            select(PreviewAuditEvent).where(
+                PreviewAuditEvent.candidate_id == response.candidate.candidate_id,
+                PreviewAuditEvent.event_type == "guard_evaluated",
+            )
+        )
+        assert audit_event is not None
+
+        payload = _review_payload()
+        payload["assumptions"] = ["Shared interpretation.", "Shared interpretation."]
+        payload["risk_flags"] = [
+            "Credential token=raw-review-token; continue.",
+            "Credential token=raw-review-token; continue.",
+        ]
+        payload["clarifying_questions"] = [
+            "Retry with Bearer opaque-review-token; then ask?",
+            "Retry with Bearer opaque-review-token; then ask?",
+        ]
+        review = parse_review_llm_adapter_output(payload)
+
+        persist_review_decision(
+            session,
+            candidate_id=response.candidate.candidate_id,
+            review=review,
+            audit_event_id=audit_event.event_id,
+            occurred_at=datetime(2026, 1, 2, 3, 5, 0, tzinfo=timezone.utc),
+        )
+
+        persisted_review = session.scalar(select(PreviewReviewDecision))
+        assert persisted_review is not None
+        assert persisted_review.assumptions == [
+            "Shared interpretation.",
+            "Shared interpretation.",
+        ]
+
+        candidate_history = next(
+            item
+            for item in get_operator_workflow_snapshot(session).history
+            if item.item_type == "candidate"
+            and item.record_id == response.candidate.candidate_id
+        )
+        operator_payload = candidate_history.review_evidence[0].model_dump(
+            mode="json", by_alias=True
+        )
+
+        assert operator_payload["assumptions"] == [
+            "Shared interpretation.",
+            "Shared interpretation.",
+        ]
+        assert operator_payload["riskFlags"] == [
+            "[redacted] [redacted]; continue.",
+            "[redacted] [redacted]; continue.",
+        ]
+        assert operator_payload["clarifyingQuestions"] == [
+            "Retry with [redacted]; then ask?",
+            "Retry with [redacted]; then ask?",
+        ]
+    finally:
+        session.close()
+
+
 def test_review_decision_id_stays_within_column_length_for_long_candidate_id() -> None:
     session = _session()
     try:
@@ -428,6 +516,59 @@ def test_preview_submission_persists_adapter_review_decision() -> None:
         assert [item.review_status for item in candidate_history.review_evidence] == [
             "needs_clarification"
         ]
+    finally:
+        session.close()
+
+
+def test_preview_submission_persists_review_decision_with_generated_candidate_id() -> None:
+    session = _session()
+    try:
+        _seed_source(session)
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+        review = parse_review_llm_adapter_output(_review_payload())
+
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Compare approved vendor spend by vendor this quarter.",
+                source_id="sap-approved-spend",
+            ),
+            authenticated_subject=subject,
+            session=session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                request_id="preview-request-457",
+                correlation_id="preview-request-457-correlation",
+                user_subject="user:alice",
+                session_id="preview-request-457-session",
+                auth_source="test-helper",
+            ),
+            sql_generation_adapter=_PreviewAdapter(review_decision=review),
+        )
+
+        persisted_review = session.scalar(select(PreviewReviewDecision))
+        preview_candidate = session.scalar(
+            select(PreviewCandidate).where(
+                PreviewCandidate.candidate_id == response.candidate.candidate_id
+            )
+        )
+        guard_event = session.scalar(
+            select(PreviewAuditEvent).where(
+                PreviewAuditEvent.candidate_id == response.candidate.candidate_id,
+                PreviewAuditEvent.event_type == "guard_evaluated",
+            )
+        )
+        assert persisted_review is not None
+        assert preview_candidate is not None
+        assert guard_event is not None
+        assert response.candidate.candidate_id != "preview-candidate-457"
+        assert persisted_review.candidate_id == response.candidate.candidate_id
+        assert persisted_review.preview_candidate_id == preview_candidate.id
+        assert persisted_review.audit_event_id == guard_event.event_id
+        assert guard_event.preview_candidate_id == preview_candidate.id
+        assert guard_event.candidate_id == response.candidate.candidate_id
     finally:
         session.close()
 

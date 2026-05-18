@@ -952,6 +952,32 @@ def _persist_preview_audit_events(
         )
 
 
+def _bind_preview_candidate_to_audit_events(
+    audit_events: list[SourceAwareAuditEvent],
+    *,
+    candidate_id: str,
+    candidate_owner_subject: str,
+) -> None:
+    for index, event in enumerate(audit_events):
+        if event.event_type not in {"generation_completed", "guard_evaluated"}:
+            continue
+        if event.query_candidate_id is not None:
+            if event.query_candidate_id != candidate_id:
+                raise PreviewSubmissionContractError(
+                    "Preview audit events must stay bound to the preview candidate."
+                )
+            continue
+
+        audit_events[index] = event.model_copy(
+            update={
+                "query_candidate_id": candidate_id,
+                "candidate_owner_subject": (
+                    event.candidate_owner_subject or candidate_owner_subject
+                ),
+            }
+        )
+
+
 def _next_audit_lifecycle_order(
     session: Session,
     *,
@@ -1287,6 +1313,11 @@ def _persist_preview_submission_records(
     subject_id = authenticated_subject.normalized_subject_id()
     governance_bindings = _joined_governance_bindings(
         sorted(authenticated_subject.normalized_governance_bindings())
+    )
+    _bind_preview_candidate_to_audit_events(
+        audit_events,
+        candidate_id=candidate_id,
+        candidate_owner_subject=subject_id,
     )
     if revision_record is not None and (
         request_id == revision_record.request_id
