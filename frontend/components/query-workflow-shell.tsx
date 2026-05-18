@@ -966,6 +966,7 @@ function historyItemToState(item: OperatorHistoryItem): CanonicalWorkflowState {
     if (
       lifecycleState === "review_denied" ||
       lifecycleState === "blocked" ||
+      lifecycleState === "clarification_required" ||
       lifecycleState === "preview_denied" ||
       lifecycleState === "preview_generation_failed" ||
       lifecycleState === "preview_malformed" ||
