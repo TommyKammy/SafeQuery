@@ -1640,6 +1640,48 @@ describe("HomePage", () => {
         }
       },
       {
+        expectedCopy: /malformed_preview_response/i,
+        response: {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [],
+                source_id: "sap-approved-spend",
+                state: "recorded"
+              },
+              candidate: {
+                candidate_id: "candidate-review-malformed",
+                candidate_sql: null,
+                dataset_contract_version: 1,
+                guard_status: "allow",
+                review_evidence: [
+                  {
+                    audit_event_id: "00000000-0000-4000-8000-000000000468",
+                    review_contract_version: "review_llm_adapter_output.v1",
+                    review_status: "blocked"
+                  }
+                ],
+                schema_snapshot_version: 1,
+                source_family: "postgresql",
+                source_flavor: "warehouse",
+                source_id: "sap-approved-spend",
+                state: "blocked"
+              },
+              evaluation: {
+                source_id: "sap-approved-spend",
+                state: "blocked"
+              },
+              request: {
+                question: "Show approved vendors by quarterly spend",
+                request_id: "request-review-malformed",
+                source_id: "sap-approved-spend",
+                state: "blocked"
+              }
+            })
+        }
+      },
+      {
         expectedCopy: /preview_submission_unavailable/i,
         response: {
           ok: false,

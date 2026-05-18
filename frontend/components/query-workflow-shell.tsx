@@ -772,14 +772,27 @@ function parsePreviewSubmissionResult(
   const guardStatus = readRequiredString(value.candidate.guard_status);
   const requestState = readRequiredString(value.request.state);
   const candidateState = readRequiredString(value.candidate.state);
-  const reviewEvidenceValue = Array.isArray(value.candidate.review_evidence)
+  const hasSnakeReviewEvidence = Object.prototype.hasOwnProperty.call(
+    value.candidate,
+    "review_evidence"
+  );
+  const hasCamelReviewEvidence = Object.prototype.hasOwnProperty.call(
+    value.candidate,
+    "reviewEvidence"
+  );
+  const reviewEvidenceValue = hasSnakeReviewEvidence
     ? value.candidate.review_evidence
-    : Array.isArray(value.candidate.reviewEvidence)
+    : hasCamelReviewEvidence
       ? value.candidate.reviewEvidence
       : [];
-  const reviewEvidence = reviewEvidenceValue
-    .map(parsePreviewReviewEvidence)
-    .filter((item): item is OperatorWorkflowReviewEvidence => item !== null);
+  if (!Array.isArray(reviewEvidenceValue)) {
+    return null;
+  }
+  const parsedReviewEvidence = reviewEvidenceValue.map(parsePreviewReviewEvidence);
+  if (parsedReviewEvidence.some((item) => item === null)) {
+    return null;
+  }
+  const reviewEvidence = parsedReviewEvidence as OperatorWorkflowReviewEvidence[];
 
   if (
     !requestId ||

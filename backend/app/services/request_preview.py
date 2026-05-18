@@ -31,6 +31,10 @@ from app.features.guard import (
     evaluate_mssql_sql_guard,
     evaluate_postgresql_sql_guard,
 )
+from app.features.guard.deny_taxonomy import (
+    DENY_REVIEW_BLOCKED,
+    DENY_REVIEW_NEEDS_CLARIFICATION,
+)
 from app.features.operator_history.payloads import GuardStatus
 from app.features.review_llm.adapter import (
     ReviewLLMAdapter,
@@ -353,6 +357,8 @@ def _build_preview_lifecycle_audit_events(
     candidate_sql: str | None = None,
     intent_mapping: IntentMappingOutput | None = None,
     intent_blocked_candidate_state: str | None = None,
+    review_decision: ReviewLLMAdapterOutput | None = None,
+    review_blocking_candidate_state: str | None = None,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
         return []
@@ -364,6 +370,13 @@ def _build_preview_lifecycle_audit_events(
     )
 
     for event_type in event_types:
+        review_denial_applies = (
+            event_type == "guard_evaluated"
+            and guard_evaluation is not None
+            and guard_evaluation.decision == "allow"
+            and review_decision is not None
+            and review_blocking_candidate_state is not None
+        )
         execution_policy_version = (
             CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
                 resolved_source.source_family
@@ -471,7 +484,9 @@ def _build_preview_lifecycle_audit_events(
                     and intent_blocked_candidate_state is not None
                 )
                 else (
-                    "preview_ready"
+                    review_blocking_candidate_state
+                    if review_denial_applies
+                    else "preview_ready"
                     if guard_evaluation is None or guard_evaluation.decision == "allow"
                     else "blocked"
                 )
@@ -479,7 +494,9 @@ def _build_preview_lifecycle_audit_events(
                 else None
             ),
             primary_deny_code=(
-                _primary_guard_deny_code(guard_evaluation)
+                _review_deny_code(review_decision)
+                if review_denial_applies
+                else _primary_guard_deny_code(guard_evaluation)
                 if event_type == "guard_evaluated"
                 else _intent_denial_code(intent_mapping)
                 if (
@@ -489,10 +506,14 @@ def _build_preview_lifecycle_audit_events(
                 else None
             ),
             denial_cause=(
-                "guard_rejected"
-                if event_type == "guard_evaluated"
-                and guard_evaluation is not None
-                and guard_evaluation.decision != "allow"
+                _review_denial_cause(review_decision)
+                if review_denial_applies
+                else "guard_rejected"
+                if (
+                    event_type == "guard_evaluated"
+                    and guard_evaluation is not None
+                    and guard_evaluation.decision != "allow"
+                )
                 else _intent_denial_cause(intent_mapping)
                 if (
                     event_type == "generation_requested"
@@ -501,7 +522,9 @@ def _build_preview_lifecycle_audit_events(
                 else None
             ),
             denial_reason=(
-                _sanitized_guard_denial_reason(guard_evaluation)
+                _review_denial_reason(review_decision)
+                if review_denial_applies
+                else _sanitized_guard_denial_reason(guard_evaluation)
                 if event_type == "guard_evaluated"
                 else _intent_denial_reason(intent_mapping)
                 if (
@@ -1210,13 +1233,25 @@ def _review_blocking_candidate_state(review: ReviewLLMAdapterOutput) -> str | No
 
 def _review_deny_code(review: ReviewLLMAdapterOutput) -> str | None:
     if review.status == "blocked":
+        return DENY_REVIEW_BLOCKED
+    if review.status == "needs_clarification":
+        return DENY_REVIEW_NEEDS_CLARIFICATION
+    return None
+
+
+def _review_denial_cause(review: ReviewLLMAdapterOutput | None) -> str | None:
+    if review is None:
+        return None
+    if review.status == "blocked":
         return "review_blocked"
     if review.status == "needs_clarification":
         return "review_needs_clarification"
     return None
 
 
-def _review_denial_reason(review: ReviewLLMAdapterOutput) -> str | None:
+def _review_denial_reason(review: ReviewLLMAdapterOutput | None) -> str | None:
+    if review is None:
+        return None
     if review.status == "blocked":
         return "Review LLM blocked this candidate before execution."
     if review.status == "needs_clarification":
@@ -1898,6 +1933,7 @@ def submit_preview_request(
     adapter_metadata: SQLGenerationAdapterRunMetadata | None = None
     guard_evaluation: SQLGuardEvaluation | None = None
     review_decision: ReviewLLMAdapterOutput | None = None
+    review_blocking_state: str | None = None
     guard_status: GuardStatus = PREVIEW_PENDING_GUARD_STATUS
     candidate_state = "preview_ready"
     request_state = "previewed"
@@ -2030,8 +2066,15 @@ def submit_preview_request(
             guard_evaluation=guard_evaluation,
             candidate_sql=candidate_sql,
             intent_mapping=intent_mapping,
+            review_decision=review_decision,
+            review_blocking_candidate_state=review_blocking_state,
         )
 
+    review_denial_applied = (
+        review_blocking_state is not None
+        and guard_evaluation is not None
+        and guard_evaluation.decision == "allow"
+    )
     audit = AuditRecord(
         source_id=resolved_source.source_id,
         state="recorded",
@@ -2081,10 +2124,7 @@ def submit_preview_request(
     if intent_blocked_candidate_state is not None:
         primary_deny_code = _intent_denial_code(intent_mapping)
         denial_reason = _intent_denial_reason(intent_mapping)
-    elif review_decision is not None and candidate_state in {
-        "blocked",
-        "clarification_required",
-    }:
+    elif review_decision is not None and review_denial_applied:
         primary_deny_code = _review_deny_code(review_decision)
         denial_reason = _review_denial_reason(review_decision)
     evaluation_state = (
