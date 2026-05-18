@@ -127,6 +127,37 @@ class SettingsTestCase(unittest.TestCase):
         self.assertNotIn("business_postgres_source_url", dumped)
         self.assertNotIn("business_mssql_source_connection_string", dumped)
 
+    def test_review_llm_settings_are_independent_from_sql_generation_defaults(
+        self,
+    ) -> None:
+        settings = Settings(
+            app_postgres_url="postgresql://safequery:safequery@db:5432/safequery",
+            sql_generation_provider="vanna",
+            sql_generation_vanna_base_url="http://vanna:8084",
+            sql_generation_vanna_model="warehouse-assistant",
+            review_llm_provider="local_llm",
+            review_llm_local_llm_base_url="http://review-llm:8090",
+            review_llm_local_llm_model="safequery-reviewer",
+            review_llm_timeout_seconds=13,
+            review_llm_retry_count=0,
+            review_llm_circuit_breaker_failure_threshold=2,
+            _env_file=None,
+            _env_prefix="SAFEQUERY_",
+        )
+
+        self.assertEqual(settings.sql_generation.provider, "vanna")
+        self.assertEqual(settings.sql_generation.vanna_model, "warehouse-assistant")
+        self.assertFalse(hasattr(settings.sql_generation, "review_llm_model"))
+        self.assertEqual(settings.review_llm.provider, "local_llm")
+        self.assertEqual(
+            str(settings.review_llm.local_llm_base_url),
+            "http://review-llm:8090/",
+        )
+        self.assertEqual(settings.review_llm.local_llm_model, "safequery-reviewer")
+        self.assertEqual(settings.review_llm.timeout_seconds, 13)
+        self.assertEqual(settings.review_llm.retry_count, 0)
+        self.assertEqual(settings.review_llm.circuit_breaker_failure_threshold, 2)
+
     def test_sql_generation_retry_policy_settings_are_bounded(self) -> None:
         for field, value in (
             ("sql_generation_timeout_seconds", 0),

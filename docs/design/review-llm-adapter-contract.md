@@ -11,6 +11,25 @@ The adapter output is not an authorization source. It must not approve SQL,
 mint or select a candidate, bypass SQL Guard, approve execution, or replace the
 backend-owned preview and execute lifecycle.
 
+## Generation Separation
+
+Review uses a separate prompt boundary and model configuration from SQL
+generation. `SAFEQUERY_REVIEW_LLM_*` settings select the optional review
+runtime without changing `SAFEQUERY_SQL_GENERATION_*` settings, so a deployment
+can use a different reviewer model or keep review disabled while generation is
+enabled.
+
+The review request is assembled after SQL generation from minimized application
+state: the operator question, candidate SQL, source identifiers, and generation
+diagnostics needed for reviewer context. It does not include generation
+chain-of-thought, hidden scratchpads, prompt fingerprints, adapter run IDs,
+source credentials, connection strings, result rows, or runtime secrets.
+
+This separation mitigates correlated generation and review failure by forcing a
+critique-oriented prompt and an independently configurable runtime. It does not
+eliminate correlated failure: shared training data, shared vendors, shared
+operator assumptions, or similar model families can still miss the same defect.
+
 ## Structured Output
 
 The backend accepts one structured object with these fields:
@@ -68,3 +87,5 @@ permission from partial output.
   candidate, guard, TTL, replay, and entitlement checks.
 - Reviewer-facing diagnostics are advisory evidence, not durable lifecycle
   truth.
+- Review prompts must emphasize critique, uncertainty, assumptions, and
+  boundary risks rather than approval.

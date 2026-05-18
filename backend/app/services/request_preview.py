@@ -32,6 +32,11 @@ from app.features.guard import (
     evaluate_postgresql_sql_guard,
 )
 from app.features.operator_history.payloads import GuardStatus
+from app.features.review_llm.adapter import (
+    ReviewLLMAdapter,
+    ReviewLLMAdapterConfigurationError,
+    build_review_llm_adapter_request,
+)
 from app.features.review_llm.schema import ReviewLLMAdapterOutput
 from app.services.candidate_lifecycle import (
     CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY,
@@ -1728,6 +1733,7 @@ def submit_preview_request(
     session: Session,
     audit_context: PreviewAuditContext | None = None,
     sql_generation_adapter: SQLGenerationAdapter | None = None,
+    review_llm_adapter: ReviewLLMAdapter | None = None,
 ) -> PreviewSubmissionResponse:
     source, dataset_contract, schema_snapshot = _resolve_authoritative_source_governance(
         session,
@@ -1871,7 +1877,6 @@ def submit_preview_request(
                     intent_mapping=intent_mapping,
                 )
                 adapter_response = sql_generation_adapter.generate_sql(adapter_request)
-                review_decision = getattr(adapter_response, "review_decision", None)
                 candidate_sql = normalize_adapter_generated_sql(
                     adapter_response.candidate_sql
                 )
@@ -1890,11 +1895,32 @@ def submit_preview_request(
                     guard_status = "blocked"
                     candidate_state = "blocked"
                     request_state = "blocked"
+                if review_llm_adapter is not None:
+                    review_request = build_review_llm_adapter_request(
+                        generation_request=adapter_request,
+                        generation_response=adapter_response,
+                        generation_metadata=adapter_metadata,
+                        candidate_sql=candidate_sql,
+                    )
+                    review_decision = review_llm_adapter.review_sql(review_request)
             except (
                 GenerationContextPreparationError,
                 SQLGenerationAdapterConfigurationError,
+                ReviewLLMAdapterConfigurationError,
             ) as exc:
                 failure_code = getattr(exc, "code", "sql_generation_context_unavailable")
+                if isinstance(exc, ReviewLLMAdapterConfigurationError):
+                    public_code = "preview_review_failed"
+                    public_message = (
+                        "Review LLM critique failed before an authoritative preview "
+                        "candidate was created."
+                    )
+                else:
+                    public_code = "preview_generation_failed"
+                    public_message = (
+                        "SQL generation failed before an authoritative preview "
+                        "candidate was created."
+                    )
                 audit_events = _build_preview_generation_failed_audit_event(
                     resolved_source=resolved_source,
                     dataset_contract=dataset_contract,
@@ -1916,11 +1942,8 @@ def submit_preview_request(
                 )
                 raise PreviewSubmissionContractError(
                     str(exc),
-                    public_code="preview_generation_failed",
-                    public_message=(
-                        "SQL generation failed before an authoritative preview "
-                        "candidate was created."
-                    ),
+                    public_code=public_code,
+                    public_message=public_message,
                 ) from exc
 
     if intent_blocked_candidate_state is not None:

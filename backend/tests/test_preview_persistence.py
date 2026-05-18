@@ -34,6 +34,7 @@ from app.features.audit.event_model import SourceAwareAuditEvent
 from app.features.auth.session import create_test_application_session
 from app.features.evaluation.harness import list_postgresql_evaluation_scenarios
 from app.features.guard import SQLGuardEvaluation, SQLGuardRejection
+from app.features.review_llm import ReviewLLMAdapterConfigurationError
 from app.services import request_preview as request_preview_service
 from app.services.request_preview import (
     PreviewAuditContext,
@@ -209,6 +210,14 @@ class _FailingHTTPPreviewAdapter:
         raise SQLGenerationAdapterConfigurationError(
             "sql_generation_runtime_unhealthy",
             "SQL generation runtime is unavailable.",
+        )
+
+
+class _FailingReviewAdapter:
+    def review_sql(self, request):
+        raise ReviewLLMAdapterConfigurationError(
+            "review_llm_runtime_unhealthy",
+            "Review LLM runtime is unavailable.",
         )
 
 
@@ -580,6 +589,85 @@ def test_http_preview_allow_path_creates_approved_candidate_and_executes(
         assert persisted_execution_event.audit_payload["semantic_contract_version"] == (
             persisted_candidate.semantic_contract_version
         )
+    finally:
+        session.close()
+        engine.dispose()
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+
+def test_http_preview_review_adapter_failure_uses_registered_error_code(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SESSION_SIGNING_KEY", "x" * 32)
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_SQL_GENERATION_LOCAL_LLM_BASE_URL",
+        "http://sql-generation.example.test",
+    )
+    monkeypatch.setenv("SAFEQUERY_REVIEW_LLM_PROVIDER", "local_llm")
+    monkeypatch.setenv(
+        "SAFEQUERY_REVIEW_LLM_LOCAL_LLM_BASE_URL",
+        "http://review-llm.example.test",
+    )
+    get_settings.cache_clear()
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    subject = AuthenticatedSubject(
+        subject_id="user:alice",
+        governance_bindings=frozenset({"group:finance-analysts"}),
+    )
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_sql_generation_adapter",
+        lambda _: _RecordingHTTPPreviewAdapter(),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "resolve_review_llm_adapter",
+        lambda _: _FailingReviewAdapter(),
+    )
+    app = main_module.create_app()
+    app.dependency_overrides[require_authenticated_subject] = lambda: subject
+    app.dependency_overrides[require_preview_submission_session] = lambda: session
+    client = TestClient(app)
+
+    try:
+        _seed_authoritative_source_governance(session)
+        app_session = create_test_application_session(subject)
+
+        response = client.post(
+            "/requests/preview",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={
+                "question": "Show approved vendors by quarterly spend",
+                "source_id": "sap-approved-spend",
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "error": {
+                "code": "preview_review_failed",
+                "message": (
+                    "Review LLM critique failed before an authoritative preview "
+                    "candidate was created."
+                ),
+            }
+        }
     finally:
         session.close()
         engine.dispose()

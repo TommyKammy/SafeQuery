@@ -36,9 +36,6 @@ from app.services.sql_generation_adapter import SQLGenerationAdapterResponse
 
 
 class _PreviewAdapter:
-    def __init__(self, review_decision=None):
-        self.review_decision = review_decision
-
     def generate_sql(self, request):
         return SQLGenerationAdapterResponse(
             candidate_sql=(
@@ -47,8 +44,17 @@ class _PreviewAdapter:
             provider="local_llm",
             adapter_version="test.adapter.v1",
             model="safequery-test-sql",
-            review_decision=self.review_decision,
         )
+
+
+class _ReviewAdapter:
+    def __init__(self, review_decision):
+        self.review_decision = review_decision
+        self.requests = []
+
+    def review_sql(self, request):
+        self.requests.append(request)
+        return self.review_decision
 
 
 def _session() -> Session:
@@ -491,7 +497,8 @@ def test_preview_submission_persists_adapter_review_decision() -> None:
                 candidate_owner_subject="user:alice",
                 auth_source="test-helper",
             ),
-            sql_generation_adapter=_PreviewAdapter(review_decision=review),
+            sql_generation_adapter=_PreviewAdapter(),
+            review_llm_adapter=_ReviewAdapter(review),
         )
 
         persisted_review = session.scalar(select(PreviewReviewDecision))
@@ -545,7 +552,8 @@ def test_preview_submission_persists_review_decision_with_generated_candidate_id
                 session_id="preview-request-457-session",
                 auth_source="test-helper",
             ),
-            sql_generation_adapter=_PreviewAdapter(review_decision=review),
+            sql_generation_adapter=_PreviewAdapter(),
+            review_llm_adapter=_ReviewAdapter(review),
         )
 
         persisted_review = session.scalar(select(PreviewReviewDecision))

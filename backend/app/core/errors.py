@@ -24,6 +24,7 @@ _SAFE_API_ERROR_CODES = frozenset(
         "operator_read_forbidden",
         "preview_guard_malformed",
         "preview_generation_failed",
+        "preview_review_failed",
         "preview_source_malformed",
         "preview_source_unavailable",
         "request_context_unavailable",
