@@ -173,7 +173,9 @@ def test_answer_plan_redacts_secret_like_prompt_and_output_context() -> None:
     assert "token" not in serialized
     assert "scratchpad" not in serialized
     assert "connection_string" not in serialized
-    assert "canAuthorizeExecution" not in plan.model_dump()
+    wire_payload = plan.to_wire_payload()
+    assert wire_payload["advisoryOnly"] is True
+    assert wire_payload["canAuthorizeExecution"] is False
 
 
 def test_answer_plan_omits_unknown_source_family_without_failing() -> None:
@@ -221,3 +223,59 @@ def test_answer_plan_preserves_valid_source_id_with_secret_keyword() -> None:
     candidate_summary = plan.to_wire_payload()["candidateSummary"]
     assert candidate_summary["sourceId"] == "secret-source"
     assert "sourceFamily" not in candidate_summary
+
+
+def test_answer_plan_redacts_spaced_secret_values_and_dsn_attributes() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Use token: alpha beta gamma",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={"candidate_id": "candidate-123"},
+        guard_metadata={
+            "guard_decision": "reject",
+            "denial_reason": (
+                "ODBC failed with Pwd={correct horse battery staple};"
+                "Server=finance warehouse host;Password=multi word phrase"
+            ),
+        },
+    )
+
+    serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
+
+    assert "alpha beta gamma" not in serialized
+    assert "correct horse battery staple" not in serialized
+    assert "horse battery" not in serialized
+    assert "finance warehouse host" not in serialized
+    assert "multi word phrase" not in serialized
+
+
+def test_answer_plan_rejects_non_string_selected_columns() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Which approved vendors had the highest quarterly spend?",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={
+            "candidate_id": "candidate-123",
+            "selected_columns": [
+                {"customer": "alice", "amount": "999.00"},
+                "approved_spend",
+            ],
+        },
+        guard_metadata={"guard_decision": "allow"},
+    )
+
+    candidate_summary = plan.to_wire_payload()["candidateSummary"]
+    assert candidate_summary["selectedColumns"] == []
+    serialized = json.dumps(candidate_summary, sort_keys=True).lower()
+    assert "alice" not in serialized
+    assert "999.00" not in serialized

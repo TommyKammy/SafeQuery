@@ -27,12 +27,15 @@ _SOURCE_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _SUPPORTED_SOURCE_FAMILIES = frozenset(("mssql", "postgresql"))
 _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"']+"),
-    re.compile(r"(?i)\b(?:driver|server|database|uid|pwd|password)\s*=[^;\s\"']+"),
+    re.compile(
+        r"(?i)\b(?:driver|server|database|uid|pwd|password)\s*=\s*"
+        r"(?:\{[^}]*\}|\"[^\"]*\"|'[^']*'|[^;,\r\n\"'}]+)"
+    ),
     re.compile(
         r"(?i)(?<![a-z0-9])[\"']?(?:access[_-]?token|refresh[_-]?token|"
         r"id[_-]?token|token|secret|password|passwd|pwd|credential|"
         r"client[_-]?secret|api[_-]?key|private[_-]?key)[\"']?\s*[:=]\s*"
-        r"(?:[\"'][^\"']*[\"']|[^;,\s\"'}]+)"
+        r"(?:[\"'][^\"']*[\"']|\{[^}]*\}|[^;,\r\n\"'}]+)"
     ),
     re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/-]+"),
     re.compile(
@@ -171,9 +174,7 @@ def _build_candidate_summary(
         candidate_id=_optional_sanitized_string(safe_metadata.get("candidate_id")),
         source_id=_source_identifier_or_none(safe_metadata.get("source_id")),
         source_family=_source_family_or_none(safe_metadata.get("source_family")),
-        selected_columns=_sanitize_text_items(
-            _as_iterable(safe_metadata.get("selected_columns"))
-        ),
+        selected_columns=_sanitize_string_items(safe_metadata.get("selected_columns")),
         row_limit=_positive_int_or_none(safe_metadata.get("row_limit")),
     )
 
@@ -291,6 +292,20 @@ def _filter_safe_mapping(payload: Mapping[str, object]) -> dict[str, object]:
 
 def _sanitize_text_items(values: Iterable[object]) -> tuple[str, ...]:
     return _dedupe(_sanitize_text(value) for value in values if value is not None)
+
+
+def _sanitize_string_items(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return _sanitize_text_items((value,))
+    if not isinstance(value, Iterable):
+        return ()
+
+    items = tuple(value)
+    if not all(isinstance(item, str) for item in items):
+        return ()
+    return _sanitize_text_items(items)
 
 
 def _sanitize_text(value: object) -> str:
