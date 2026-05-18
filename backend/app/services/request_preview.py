@@ -37,6 +37,7 @@ from app.features.review_llm.adapter import (
     ReviewLLMAdapterConfigurationError,
     build_review_llm_adapter_request,
 )
+from app.features.review_llm.answer_plan import sanitize_review_llm_surface_text_items
 from app.features.review_llm.schema import ReviewLLMAdapterOutput
 from app.services.candidate_lifecycle import (
     CURRENT_CONNECTOR_PROFILE_VERSION_BY_SOURCE_FAMILY,
@@ -237,6 +238,17 @@ class CandidateRecord(BaseModel):
     denial_reason: Optional[str] = None
     intent_mapping: Optional[IntentMappingOutput] = None
     revision_context: Optional["RevisionRecord"] = None
+    review_evidence: list["ReviewEvidenceRecord"] = Field(default_factory=list)
+
+
+class ReviewEvidenceRecord(BaseModel):
+    review_decision_id: str
+    review_status: str
+    review_contract_version: str
+    audit_event_id: str
+    assumptions: list[str] = Field(default_factory=list)
+    risk_flags: list[str] = Field(default_factory=list)
+    clarifying_questions: list[str] = Field(default_factory=list)
 
 
 class RevisionRecord(BaseModel):
@@ -1188,6 +1200,49 @@ def persist_review_decision(
         ) from exc
 
 
+def _review_blocking_candidate_state(review: ReviewLLMAdapterOutput) -> str | None:
+    if review.status == "blocked":
+        return "blocked"
+    if review.status == "needs_clarification":
+        return "clarification_required"
+    return None
+
+
+def _review_deny_code(review: ReviewLLMAdapterOutput) -> str | None:
+    if review.status == "blocked":
+        return "review_blocked"
+    if review.status == "needs_clarification":
+        return "review_needs_clarification"
+    return None
+
+
+def _review_denial_reason(review: ReviewLLMAdapterOutput) -> str | None:
+    if review.status == "blocked":
+        return "Review LLM blocked this candidate before execution."
+    if review.status == "needs_clarification":
+        return "Review LLM requires clarification before execution."
+    return None
+
+
+def _review_evidence_record(
+    *,
+    review_decision_id: str,
+    review: ReviewLLMAdapterOutput,
+    audit_event_id: UUID,
+) -> ReviewEvidenceRecord:
+    return ReviewEvidenceRecord(
+        review_decision_id=review_decision_id,
+        review_status=review.status,
+        review_contract_version=review.contract_version,
+        audit_event_id=str(audit_event_id),
+        assumptions=sanitize_review_llm_surface_text_items(review.assumptions),
+        risk_flags=sanitize_review_llm_surface_text_items(review.risk_flags),
+        clarifying_questions=sanitize_review_llm_surface_text_items(
+            review.clarifying_questions
+        ),
+    )
+
+
 def _raise_preview_persistence_contract_error(
     session: Session,
     message: str,
@@ -1903,6 +1958,15 @@ def submit_preview_request(
                         candidate_sql=candidate_sql,
                     )
                     review_decision = review_llm_adapter.review_sql(review_request)
+                    review_blocking_state = _review_blocking_candidate_state(
+                        review_decision
+                    )
+                    if (
+                        review_blocking_state is not None
+                        and guard_evaluation.decision == "allow"
+                    ):
+                        candidate_state = review_blocking_state
+                        request_state = review_blocking_state
             except (
                 GenerationContextPreparationError,
                 SQLGenerationAdapterConfigurationError,
@@ -1988,29 +2052,47 @@ def submit_preview_request(
         candidate_state=candidate_state,
         guard_status=guard_status,
     )
+    review_evidence: list[ReviewEvidenceRecord] = []
     if review_decision is not None:
-        persist_review_decision(
+        review_audit_event_id = _review_decision_audit_event_id(
+            audit.events,
+            candidate_id=candidate_id,
+        )
+        review_decision_id = persist_review_decision(
             session,
             candidate_id=candidate_id,
             review=review_decision,
-            audit_event_id=_review_decision_audit_event_id(
-                audit.events,
-                candidate_id=candidate_id,
-            ),
+            audit_event_id=review_audit_event_id,
             occurred_at=(
                 audit_context.occurred_at
                 if audit_context is not None
                 else datetime.now(timezone.utc)
             ),
         )
+        review_evidence = [
+            _review_evidence_record(
+                review_decision_id=review_decision_id,
+                review=review_decision,
+                audit_event_id=review_audit_event_id,
+            )
+        ]
     primary_deny_code = _primary_guard_deny_code(guard_evaluation)
     denial_reason = _sanitized_guard_denial_reason(guard_evaluation)
     if intent_blocked_candidate_state is not None:
         primary_deny_code = _intent_denial_code(intent_mapping)
         denial_reason = _intent_denial_reason(intent_mapping)
+    elif review_decision is not None and candidate_state in {
+        "blocked",
+        "clarification_required",
+    }:
+        primary_deny_code = _review_deny_code(review_decision)
+        denial_reason = _review_denial_reason(review_decision)
     evaluation_state = (
         _intent_denial_cause(intent_mapping)
         if intent_blocked_candidate_state is not None
+        else candidate_state
+        if review_decision is not None
+        and candidate_state in {"blocked", "clarification_required"}
         else "pending"
         if guard_evaluation is None
         else "allowed"
@@ -2024,7 +2106,7 @@ def submit_preview_request(
             request_id=request_id,
             source_id=resolved_source.source_id,
             semantic_contract_version=dataset_contract.semantic_contract_version,
-            state="submitted",
+            state=request_state,
             revision_context=revision_record,
         ),
         candidate=CandidateRecord(
@@ -2042,6 +2124,7 @@ def submit_preview_request(
             denial_reason=denial_reason,
             intent_mapping=intent_mapping,
             revision_context=revision_record,
+            review_evidence=review_evidence,
         ),
         audit=audit,
         evaluation=EvaluationRecord(

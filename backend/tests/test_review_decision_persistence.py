@@ -147,6 +147,115 @@ def _review_payload() -> dict[str, object]:
     }
 
 
+def test_preview_response_exposes_blocked_review_evidence_before_execute() -> None:
+    session = _session()
+    try:
+        _seed_source(session)
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+        review_payload = _review_payload()
+        review_payload["status"] = "blocked"
+        review_payload["assumptions"] = ["Uses approved vendor spend only."]
+        review_payload["risk_flags"] = [
+            "Review found unbounded spend exposure.",
+            "postgresql://user:secret@example.test/db",
+        ]
+        review_payload["clarifying_questions"] = []
+
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Compare approved vendor spend by vendor this quarter.",
+                source_id="sap-approved-spend",
+            ),
+            authenticated_subject=subject,
+            session=session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                request_id="preview-request-468-blocked",
+                correlation_id="preview-request-468-blocked-correlation",
+                user_subject="user:alice",
+                session_id="preview-request-468-blocked-session",
+                query_candidate_id="preview-candidate-468-blocked",
+                candidate_owner_subject="user:alice",
+                auth_source="test-helper",
+            ),
+            sql_generation_adapter=_PreviewAdapter(),
+            review_llm_adapter=_ReviewAdapter(
+                parse_review_llm_adapter_output(review_payload)
+            ),
+        )
+
+        payload = response.model_dump(mode="json")
+        assert payload["request"]["state"] == "blocked"
+        assert payload["candidate"]["state"] == "blocked"
+        review_evidence = payload["candidate"]["review_evidence"]
+        assert len(review_evidence) == 1
+        assert review_evidence == [
+            {
+                "review_decision_id": "review-preview-candidate-468-blocked",
+                "review_status": "blocked",
+                "review_contract_version": "review_llm_adapter_output.v1",
+                "audit_event_id": review_evidence[0]["audit_event_id"],
+                "assumptions": ["Uses approved vendor spend only."],
+                "risk_flags": [
+                    "Review found unbounded spend exposure.",
+                    "[redacted]",
+                ],
+                "clarifying_questions": [],
+            }
+        ]
+        assert "postgresql://" not in json.dumps(review_evidence)
+    finally:
+        session.close()
+
+
+def test_preview_response_exposes_review_clarifying_questions_before_execute() -> None:
+    session = _session()
+    try:
+        _seed_source(session)
+        subject = AuthenticatedSubject(
+            subject_id="user:alice",
+            governance_bindings=frozenset({"group:finance-analysts"}),
+        )
+
+        response = submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Compare approved vendor spend by vendor this quarter.",
+                source_id="sap-approved-spend",
+            ),
+            authenticated_subject=subject,
+            session=session,
+            audit_context=PreviewAuditContext(
+                occurred_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                request_id="preview-request-468-clarify",
+                correlation_id="preview-request-468-clarify-correlation",
+                user_subject="user:alice",
+                session_id="preview-request-468-clarify-session",
+                query_candidate_id="preview-candidate-468-clarify",
+                candidate_owner_subject="user:alice",
+                auth_source="test-helper",
+            ),
+            sql_generation_adapter=_PreviewAdapter(),
+            review_llm_adapter=_ReviewAdapter(
+                parse_review_llm_adapter_output(_review_payload())
+            ),
+        )
+
+        payload = response.model_dump(mode="json")
+        assert payload["request"]["state"] == "clarification_required"
+        assert payload["candidate"]["state"] == "clarification_required"
+        assert payload["candidate"]["review_evidence"][0]["review_status"] == (
+            "needs_clarification"
+        )
+        assert payload["candidate"]["review_evidence"][0]["clarifying_questions"] == [
+            "Should inactive vendors be included?"
+        ]
+    finally:
+        session.close()
+
+
 def test_review_decision_is_persisted_with_schema_version_and_operator_evidence() -> None:
     session = _session()
     try:
