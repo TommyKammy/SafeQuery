@@ -140,7 +140,7 @@ def test_answer_plan_redacts_secret_like_prompt_and_output_context() -> None:
     review = parse_review_llm_adapter_output(_review_payload())
 
     plan = build_answer_plan_from_review(
-        question="Use token=raw-secret-token to show vendor spend.",
+        question='Use token=raw-secret-token and {"password":"quoted-secret"} to show vendor spend.',
         review=review,
         semantic_mapping={
             "contract_version": "approved_vendor_spend.v1",
@@ -156,13 +156,15 @@ def test_answer_plan_redacts_secret_like_prompt_and_output_context() -> None:
         },
         guard_metadata={
             "guard_decision": "reject",
-            "denial_reason": "Driver failed with password=hunter2",
+            "denial_reason": "Driver failed with {'token': 'quoted-token'} and password=hunter2",
         },
     )
 
     serialized = json.dumps(plan.to_wire_payload(), sort_keys=True).lower()
 
     assert "raw-secret-token" not in serialized
+    assert "quoted-secret" not in serialized
+    assert "quoted-token" not in serialized
     assert "secret-value" not in serialized
     assert "hunter2" not in serialized
     assert "vendor_secret" not in serialized
@@ -172,3 +174,27 @@ def test_answer_plan_redacts_secret_like_prompt_and_output_context() -> None:
     assert "scratchpad" not in serialized
     assert "connection_string" not in serialized
     assert "canAuthorizeExecution" not in plan.model_dump()
+
+
+def test_answer_plan_omits_unknown_source_family_without_failing() -> None:
+    review = parse_review_llm_adapter_output(_review_payload())
+
+    plan = build_answer_plan_from_review(
+        question="Which approved vendors had the highest quarterly spend?",
+        review=review,
+        semantic_mapping={
+            "contract_version": "approved_vendor_spend.v1",
+            "classification": "supported",
+        },
+        candidate_metadata={
+            "candidate_id": "candidate-123",
+            "source_id": "business-mysql-source",
+            "source_family": "mysql",
+        },
+        guard_metadata={"guard_decision": "allow"},
+    )
+
+    candidate_summary = plan.to_wire_payload()["candidateSummary"]
+    assert candidate_summary["candidateId"] == "candidate-123"
+    assert candidate_summary["sourceId"] == "business-mysql-source"
+    assert "sourceFamily" not in candidate_summary

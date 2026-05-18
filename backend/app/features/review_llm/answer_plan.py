@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 import re
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
@@ -24,13 +24,15 @@ _MODEL_CONFIG = ConfigDict(
     populate_by_name=True,
 )
 _REDACTED = "[redacted]"
+_SUPPORTED_SOURCE_FAMILIES: frozenset[SourceFamily] = frozenset(("mssql", "postgresql"))
 _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"']+"),
     re.compile(r"(?i)\b(?:driver|server|database|uid|pwd|password)\s*=[^;\s\"']+"),
     re.compile(
-        r"(?i)\b(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|"
-        r"secret|password|passwd|pwd|credential|client[_-]?secret|api[_-]?key|"
-        r"private[_-]?key)\s*[:=]\s*[^;\s\"']+"
+        r"(?i)(?<![a-z0-9])[\"']?(?:access[_-]?token|refresh[_-]?token|"
+        r"id[_-]?token|token|secret|password|passwd|pwd|credential|"
+        r"client[_-]?secret|api[_-]?key|private[_-]?key)[\"']?\s*[:=]\s*"
+        r"(?:[\"'][^\"']*[\"']|[^;,\s\"'}]+)"
     ),
     re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/-]+"),
     re.compile(
@@ -168,7 +170,7 @@ def _build_candidate_summary(
     return AnswerPlanCandidateSummary(
         candidate_id=_optional_sanitized_string(safe_metadata.get("candidate_id")),
         source_id=_optional_sanitized_string(safe_metadata.get("source_id")),
-        source_family=_optional_sanitized_string(safe_metadata.get("source_family")),
+        source_family=_source_family_or_none(safe_metadata.get("source_family")),
         selected_columns=_sanitize_text_items(
             _as_iterable(safe_metadata.get("selected_columns"))
         ),
@@ -328,6 +330,13 @@ def _positive_int_or_none(value: object) -> int | None:
 def _guard_decision_or_none(value: object) -> Optional[Literal["allow", "reject"]]:
     if value in {"allow", "reject"}:
         return value
+    return None
+
+
+def _source_family_or_none(value: object) -> SourceFamily | None:
+    sanitized = _optional_sanitized_string(value)
+    if sanitized in _SUPPORTED_SOURCE_FAMILIES:
+        return cast(SourceFamily, sanitized)
     return None
 
 
