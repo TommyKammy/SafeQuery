@@ -982,17 +982,30 @@ describe("HomePage", () => {
       {
         candidateState: "pending_generation",
         expectedCopy: /preview generation pending/i,
-        requestState: "submitted"
+        requestState: "submitted",
+        reviewEvidence: []
       },
       {
         candidateState: "clarification_required",
         expectedCopy: /clarification required/i,
-        requestState: "submitted"
+        requestState: "clarification_required",
+        reviewEvidence: [
+          {
+            audit_event_id: "00000000-0000-4000-8000-000000000468",
+            assumptions: ["Vendor means normalized vendor_id."],
+            clarifying_questions: ["Should inactive vendors be included?"],
+            review_contract_version: "review_llm_adapter_output.v1",
+            review_decision_id: "review-candidate-clarification-required",
+            review_status: "needs_clarification",
+            risk_flags: ["Inactive vendor handling is ambiguous."]
+          }
+        ]
       },
       {
         candidateState: "denied",
         expectedCopy: /preview denied/i,
-        requestState: "blocked"
+        requestState: "blocked",
+        reviewEvidence: []
       }
     ] as const;
 
@@ -1028,6 +1041,7 @@ describe("HomePage", () => {
                   source_family: "postgresql",
                   source_flavor: "warehouse",
                   source_id: "sap-approved-spend",
+                  review_evidence: stateCase.reviewEvidence ?? [],
                   state: stateCase.candidateState
                 },
                 evaluation: {
@@ -1061,6 +1075,14 @@ describe("HomePage", () => {
       expect(await screen.findByText(stateCase.expectedCopy)).toBeInTheDocument();
       expect(screen.queryByText(/preview request accepted/i)).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: /sql preview state/i })).not.toBeInTheDocument();
+      if (stateCase.candidateState === "clarification_required") {
+        expect(screen.getByLabelText(/review evidence/i)).toHaveTextContent(
+          "Should inactive vendors be included?"
+        );
+        expect(screen.getByLabelText(/review evidence/i)).toHaveTextContent(
+          "needs_clarification"
+        );
+      }
     }
   });
 
@@ -1613,6 +1635,48 @@ describe("HomePage", () => {
               request: {
                 source_id: "sap-approved-spend",
                 state: "submitted"
+              }
+            })
+        }
+      },
+      {
+        expectedCopy: /malformed_preview_response/i,
+        response: {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [],
+                source_id: "sap-approved-spend",
+                state: "recorded"
+              },
+              candidate: {
+                candidate_id: "candidate-review-malformed",
+                candidate_sql: null,
+                dataset_contract_version: 1,
+                guard_status: "allow",
+                review_evidence: [
+                  {
+                    audit_event_id: "00000000-0000-4000-8000-000000000468",
+                    review_contract_version: "review_llm_adapter_output.v1",
+                    review_status: "blocked"
+                  }
+                ],
+                schema_snapshot_version: 1,
+                source_family: "postgresql",
+                source_flavor: "warehouse",
+                source_id: "sap-approved-spend",
+                state: "blocked"
+              },
+              evaluation: {
+                source_id: "sap-approved-spend",
+                state: "blocked"
+              },
+              request: {
+                question: "Show approved vendors by quarterly spend",
+                request_id: "request-review-malformed",
+                source_id: "sap-approved-spend",
+                state: "blocked"
               }
             })
         }

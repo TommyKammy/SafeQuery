@@ -152,6 +152,7 @@ type PreviewSubmissionResult = {
   guardStatus: string;
   requestId: string;
   requestState: string;
+  reviewEvidence: OperatorWorkflowReviewEvidence[];
   revisionContext: RevisionDraftContext | null;
   sourceId: string;
 };
@@ -543,6 +544,67 @@ function readOptionalNonNegativeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
+function readStringArray(value: unknown): string[] | null {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const strings = value.filter((item): item is string => {
+    return typeof item === "string" && item.trim().length > 0;
+  });
+  return strings.length === value.length ? strings : null;
+}
+
+function parsePreviewReviewEvidence(value: unknown): OperatorWorkflowReviewEvidence | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const auditEventId =
+    readOptionalString(value.audit_event_id) ?? readOptionalString(value.auditEventId);
+  const reviewContractVersion =
+    readOptionalString(value.review_contract_version) ??
+    readOptionalString(value.reviewContractVersion);
+  const reviewDecisionId =
+    readOptionalString(value.review_decision_id) ?? readOptionalString(value.reviewDecisionId);
+  const reviewStatus =
+    readOptionalString(value.review_status) ?? readOptionalString(value.reviewStatus);
+  const assumptions = readStringArray(value.assumptions);
+  const clarifyingQuestions =
+    value.clarifying_questions === undefined
+      ? readStringArray(value.clarifyingQuestions)
+      : readStringArray(value.clarifying_questions);
+  const riskFlags =
+    value.risk_flags === undefined
+      ? readStringArray(value.riskFlags)
+      : readStringArray(value.risk_flags);
+
+  if (
+    !auditEventId ||
+    !reviewContractVersion ||
+    !reviewDecisionId ||
+    !reviewStatus ||
+    assumptions === null ||
+    clarifyingQuestions === null ||
+    riskFlags === null
+  ) {
+    return null;
+  }
+
+  return {
+    auditEventId,
+    assumptions,
+    clarifyingQuestions,
+    reviewContractVersion,
+    reviewDecisionId,
+    reviewStatus,
+    riskFlags
+  };
+}
+
 function parseExecuteAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
   if (!isObject(value)) {
     return null;
@@ -710,6 +772,27 @@ function parsePreviewSubmissionResult(
   const guardStatus = readRequiredString(value.candidate.guard_status);
   const requestState = readRequiredString(value.request.state);
   const candidateState = readRequiredString(value.candidate.state);
+  const hasSnakeReviewEvidence = Object.prototype.hasOwnProperty.call(
+    value.candidate,
+    "review_evidence"
+  );
+  const hasCamelReviewEvidence = Object.prototype.hasOwnProperty.call(
+    value.candidate,
+    "reviewEvidence"
+  );
+  const reviewEvidenceValue = hasSnakeReviewEvidence
+    ? value.candidate.review_evidence
+    : hasCamelReviewEvidence
+      ? value.candidate.reviewEvidence
+      : [];
+  if (!Array.isArray(reviewEvidenceValue)) {
+    return null;
+  }
+  const parsedReviewEvidence = reviewEvidenceValue.map(parsePreviewReviewEvidence);
+  if (parsedReviewEvidence.some((item) => item === null)) {
+    return null;
+  }
+  const reviewEvidence = parsedReviewEvidence as OperatorWorkflowReviewEvidence[];
 
   if (
     !requestId ||
@@ -730,6 +813,7 @@ function parsePreviewSubmissionResult(
     guardStatus,
     requestId,
     requestState,
+    reviewEvidence,
     revisionContext:
       parsePreviewRevisionContext(value.request.revision_context, expectedSourceId) ??
       parsePreviewRevisionContext(value.candidate.revision_context, expectedSourceId),
@@ -845,7 +929,12 @@ function isClarificationRequiredPreviewState(result: PreviewSubmissionResult): b
   const requestState = result.requestState.toLowerCase();
   const candidateState = result.candidateState.toLowerCase();
 
-  return requestState === "clarification_required" || candidateState === "clarification_required";
+  return (
+    requestState === "clarification_required" ||
+    requestState === "needs_clarification" ||
+    candidateState === "clarification_required" ||
+    candidateState === "needs_clarification"
+  );
 }
 
 function isReadyPreviewState(result: PreviewSubmissionResult): boolean {
@@ -2376,7 +2465,7 @@ export function QueryWorkflowShell({
           executedEvidence: [],
           guardStatus: result.guardStatus,
           requestId: result.requestId,
-          reviewEvidence: [],
+          reviewEvidence: result.reviewEvidence,
           retrievedCitations: [],
           sourceId: result.sourceId,
           sourceLabel: selectedSource.displayLabel
@@ -2403,7 +2492,7 @@ export function QueryWorkflowShell({
           executedEvidence: [],
           guardStatus: result.guardStatus,
           requestId: result.requestId,
-          reviewEvidence: [],
+          reviewEvidence: result.reviewEvidence,
           retrievedCitations: [],
           sourceId: result.sourceId,
           sourceLabel: selectedSource.displayLabel
@@ -2429,7 +2518,7 @@ export function QueryWorkflowShell({
           executedEvidence: [],
           guardStatus: result.guardStatus,
           requestId: result.requestId,
-          reviewEvidence: [],
+          reviewEvidence: result.reviewEvidence,
           retrievedCitations: [],
           sourceId: result.sourceId,
           sourceLabel: selectedSource.displayLabel
@@ -2464,7 +2553,7 @@ export function QueryWorkflowShell({
         executedEvidence: [],
         guardStatus: result.guardStatus,
         requestId: result.requestId,
-        reviewEvidence: [],
+        reviewEvidence: result.reviewEvidence,
         retrievedCitations: [],
         sourceId: result.sourceId,
         sourceLabel: selectedSource.displayLabel
