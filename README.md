@@ -318,6 +318,7 @@ Source-foundation smoke verification:
 
 ```bash
 cd backend
+python3 -m pip install -e ".[test]"
 python3 -m pytest tests/test_source_foundation_smoke.py
 ```
 
