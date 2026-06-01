@@ -58,6 +58,11 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Run Review LLM frontend safety tests
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: npm test -- app/page.test.tsx
+
   backend:
     name: Backend package verification
     runs-on: ubuntu-latest
@@ -77,12 +82,12 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
 
-      - name: Install backend package
+      - name: Install backend package and test dependencies
         if: ${{ hashFiles('backend/pyproject.toml') != '' }}
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .
+          python -m pip install . pytest httpx
 
       - name: Provision backend example environment
         if: ${{ hashFiles('backend/pyproject.toml') != '' }}
@@ -93,6 +98,21 @@ jobs:
         if: ${{ hashFiles('backend/pyproject.toml') != '' }}
         working-directory: backend
         run: python -c "from app.main import app; print(app.title)"
+
+      - name: Run Review LLM backend safety tests
+        if: ${{ hashFiles('backend/pyproject.toml') != '' }}
+        working-directory: backend
+        run: |
+          python -m pytest \
+            tests/test_review_llm_adapter_contract.py \
+            tests/test_review_llm_answer_plan.py \
+            tests/test_review_llm_adapter_request.py \
+            tests/test_review_llm_calibration_fixtures.py \
+            tests/test_review_decision_persistence.py \
+            tests/test_candidate_execute_api.py::CandidateExecuteApiTestCase::test_execute_candidate_api_rejects_review_blocked_without_consuming_approval \
+            tests/test_candidate_execute_api.py::CandidateExecuteApiTestCase::test_execute_candidate_api_rejects_review_needs_clarification_without_consuming_approval \
+            tests/test_candidate_execute_api.py::CandidateExecuteApiTestCase::test_execute_candidate_api_review_ready_does_not_override_guard_denied \
+            tests/test_preview_persistence.py::test_http_preview_review_adapter_failure_uses_registered_error_code
 
   smoke:
     name: Baseline smoke checks
