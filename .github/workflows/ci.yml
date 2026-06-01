@@ -104,6 +104,7 @@ jobs:
         working-directory: backend
         run: |
           python -m pytest \
+            tests/test_backend_packaging.py \
             tests/test_review_llm_adapter_contract.py \
             tests/test_review_llm_answer_plan.py \
             tests/test_review_llm_adapter_request.py \
