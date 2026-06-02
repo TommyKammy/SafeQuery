@@ -294,6 +294,7 @@ startup behavior before moving on to deeper source-aware work:
 ```bash
 bash tests/smoke/test-local-topology-roles.sh
 cd backend
+python3 -m pip install -e ".[test]"
 python3 -m pytest tests/test_application_postgres_guard.py
 python3 -m pytest tests/test_source_foundation_smoke.py
 bash tests/smoke/test-compose-operator-workflow-source-selector.sh
@@ -378,6 +379,31 @@ Backend install check:
 ```bash
 cp backend/.env.example backend/.env
 python3 -m pip install -e backend
+```
+
+Backend test dependency install check:
+
+```bash
+cd backend
+python3 -m pip install -e ".[test]"
+python3 -m pytest tests/test_review_llm_adapter_contract.py
+```
+
+Review LLM safety verification uses that same install path:
+
+```bash
+cd backend
+python3 -m pip install -e ".[test]"
+python3 -m pytest \
+  tests/test_review_llm_adapter_contract.py \
+  tests/test_review_llm_answer_plan.py \
+  tests/test_review_llm_adapter_request.py \
+  tests/test_review_llm_calibration_fixtures.py \
+  tests/test_review_decision_persistence.py \
+  tests/test_candidate_execute_api.py::CandidateExecuteApiTestCase::test_execute_candidate_api_rejects_review_blocked_without_consuming_approval \
+  tests/test_candidate_execute_api.py::CandidateExecuteApiTestCase::test_execute_candidate_api_rejects_review_needs_clarification_without_consuming_approval \
+  tests/test_candidate_execute_api.py::CandidateExecuteApiTestCase::test_execute_candidate_api_review_ready_does_not_override_guard_denied \
+  tests/test_preview_persistence.py::test_http_preview_review_adapter_failure_uses_registered_error_code
 ```
 
 The backend settings loader accepts `.env` and `../.env`, which keeps the repo
