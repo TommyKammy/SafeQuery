@@ -532,6 +532,7 @@ def _attach_runtime_failure_audit_event(
 def _require_result_validation_linkage_before_execution(
     *,
     candidate_source: SourceBoundCandidateMetadata,
+    result_validation_contract: ResultValidationContract,
     audit_context: ExecutionAuditContext | None,
 ) -> None:
     if (
@@ -544,12 +545,22 @@ def _require_result_validation_linkage_before_execution(
             "Result validation requires semantic contract version, candidate id, "
             "and execution run id before execution."
         )
+    if (
+        result_validation_contract.semantic_contract_version is not None
+        and result_validation_contract.semantic_contract_version
+        != str(candidate_source.semantic_contract_version).strip()
+    ):
+        raise RuntimeError(
+            "Result validation contract semantic version must match the candidate "
+            "semantic contract version before execution."
+        )
 
 
 def _raise_result_validation_denial(
     *,
     validation: ResultValidationOutcome,
     candidate_source: SourceBoundCandidateMetadata,
+    canonical_sql: str,
     audit_context: ExecutionAuditContext | None,
 ) -> None:
     denial_reason = ",".join(validation.reason_codes) or "result_validation_failed"
@@ -563,7 +574,7 @@ def _raise_result_validation_denial(
             event_types=["execution_requested", "execution_started", "execution_denied"],
             candidate_source=candidate_source,
             audit_context=audit_context,
-            canonical_sql=None,
+            canonical_sql=canonical_sql,
             primary_deny_code=DENY_RESULT_VALIDATION_FAILED,
             denial_reason=denial_reason,
         ),
@@ -985,6 +996,7 @@ def execute_candidate_sql(
     if result_validation_contract is not None:
         _require_result_validation_linkage_before_execution(
             candidate_source=candidate.source,
+            result_validation_contract=result_validation_contract,
             audit_context=audit_context,
         )
 
@@ -1106,6 +1118,7 @@ def execute_candidate_sql(
             _raise_result_validation_denial(
                 validation=result_validation,
                 candidate_source=candidate.source,
+                canonical_sql=candidate.canonical_sql,
                 audit_context=audit_context,
             )
 

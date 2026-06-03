@@ -87,6 +87,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         query_runner,
         *,
         result_validation_contract: ResultValidationContract | None = None,
+        result_validation_contracts: dict[str, ResultValidationContract] | None = None,
     ) -> TestClient:
         main_module = importlib.import_module("app.main")
         app = main_module.create_app()
@@ -96,6 +97,8 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         app.state.execution_query_runner = query_runner
         if result_validation_contract is not None:
             app.state.result_validation_contract = result_validation_contract
+        if result_validation_contracts is not None:
+            app.state.result_validation_contracts = result_validation_contracts
         return TestClient(app)
 
     def _seed_approved_candidate(self) -> None:
@@ -354,6 +357,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         response = self._client(
             query_runner,
             result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
                 expected_columns=("vendor_name",),
                 required_columns=("vendor_name",),
             ),
@@ -380,6 +384,43 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
         self.assertEqual(validation["evidence"]["row_count"], 1)
 
+    def test_execute_candidate_api_selects_validation_contract_by_semantic_version(
+        self,
+    ) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [{"vendor_name": "Acme"}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contracts={
+                "other_contract.v1": ResultValidationContract(
+                    semantic_contract_version="other_contract.v1",
+                    expected_columns=("missing_column",),
+                    required_columns=("missing_column",),
+                ),
+                "approved_vendor_spend.v1": ResultValidationContract(
+                    semantic_contract_version="approved_vendor_spend.v1",
+                    expected_columns=("vendor_name",),
+                    required_columns=("vendor_name",),
+                ),
+            },
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        validation = response.json()["metadata"]["result_validation"]
+        self.assertEqual(validation["status"], "pass")
+        self.assertEqual(
+            validation["semantic_contract_version"],
+            "approved_vendor_spend.v1",
+        )
+        self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
+
     def test_execute_candidate_api_rejects_missing_semantic_version_before_runner(
         self,
     ) -> None:
@@ -396,6 +437,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         response = self._client(
             lambda **_: calls.append("called"),
             result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
                 expected_columns=("vendor_name",),
             ),
         ).post(
@@ -429,6 +471,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         response = self._client(
             query_runner,
             result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
                 expected_columns=("vendor_name", "approved_spend"),
                 required_columns=("approved_spend",),
             ),

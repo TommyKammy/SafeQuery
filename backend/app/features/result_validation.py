@@ -24,6 +24,7 @@ ResultValidationReason = Literal[
 class ResultValidationContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    semantic_contract_version: Optional[NonEmptyTrimmedString] = None
     expected_columns: tuple[NonEmptyTrimmedString, ...]
     required_columns: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
     minimum_row_count: NonNegativeInt = 0
@@ -102,7 +103,7 @@ def validate_execution_result(
 ) -> ResultValidationOutcome:
     expected_columns = _unique_ordered(contract.expected_columns)
     required_columns = _unique_ordered(contract.required_columns)
-    observed_columns = _observed_columns(rows, fallback_columns=expected_columns)
+    observed_columns = _observed_columns(rows)
     observed_set = set(observed_columns)
     missing_expected_columns = tuple(
         column for column in expected_columns if column not in observed_set
@@ -189,16 +190,10 @@ def _unique_ordered(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
-def _observed_columns(
-    rows: list[dict[str, Any]],
-    *,
-    fallback_columns: tuple[str, ...],
-) -> tuple[str, ...]:
+def _observed_columns(rows: list[dict[str, Any]]) -> tuple[str, ...]:
     columns: set[str] = set()
     for row in rows:
         columns.update(str(column) for column in row)
-    if not columns:
-        return fallback_columns
     return tuple(sorted(columns))
 
 

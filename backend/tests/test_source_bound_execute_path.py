@@ -20,6 +20,7 @@ from app.features.execution.runtime import (
     ExecutionResult,
     ExecutionRuntimeSafetyState,
 )
+from app.features.evaluation.harness import list_postgresql_evaluation_scenarios
 from app.features.result_validation import ResultValidationContract
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
@@ -397,6 +398,70 @@ def test_execute_candidate_sql_blocks_failed_result_validation_before_success() 
         "denial_cause": "result_validation_failed",
         "denial_reason": "missing_expected_columns,missing_required_columns",
     }.items() <= exc_info.value.audit_event.model_dump(exclude_none=True).items()
+
+
+def test_result_validation_denial_preserves_release_gate_metadata() -> None:
+    from app.features.execution import (
+        ExecutionConnectorExecutionError,
+        execute_candidate_sql,
+    )
+
+    scenario = next(
+        scenario
+        for scenario in list_postgresql_evaluation_scenarios()
+        if scenario.scenario_id == "postgresql-safety-wrong-source-binding-denied"
+    )
+    candidate = ExecutableCandidateRecord(
+        canonical_sql=scenario.canonical_sql,
+        source=SourceBoundCandidateMetadata(
+            source_id=scenario.source.source_id,
+            source_family=scenario.source.source_family,
+            source_flavor=scenario.source.source_flavor,
+            dataset_contract_version=scenario.source.dataset_contract_version,
+            semantic_contract_version="approved_vendor_spend.v1",
+            schema_snapshot_version=scenario.source.schema_snapshot_version,
+            execution_policy_version=scenario.source.execution_policy_version,
+            connector_profile_version=scenario.source.connector_profile_version,
+        ),
+    )
+    selection = ExecutionConnectorSelection(
+        source_id=scenario.source.source_id,
+        source_family=scenario.source.source_family,
+        source_flavor=scenario.source.source_flavor,
+        connector_id="postgresql_readonly",
+        ownership="backend",
+    )
+    audit_context = _audit_context().model_copy(
+        update={
+            "guard_audit_event_id": uuid4(),
+            "execution_policy_version": scenario.source.execution_policy_version,
+            "connector_profile_version": scenario.source.connector_profile_version,
+        }
+    )
+
+    with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+        execute_candidate_sql(
+            candidate=candidate,
+            selection=selection,
+            query_runner=lambda **_: [{"vendor_name": "Acme"}],
+            audit_context=audit_context,
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("approved_spend",),
+            ),
+        )
+
+    release_gate_scenario = exc_info.value.audit_event.release_gate_scenario
+    assert release_gate_scenario is not None
+    assert release_gate_scenario.scenario_id == scenario.scenario_id
+    assert release_gate_scenario.guard_decision == "reject"
+    assert (
+        release_gate_scenario.execution_audit_event_id
+        == exc_info.value.audit_event.event_id
+    )
 
 
 def test_execution_result_omits_executed_evidence_for_negative_audit_row_count() -> None:

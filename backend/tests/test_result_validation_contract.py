@@ -105,7 +105,7 @@ def test_result_validation_warns_on_decimal_outliers() -> None:
     assert validation.evidence.outlier_columns == ("approved_spend",)
 
 
-def test_result_validation_preserves_expected_columns_for_allowed_empty_results() -> None:
+def test_result_validation_does_not_assume_expected_columns_for_empty_results() -> None:
     validation = validate_execution_result(
         rows=[],
         metadata=_metadata(row_count=0),
@@ -116,9 +116,12 @@ def test_result_validation_preserves_expected_columns_for_allowed_empty_results(
         ),
     )
 
-    assert validation.status == "pass"
-    assert validation.reason_codes == ()
-    assert validation.evidence.observed_columns == ("vendor_name", "approved_spend")
+    assert validation.status == "fail"
+    assert validation.reason_codes == (
+        "missing_expected_columns",
+        "missing_required_columns",
+    )
+    assert validation.evidence.observed_columns == ()
 
 
 @pytest.mark.parametrize(
