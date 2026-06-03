@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Optional
 from uuid import UUID
 
@@ -99,9 +100,9 @@ def validate_execution_result(
     metadata: ResultValidationMetadata,
     contract: ResultValidationContract,
 ) -> ResultValidationOutcome:
-    observed_columns = _observed_columns(rows)
     expected_columns = _unique_ordered(contract.expected_columns)
     required_columns = _unique_ordered(contract.required_columns)
+    observed_columns = _observed_columns(rows, fallback_columns=expected_columns)
     observed_set = set(observed_columns)
     missing_expected_columns = tuple(
         column for column in expected_columns if column not in observed_set
@@ -188,10 +189,16 @@ def _unique_ordered(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
-def _observed_columns(rows: list[dict[str, Any]]) -> tuple[str, ...]:
+def _observed_columns(
+    rows: list[dict[str, Any]],
+    *,
+    fallback_columns: tuple[str, ...],
+) -> tuple[str, ...]:
     columns: set[str] = set()
     for row in rows:
         columns.update(str(column) for column in row)
+    if not columns:
+        return fallback_columns
     return tuple(sorted(columns))
 
 
@@ -217,18 +224,32 @@ def _columns_with_outliers(
     if minimum is None and maximum is None:
         return ()
 
+    decimal_minimum = _decimal_for_outlier_value(minimum)
+    decimal_maximum = _decimal_for_outlier_value(maximum)
     outlier_columns: list[str] = []
     for column in _unique_ordered(columns):
         for row in rows:
-            value = row.get(column)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            value = _decimal_for_outlier_value(row.get(column))
+            if value is None:
                 continue
-            if (minimum is not None and value < minimum) or (
-                maximum is not None and value > maximum
+            if (decimal_minimum is not None and value < decimal_minimum) or (
+                decimal_maximum is not None and value > decimal_maximum
             ):
                 outlier_columns.append(column)
                 break
     return tuple(outlier_columns)
+
+
+def _decimal_for_outlier_value(value: object) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, (Decimal, float, int)):
+        return None
+    try:
+        candidate = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not candidate.is_finite():
+        return None
+    return candidate
 
 
 def _aggregation_shape(

@@ -154,6 +154,7 @@ def _seed_preview_candidate_approval(
     owner_subject_id: str = "user:alice",
     approval_expires_at: datetime | None = None,
     execution_policy_version: int | None = None,
+    semantic_contract_version: str | None = None,
 ) -> PreviewCandidateApproval:
     dataset_contract = session.get(DatasetContract, source.dataset_contract_id)
     schema_snapshot = session.get(SchemaSnapshot, source.schema_snapshot_id)
@@ -169,6 +170,7 @@ def _seed_preview_candidate_approval(
         source_flavor=source.source_flavor,
         dataset_contract_id=dataset_contract.id,
         dataset_contract_version=dataset_contract.contract_version,
+        semantic_contract_version=semantic_contract_version,
         schema_snapshot_id=schema_snapshot.id,
         schema_snapshot_version=schema_snapshot.snapshot_version,
         authenticated_subject_id=owner_subject_id,
@@ -193,6 +195,7 @@ def _seed_preview_candidate_approval(
         source_flavor=source.source_flavor,
         dataset_contract_id=dataset_contract.id,
         dataset_contract_version=dataset_contract.contract_version,
+        semantic_contract_version=semantic_contract_version,
         schema_snapshot_id=schema_snapshot.id,
         schema_snapshot_version=schema_snapshot.snapshot_version,
         authenticated_subject_id=owner_subject_id,
@@ -290,6 +293,30 @@ def test_authoritative_candidate_approval_is_consumed_once_for_execution() -> No
             )
 
     assert exc_info.value.deny_code == "DENY_CANDIDATE_REPLAYED"
+
+
+def test_authoritative_candidate_approval_preserves_preview_semantic_contract_version() -> None:
+    with _session_scope() as session:
+        source = _seed_source(session, source_id="sap-approved-spend")
+        _seed_preview_candidate_approval(
+            session,
+            source=source,
+            semantic_contract_version="approved_vendor_spend.v1",
+        )
+
+        result = revalidate_authoritative_candidate_approval(
+            session=session,
+            candidate_id="candidate-123",
+            authenticated_subject=AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            as_of=datetime.now(timezone.utc),
+            selected_source_id="sap-approved-spend",
+            audit_context=_audit_context(),
+        )
+
+    assert result.source.semantic_contract_version == "approved_vendor_spend.v1"
 
 
 def test_authoritative_candidate_approval_rejects_stale_persisted_execution_policy() -> None:

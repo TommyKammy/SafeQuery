@@ -779,6 +779,9 @@ def create_app() -> FastAPI:
             selection: ExecutionConnectorSelection | None = None
             cancellation_probe = None
             runtime_safety_state = _operator_runtime_safety_state(http_request)
+            result_validation_contract = _operator_result_validation_contract(
+                http_request
+            )
 
             def prepare_execution(
                 revalidation_result: CandidateLifecycleRevalidationResult,
@@ -887,9 +890,6 @@ def create_app() -> FastAPI:
                 http_request.app.state,
                 "execution_query_runner",
                 None,
-            )
-            result_validation_contract = _operator_result_validation_contract(
-                http_request
             )
             result = execute_candidate_sql(
                 candidate=candidate,

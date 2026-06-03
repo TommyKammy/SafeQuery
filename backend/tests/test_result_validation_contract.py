@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -82,6 +83,42 @@ def test_result_validation_warns_on_truncation_nulls_and_outliers() -> None:
     )
     assert validation.evidence.null_columns == ("approved_spend",)
     assert validation.evidence.outlier_columns == ("approved_spend",)
+
+
+def test_result_validation_warns_on_decimal_outliers() -> None:
+    validation = validate_execution_result(
+        rows=[
+            {"vendor_name": "Acme", "approved_spend": Decimal("100.00")},
+            {"vendor_name": "Beta", "approved_spend": Decimal("1000000.01")},
+        ],
+        metadata=_metadata(row_count=2),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+            outlier_columns=("approved_spend",),
+            outlier_numeric_max=1_000_000,
+        ),
+    )
+
+    assert validation.status == "warn"
+    assert validation.reason_codes == ("outlier_values_present",)
+    assert validation.evidence.outlier_columns == ("approved_spend",)
+
+
+def test_result_validation_preserves_expected_columns_for_allowed_empty_results() -> None:
+    validation = validate_execution_result(
+        rows=[],
+        metadata=_metadata(row_count=0),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name",),
+            minimum_row_count=0,
+        ),
+    )
+
+    assert validation.status == "pass"
+    assert validation.reason_codes == ()
+    assert validation.evidence.observed_columns == ("vendor_name", "approved_spend")
 
 
 @pytest.mark.parametrize(

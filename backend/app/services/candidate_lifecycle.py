@@ -474,6 +474,8 @@ def _candidate_lifecycle_from_preview_candidate(
 
 def _candidate_lifecycle_from_approval(
     approval: PreviewCandidateApproval,
+    *,
+    preview_candidate: PreviewCandidate | None,
 ) -> CandidateLifecycleRecord:
     return CandidateLifecycleRecord(
         owner_subject_id=approval.owner_subject_id,
@@ -489,7 +491,11 @@ def _candidate_lifecycle_from_approval(
             source_family=approval.source_family,
             source_flavor=approval.source_flavor,
             dataset_contract_version=approval.dataset_contract_version,
-            semantic_contract_version=None,
+            semantic_contract_version=(
+                preview_candidate.semantic_contract_version
+                if preview_candidate is not None
+                else None
+            ),
             schema_snapshot_version=approval.schema_snapshot_version,
             execution_policy_version=approval.execution_policy_version,
             connector_profile_version=(
@@ -635,7 +641,10 @@ def revalidate_authoritative_candidate_approval(
     )
 
     result = revalidate_candidate_lifecycle(
-        candidate=_candidate_lifecycle_from_approval(approval),
+        candidate=_candidate_lifecycle_from_approval(
+            approval,
+            preview_candidate=preview_candidate,
+        ),
         authenticated_subject=authenticated_subject,
         session=session,
         as_of=as_of,
