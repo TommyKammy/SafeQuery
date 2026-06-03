@@ -123,9 +123,8 @@ def validate_execution_result(
         observed_columns=redaction_observed_columns,
         contract=contract,
     )
-    contract_observed_columns = _contract_observed_columns_for_validation(
-        returned_observed_columns=observed_columns,
-        redaction_source_rows=redaction_source_rows,
+    contract_observed_columns = _contract_observed_columns_after_redaction(
+        observed_columns=observed_columns,
         contract=contract,
     )
     observed_set = set(contract_observed_columns)
@@ -282,20 +281,6 @@ def _redaction_evidence(
     if unclassified_columns:
         return "fail", redacted_columns, unclassified_columns
     return "applied", redacted_columns, ()
-
-
-def _contract_observed_columns_for_validation(
-    *,
-    returned_observed_columns: tuple[str, ...],
-    redaction_source_rows: list[dict[str, Any]] | None,
-    contract: ResultValidationContract,
-) -> tuple[str, ...]:
-    if contract.redaction_required and redaction_source_rows is not None:
-        return returned_observed_columns
-    return _contract_observed_columns_after_redaction(
-        observed_columns=returned_observed_columns,
-        contract=contract,
-    )
 
 
 def _contract_observed_columns_after_redaction(
