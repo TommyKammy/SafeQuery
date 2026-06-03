@@ -83,14 +83,15 @@ def generate_mvp_answer_summary(
         semantic_contract_version=validation.semantic_contract_version,
         candidate_id=validation.candidate_id,
     )
-    rows_used = min(len(rows), _MAX_SUMMARY_ROWS)
+    display_rows = rows[:_MAX_SUMMARY_ROWS]
+    rows_used = len(display_rows)
     truncation_status: MVPAnswerTruncationStatus = (
         "truncated" if validation.evidence.result_truncated else "not_truncated"
     )
     redaction_status = validation.evidence.redaction_status
 
     answer_text = _answer_text(
-        rows=rows[:_MAX_SUMMARY_ROWS],
+        rows=display_rows,
         total_row_count=validation.evidence.row_count,
         source=source,
         assumptions=safe_assumptions,
@@ -158,7 +159,10 @@ def _row_summary(
         spend = _spend_text(_spend_value(row))
         row_entries.append(f"{index}. {vendor} ({quarter}) - {spend}")
     return (
-        f"Top approved vendor spend from {_returned_row_count_text(total_row_count)}: "
+        _vendor_spend_intro(
+            total_row_count=total_row_count,
+            displayed_row_count=len(rows),
+        )
         + "; ".join(row_entries)
         + "."
     )
@@ -203,6 +207,19 @@ def _spend_value(row: Mapping[str, Any]) -> object:
         if column in row:
             return row.get(column)
     return None
+
+
+def _vendor_spend_intro(*, total_row_count: int, displayed_row_count: int) -> str:
+    if displayed_row_count < total_row_count:
+        return (
+            "Top approved vendor spend from "
+            f"{_returned_row_count_text(total_row_count)}; "
+            f"showing {_display_row_count_text(displayed_row_count)}: "
+        )
+    return (
+        "Top approved vendor spend from "
+        f"{_returned_row_count_text(total_row_count)}: "
+    )
 
 
 def _returned_row_count_text(count: int) -> str:

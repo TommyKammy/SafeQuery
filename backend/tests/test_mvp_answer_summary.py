@@ -132,7 +132,10 @@ def test_mvp_answer_summary_preserves_total_row_count_when_display_is_capped() -
     )
 
     assert summary.rows_used == 5
-    assert "Top approved vendor spend from 6 returned rows:" in summary.answer_text
+    assert (
+        "Top approved vendor spend from 6 returned rows; showing 5 rows:"
+        in summary.answer_text
+    )
     assert "from 5 returned rows" not in summary.answer_text
     assert "Vendor 5" in summary.answer_text
     assert "Vendor 6" not in summary.answer_text
