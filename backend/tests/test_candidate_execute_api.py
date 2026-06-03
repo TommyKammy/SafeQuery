@@ -581,6 +581,54 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             "column_sensitivity_metadata_missing",
         )
 
+    def test_execute_candidate_api_blocks_when_required_column_is_redacted(
+        self,
+    ) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "vendor_name": "Acme",
+                    "vendor_email": "buyer@example.test",
+                    "approved_spend": 1200,
+                }
+            ]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "vendor_email", "approved_spend"),
+                required_columns=("vendor_name", "vendor_email", "approved_spend"),
+                redaction_required=True,
+                column_sensitivity={
+                    "vendor_name": "public",
+                    "vendor_email": "sensitive",
+                    "approved_spend": "public",
+                },
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertNotIn("buyer@example.test", response.text)
+        self.assertEqual(
+            payload["audit"]["events"][-1]["primary_deny_code"],
+            "DENY_RESULT_VALIDATION_FAILED",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["denial_reason"],
+            "missing_expected_columns,missing_required_columns",
+        )
+        self.assertEqual(payload["audit"]["events"][-1]["execution_row_count"], 1)
+        self.assertIs(payload["audit"]["events"][-1]["result_truncated"], False)
+
     def test_execute_candidate_api_selects_validation_contract_by_semantic_version(
         self,
     ) -> None:
