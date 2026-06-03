@@ -148,6 +148,10 @@ _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ROW_REFERENCE_CITATION_PATTERN = re.compile(r"\[row:(\d+)\]", re.IGNORECASE)
+_CLAIM_VALUE_ABBREVIATION_PERIOD_PATTERN = re.compile(
+    r"\b(?:approx|est|e\.g|i\.e|etc|vs)\.",
+    re.IGNORECASE,
+)
 _FORBIDDEN_SUBJECT_SEPARATOR_PATTERN = re.compile(r"[\s\-\u2010-\u2015]+")
 _FORBIDDEN_SUBJECT_PLURAL_EXACT_TOKENS = {
     "as",
@@ -1244,18 +1248,31 @@ def _row_value_forms(row: Mapping[str, Any]) -> set[str]:
 
 
 def _claim_values_are_row_linked(between_values: str) -> bool:
-    if re.search(r"[.!?]", between_values):
+    link_context = _claim_value_link_context(between_values)
+    if _claim_value_link_context_has_sentence_break(link_context):
         return False
-    row_link_match = _CLAIM_VALUE_ROW_LINK_PATTERN.search(between_values)
+    row_link_match = _CLAIM_VALUE_ROW_LINK_PATTERN.search(link_context)
     if row_link_match is None:
         return False
-    if _has_unlinked_value_conjunction(between_values):
+    if _has_unlinked_value_conjunction(link_context):
         return False
-    if _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN.search(between_values):
+    if _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN.search(link_context):
         return False
-    if _CLAIM_VALUE_NEGATED_COPULA_PATTERN.search(between_values):
+    if _CLAIM_VALUE_NEGATED_COPULA_PATTERN.search(link_context):
         return False
     return True
+
+
+def _claim_value_link_context(between_values: str) -> str:
+    return _ROW_REFERENCE_CITATION_PATTERN.sub(" ", between_values)
+
+
+def _claim_value_link_context_has_sentence_break(link_context: str) -> bool:
+    abbreviation_safe_context = _CLAIM_VALUE_ABBREVIATION_PERIOD_PATTERN.sub(
+        lambda match: match.group(0).replace(".", ""),
+        link_context,
+    )
+    return bool(re.search(r"[.!?]", abbreviation_safe_context))
 
 
 def _has_unlinked_value_conjunction(between_values: str) -> bool:
