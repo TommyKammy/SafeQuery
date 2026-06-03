@@ -559,6 +559,52 @@ def test_governed_answer_consistency_scoring_rejects_row_reference_mismatch() ->
     assert "FY2025-Q2 with 98000.00 cited as row:1" in score.unsupported_claims
 
 
+def test_governed_answer_consistency_scoring_rejects_citations_without_returned_rows() -> None:
+    fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
+    expected_rows = fixture.expected_result_shape["known_result_rows"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=(
+            "FY2025-Q1 approved spend is 125000.00 [row:1]. "
+            "FY2025-Q2 approved spend is 98000.00 [row:2]."
+        ),
+        result_rows=[],
+        result_metadata={
+            "columns": ["fiscal_quarter", "approved_spend"],
+            "row_count": len(expected_rows),
+            "truncated": False,
+            "answer_surface": "future_llm_summary",
+        },
+    )
+
+    assert score.passed is False
+    assert "row_reference_mismatch" in score.unsupported_claim_categories
+    assert "FY2025-Q1 with 125000.00 cited as row:1" in score.unsupported_claims
+    assert "FY2025-Q2 with 98000.00 cited as row:2" in score.unsupported_claims
+
+
+def test_governed_answer_consistency_scoring_rejects_single_value_row_mismatch() -> None:
+    fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
+    result_rows = fixture.expected_result_shape["known_result_rows"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text="Approved spend is 125000.00 [row:2].",
+        result_rows=result_rows,
+        result_metadata={
+            "columns": ["fiscal_quarter", "approved_spend"],
+            "row_count": 2,
+            "truncated": False,
+            "answer_surface": "future_llm_summary",
+        },
+    )
+
+    assert score.passed is False
+    assert "row_reference_mismatch" in score.unsupported_claim_categories
+    assert "125000.00 cited as row:2" in score.unsupported_claims
+
+
 def test_governed_answer_consistency_scoring_accepts_supported_row_citations() -> None:
     fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
     result_rows = fixture.expected_result_shape["known_result_rows"]
@@ -568,6 +614,29 @@ def test_governed_answer_consistency_scoring_accepts_supported_row_citations() -
         answer_text=(
             "FY2025-Q1 approved spend is 125000.00 [row:1]. "
             "FY2025-Q2 approved spend is 98000.00 [row:2]."
+        ),
+        result_rows=result_rows,
+        result_metadata={
+            "columns": ["fiscal_quarter", "approved_spend"],
+            "row_count": 2,
+            "truncated": False,
+            "answer_surface": "future_llm_summary",
+        },
+    )
+
+    assert score.passed is True
+    assert score.unsupported_claim_categories == ()
+
+
+def test_governed_answer_consistency_scoring_accepts_row_citation_before_amount() -> None:
+    fixture = validate_governed_answer_fixture_set(_load_fixture_set()).fixtures[1]
+    result_rows = fixture.expected_result_shape["known_result_rows"]
+
+    score = score_governed_answer_consistency(
+        fixture=fixture,
+        answer_text=(
+            "FY2025-Q1 [row:1] approved spend is 125000.00. "
+            "FY2025-Q2 [row:2] approved spend is 98000.00."
         ),
         result_rows=result_rows,
         result_metadata={

@@ -412,7 +412,7 @@ def score_governed_answer_consistency(
     _check_required_row_citations(
         expected_result_shape=expected_result_shape,
         answer_text=answer_text,
-        result_rows=value_evidence_rows,
+        result_rows=result_rows,
         result_metadata=result_metadata,
         categories=categories,
         unsupported_claims=unsupported_claims,
@@ -547,30 +547,75 @@ def _check_required_row_citations(
         or result_metadata.get("enforce_citations") is True
     ):
         return
-    if not result_rows:
-        return
-
+    claimed_values = _claimed_result_value_matches(answer_text)
+    paired_claim_spans: set[tuple[int, int]] = set()
     for left, right in _claimed_result_row_value_pairs(answer_text):
-        row_citation = _row_reference_citation_for_claim(
-            answer_text=answer_text,
-            claim_end=right[2],
-        )
+        paired_claim_spans.add((left[1], left[2]))
+        paired_claim_spans.add((right[1], right[2]))
         claim = f"{left[0]} with {right[0]}"
-        if row_citation is None:
-            categories.append("missing_citation")
-            unsupported_claims.append(claim)
+        _check_required_row_citation_for_claim_values(
+            answer_text=answer_text,
+            claim_values=(left, right),
+            claim=claim,
+            result_rows=result_rows,
+            categories=categories,
+            unsupported_claims=unsupported_claims,
+        )
+
+    for claim_value, start, end in claimed_values:
+        if (start, end) in paired_claim_spans:
             continue
-        row_index = row_citation - 1
-        if row_index < 0 or row_index >= len(result_rows):
-            categories.append("row_reference_mismatch")
-            unsupported_claims.append(f"{claim} cited as row:{row_citation}")
+        if _metadata_row_count_claim_is_supported(
+            answer_text=answer_text,
+            claim_value=claim_value,
+            start=start,
+            end=end,
+            result_metadata=result_metadata,
+        ):
             continue
-        row_forms = _row_value_forms(result_rows[row_index])
-        if _value_forms(left[0]).isdisjoint(row_forms) or _value_forms(
-            right[0]
-        ).isdisjoint(row_forms):
-            categories.append("row_reference_mismatch")
-            unsupported_claims.append(f"{claim} cited as row:{row_citation}")
+        if result_rows and _value_forms(claim_value).isdisjoint(
+            _supported_result_values(result_rows)
+        ):
+            continue
+        _check_required_row_citation_for_claim_values(
+            answer_text=answer_text,
+            claim_values=((claim_value, start, end),),
+            claim=claim_value,
+            result_rows=result_rows,
+            categories=categories,
+            unsupported_claims=unsupported_claims,
+        )
+
+
+def _check_required_row_citation_for_claim_values(
+    *,
+    answer_text: str,
+    claim_values: Sequence[tuple[str, int, int]],
+    claim: str,
+    result_rows: Sequence[Mapping[str, Any]],
+    categories: list[GovernedAnswerUnsupportedClaimCategory],
+    unsupported_claims: list[str],
+) -> None:
+    claim_start = min(value[1] for value in claim_values)
+    claim_end = max(value[2] for value in claim_values)
+    row_citation = _row_reference_citation_for_claim(
+        answer_text=answer_text,
+        claim_start=claim_start,
+        claim_end=claim_end,
+    )
+    if row_citation is None:
+        categories.append("missing_citation")
+        unsupported_claims.append(claim)
+        return
+    row_index = row_citation - 1
+    if row_index < 0 or row_index >= len(result_rows):
+        categories.append("row_reference_mismatch")
+        unsupported_claims.append(f"{claim} cited as row:{row_citation}")
+        return
+    row_forms = _row_value_forms(result_rows[row_index])
+    if any(_value_forms(value[0]).isdisjoint(row_forms) for value in claim_values):
+        categories.append("row_reference_mismatch")
+        unsupported_claims.append(f"{claim} cited as row:{row_citation}")
 
 
 def _observed_result_columns(
@@ -1093,14 +1138,30 @@ def _claimed_result_row_value_pairs(
 def _row_reference_citation_for_claim(
     *,
     answer_text: str,
+    claim_start: int,
     claim_end: int,
 ) -> int | None:
+    sentence_start = _sentence_start_before(answer_text, claim_start)
     sentence_end = _sentence_end_after(answer_text, claim_end)
-    sentence_tail = answer_text[claim_end:sentence_end]
-    citation_match = _ROW_REFERENCE_CITATION_PATTERN.search(sentence_tail)
-    if citation_match is None:
+    citation_matches = tuple(
+        _ROW_REFERENCE_CITATION_PATTERN.finditer(
+            answer_text[sentence_start:sentence_end]
+        )
+    )
+    if not citation_matches:
         return None
-    return int(citation_match.group(1))
+
+    def citation_distance(match: re.Match[str]) -> int:
+        citation_start = sentence_start + match.start()
+        citation_end = sentence_start + match.end()
+        if citation_end < claim_start:
+            return claim_start - citation_end
+        if citation_start > claim_end:
+            return citation_start - claim_end
+        return 0
+
+    nearest_citation = min(citation_matches, key=citation_distance)
+    return int(nearest_citation.group(1))
 
 
 def _sentence_end_after(text: str, start: int) -> int:
