@@ -24,6 +24,7 @@ from app.db.models.preview import (
 from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
+from app.features.guard.deny_taxonomy import DENY_RESULT_VALIDATION_FAILED
 from app.services.demo_source_seed import seed_demo_source_governance
 from app.services.support_bundle import (
     build_bounded_result_summary_export,
@@ -149,6 +150,7 @@ def _add_governance_review_workflow_records(
         source_flavor=source.source_flavor,
         dataset_contract_id=source.dataset_contract_id,
         dataset_contract_version=1,
+        semantic_contract_version="approved_vendor_spend.v1",
         schema_snapshot_id=source.schema_snapshot_id,
         schema_snapshot_version=1,
         authenticated_subject_id="user:demo-local-operator",
@@ -173,6 +175,7 @@ def _add_governance_review_workflow_records(
         source_flavor=preview_request.source_flavor,
         dataset_contract_id=preview_request.dataset_contract_id,
         dataset_contract_version=preview_request.dataset_contract_version,
+        semantic_contract_version=preview_request.semantic_contract_version,
         schema_snapshot_id=preview_request.schema_snapshot_id,
         schema_snapshot_version=preview_request.schema_snapshot_version,
         authenticated_subject_id=preview_request.authenticated_subject_id,
@@ -219,10 +222,20 @@ def _add_governance_review_workflow_records(
         ("guard_evaluated", 4, preview_candidate.candidate_id, "preview_ready"),
         ("execution_completed", 7, preview_candidate.candidate_id, "executed"),
     ]
+    execution_run_id = uuid4()
+    answer_id = uuid4()
+    guard_audit_event_id = uuid4()
     for event_type, lifecycle_order, candidate_id, candidate_state in lifecycle_events:
+        event_id = (
+            execution_run_id
+            if event_type == "execution_completed"
+            else guard_audit_event_id
+            if event_type == "guard_evaluated"
+            else uuid4()
+        )
         session.add(
             PreviewAuditEvent(
-                event_id=uuid4(),
+                event_id=event_id,
                 lifecycle_order=lifecycle_order,
                 preview_request_id=preview_request.id,
                 preview_candidate_id=(
@@ -256,11 +269,76 @@ def _add_governance_review_workflow_records(
                 source_family=preview_request.source_family,
                 source_flavor=preview_request.source_flavor,
                 dataset_contract_version=preview_request.dataset_contract_version,
+                semantic_contract_version=preview_request.semantic_contract_version,
                 schema_snapshot_version=preview_request.schema_snapshot_version,
                 candidate_state=candidate_state,
                 audit_payload={
                     "execution_row_count": execution_row_count,
                     "result_truncated": False,
+                    "guard_decision": "allow" if event_type == "guard_evaluated" else None,
+                    "guard_version": (
+                        "postgresql-guard-v1"
+                        if event_type == "guard_evaluated"
+                        else None
+                    ),
+                    "intent_mapping": (
+                        {
+                            "status": "mapped",
+                            "mapping_id": "approved_vendor_spend",
+                            "metric": "sum_approved_vendor_spend",
+                            "dimensions": ["vendor_name", "fiscal_quarter"],
+                            "filters": ["approved_spend_only"],
+                        }
+                        if event_type
+                        in {
+                            "generation_completed",
+                            "guard_evaluated",
+                            "execution_completed",
+                        }
+                        else None
+                    ),
+                    "release_gate_scenario": (
+                        {
+                            "scenario_id": "gavsf-001-top-approved-vendors-by-quarterly-spend",
+                            "source_id": preview_request.source_id,
+                            "candidate_id": preview_candidate.candidate_id,
+                            "guard_decision": "allow",
+                            "guard_audit_event_id": str(guard_audit_event_id),
+                            "execution_run_id": str(execution_run_id),
+                            "execution_audit_event_id": str(execution_run_id),
+                        }
+                        if event_type == "execution_completed"
+                        else None
+                    ),
+                    "answer_evidence": (
+                        {
+                            "type": "answer_evidence",
+                            "answer_id": str(answer_id),
+                            "request_id": preview_request.request_id,
+                            "candidate_id": preview_candidate.candidate_id,
+                            "execution_run_id": str(execution_run_id),
+                            "validation_status": "pass",
+                            "redaction_status": "applied",
+                            "summary_strategy": "mvp_answer_summary.v1",
+                            "result_hash": "sha256:"
+                            + "a" * 64,
+                            "bounded_metadata": {
+                                "row_count": execution_row_count,
+                                "row_limit": 200,
+                                "result_truncated": False,
+                                "rows_used": 5,
+                                "reason_codes": [],
+                                "redacted_columns": ["vendor_email"],
+                                "missing_expected_columns": [],
+                                "missing_required_columns": [],
+                            },
+                            "answer_state": "answered",
+                            "audit_event_id": str(execution_run_id),
+                            "audit_event_type": "execution_completed",
+                        }
+                        if event_type == "execution_completed"
+                        else None
+                    ),
                     "raw_rows": [{"customer_secret": "sk-live-should-not-leak"}],
                     "debug_path": "/".join(
                         ["", "Users", "example", ".safequery", "private.log"]
@@ -327,7 +405,7 @@ def test_support_bundle_service_includes_bounded_diagnostics_without_secrets(
     assert governance_review["limitations"] == [
         "Bundle is read-only review evidence and does not authorize execution.",
         "Subordinate adapter, LLM, search, analyst, MLflow, UI, and external evidence is labeled as non-authoritative.",
-        "Raw SQL, result rows, credentials, connection references, tokens, and workstation-local paths are excluded.",
+        "Raw prompts, raw SQL, result rows, deterministic result hashes, credentials, connection references, tokens, and workstation-local paths are excluded.",
     ]
     assert governance_review["evidence"][0]["sourceId"] == "demo-business-postgres"
     assert governance_review["evidence"][0]["authority"] == "safequery_control_plane"
@@ -469,7 +547,9 @@ def test_support_bundle_service_includes_bounded_diagnostics_without_secrets(
                 "connection_strings",
                 "raw_credentials",
                 "tokens",
+                "raw_request_text",
                 "raw_result_rows",
+                "deterministic_result_hashes",
                 "candidate_sql",
                 "raw_identity_payloads",
                 "workstation_local_paths",
@@ -505,7 +585,7 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
     assert payload["governanceReview"]["limitations"] == [
         "Bundle is read-only review evidence and does not authorize execution.",
         "Subordinate adapter, LLM, search, analyst, MLflow, UI, and external evidence is labeled as non-authoritative.",
-        "Raw SQL, result rows, credentials, connection references, tokens, and workstation-local paths are excluded.",
+        "Raw prompts, raw SQL, result rows, deterministic result hashes, credentials, connection references, tokens, and workstation-local paths are excluded.",
     ]
     assert payload["governanceReview"]["evidence"] == [
         {
@@ -518,6 +598,21 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
             "sourceFlavor": "warehouse",
             "datasetContractVersion": 1,
             "schemaSnapshotVersion": 1,
+            "request": {
+                "authority": "safequery_control_plane",
+                "requestState": "executed",
+                "requestText": "[redacted_request_text]",
+                "requestTextRedaction": "raw_request_text_excluded",
+                "semanticContractVersion": "approved_vendor_spend.v1",
+            },
+            "semanticMapping": {
+                "authority": "safequery_control_plane",
+                "status": "mapped",
+                "intent": "approved_vendor_spend",
+                "metric": "sum_approved_vendor_spend",
+                "dimensions": ["vendor_name", "fiscal_quarter"],
+                "filters": ["approved_spend_only"],
+            },
             "lifecycle": [
                 {
                     "eventType": "query_submitted",
@@ -558,6 +653,19 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
                 "authority": "safequery_control_plane",
                 "candidateState": "executed",
                 "guardStatus": "passed",
+                "sqlCandidate": {
+                    "authority": "safequery_control_plane",
+                    "candidateSqlRedaction": "raw_sql_excluded",
+                    "releaseGateScenarioId": "gavsf-001-top-approved-vendors-by-quarterly-spend",
+                },
+                "guardDecision": {
+                    "authority": "safequery_control_plane",
+                    "decision": "allow",
+                    "guardVersion": "postgresql-guard-v1",
+                    "guardAuditEventId": payload["governanceReview"]["evidence"][0][
+                        "candidate"
+                    ]["guardDecision"]["guardAuditEventId"],
+                },
                 "adapterEvidence": {
                     "authority": "subordinate_adapter",
                     "adapterProvider": "fixture-adapter",
@@ -584,12 +692,38 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
                 "occurredAt": "2026-01-02T03:11:05Z",
                 "rowCount": 12,
                 "resultTruncated": False,
+                "validation": {
+                    "authority": "safequery_control_plane",
+                    "status": "pass",
+                    "reasonCodes": [],
+                    "rowLimit": 200,
+                    "rowsUsed": 5,
+                },
+                "redaction": {
+                    "authority": "safequery_control_plane",
+                    "status": "applied",
+                    "redactedColumns": ["vendor_email"],
+                },
+                "answer": {
+                    "authority": "safequery_control_plane",
+                    "answerState": "answered",
+                    "summaryStrategy": "mvp_answer_summary.v1",
+                    "answerEvidenceId": payload["governanceReview"]["evidence"][0][
+                        "executeResult"
+                    ]["answer"]["answerEvidenceId"],
+                    "executionRunId": payload["governanceReview"]["evidence"][0][
+                        "executeResult"
+                    ]["answer"]["executionRunId"],
+                },
             },
         }
     ]
     serialized = json.dumps(payload, sort_keys=True)
     _assert_secret_safe(serialized)
     assert "raw_private_rows" not in serialized
+    assert "Show approved spend" not in serialized
+    assert "resultHash" not in serialized
+    assert "sha256:" + "a" * 64 not in serialized
 
 
 def test_governance_review_execute_result_rejects_boolean_row_count(
@@ -616,6 +750,403 @@ def test_governance_review_execute_result_rejects_boolean_row_count(
     execute_result = payload["governanceReview"]["evidence"][0]["executeResult"]
     assert "rowCount" not in execute_result
     assert execute_result["resultTruncated"] is False
+
+
+def test_governance_review_export_surfaces_insufficient_evidence_answer_state(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session, execution_row_count=0)
+        execution_event = (
+            session.query(PreviewAuditEvent)
+            .filter_by(
+                candidate_id="candidate-governance-bundle",
+                event_type="execution_completed",
+            )
+            .one()
+        )
+        answer_evidence = dict(execution_event.audit_payload["answer_evidence"])
+        bounded_metadata = dict(answer_evidence["bounded_metadata"])
+        bounded_metadata.update(
+            {
+                "row_count": 0,
+                "rows_used": 0,
+                "reason_codes": ["missing_expected_columns", "no_rows"],
+                "missing_expected_columns": ["vendor_name"],
+            }
+        )
+        answer_evidence.update(
+            {
+                "validation_status": "fail",
+                "redaction_status": "not_required",
+                "bounded_metadata": bounded_metadata,
+                "answer_state": "insufficient_evidence",
+                "insufficient_evidence_reason": "no_rows",
+            }
+        )
+        execution_event.audit_payload = {
+            **execution_event.audit_payload,
+            "execution_row_count": 0,
+            "answer_state": "insufficient_evidence",
+            "insufficient_evidence_reason": "no_rows",
+            "answer_evidence": answer_evidence,
+        }
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    evidence = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]
+    execute_result = evidence["executeResult"]
+    assert execute_result["rowCount"] == 0
+    assert execute_result["validation"] == {
+        "authority": "safequery_control_plane",
+        "status": "fail",
+        "reasonCodes": ["missing_expected_columns", "no_rows"],
+        "rowLimit": 200,
+        "rowsUsed": 0,
+    }
+    assert execute_result["redaction"] == {
+        "authority": "safequery_control_plane",
+        "status": "not_required",
+        "redactedColumns": ["vendor_email"],
+    }
+    assert execute_result["answer"]["answerState"] == "insufficient_evidence"
+    assert execute_result["answer"]["insufficientEvidenceReason"] == "no_rows"
+    _assert_secret_safe(json.dumps(evidence, sort_keys=True))
+
+
+def test_governance_review_export_surfaces_validation_denied_execution(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session, execution_row_count=3)
+        execution_event = (
+            session.query(PreviewAuditEvent)
+            .filter_by(
+                candidate_id="candidate-governance-bundle",
+                event_type="execution_completed",
+            )
+            .one()
+        )
+        execution_event.event_type = "execution_denied"
+        execution_event.candidate_state = "denied"
+        execution_event.primary_deny_code = DENY_RESULT_VALIDATION_FAILED
+        execution_event.denial_cause = "result_validation_failed"
+        execution_event.audit_payload = {
+            **execution_event.audit_payload,
+            "event_type": "execution_denied",
+            "candidate_state": "denied",
+            "primary_deny_code": DENY_RESULT_VALIDATION_FAILED,
+            "denial_cause": "result_validation_failed",
+            "denial_reason": "missing_expected_columns,under_minimum_rows",
+            "execution_row_count": 3,
+            "result_truncated": False,
+            "answer_evidence": None,
+        }
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    execute_result = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]["executeResult"]
+    assert execute_result == {
+        "authority": "safequery_control_plane",
+        "eventType": "execution_denied",
+        "occurredAt": "2026-01-02T03:11:05Z",
+        "rowCount": 3,
+        "resultTruncated": False,
+        "validation": {
+            "authority": "safequery_control_plane",
+            "status": "fail",
+            "reasonCodes": ["missing_expected_columns", "under_minimum_rows"],
+        },
+    }
+    _assert_secret_safe(json.dumps(execute_result, sort_keys=True))
+
+
+def test_governance_review_export_always_redacts_request_text(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session)
+        request = session.query(PreviewRequest).one()
+        request.request_text = (
+            "Email operator@example.test the SSN and api key rotation counts"
+        )
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    request_evidence = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]["request"]
+    assert request_evidence == {
+        "authority": "safequery_control_plane",
+        "requestState": "executed",
+        "requestText": "[redacted_request_text]",
+        "requestTextRedaction": "raw_request_text_excluded",
+        "semanticContractVersion": "approved_vendor_spend.v1",
+    }
+    serialized = json.dumps(request_evidence, sort_keys=True)
+    _assert_secret_safe(serialized)
+    assert "operator@example.test" not in serialized
+    assert "SSN" not in serialized
+    assert "api key" not in serialized
+
+
+def test_governance_review_export_redacts_sensitive_redacted_column_names(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session)
+        execution_event = (
+            session.query(PreviewAuditEvent)
+            .filter_by(
+                candidate_id="candidate-governance-bundle",
+                event_type="execution_completed",
+            )
+            .one()
+        )
+        answer_evidence = dict(execution_event.audit_payload["answer_evidence"])
+        bounded_metadata = dict(answer_evidence["bounded_metadata"])
+        bounded_metadata["redacted_columns"] = [
+            "vendor_email",
+            "api_key",
+            "database_password",
+        ]
+        answer_evidence["bounded_metadata"] = bounded_metadata
+        execution_event.audit_payload = {
+            **execution_event.audit_payload,
+            "answer_evidence": answer_evidence,
+        }
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    redaction = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]["executeResult"]["redaction"]
+    assert redaction == {
+        "authority": "safequery_control_plane",
+        "status": "applied",
+        "redactedColumns": [
+            "vendor_email",
+            "redacted_column_1",
+            "redacted_column_2",
+        ],
+    }
+    serialized = json.dumps(redaction, sort_keys=True)
+    _assert_secret_safe(serialized)
+    assert "api_key" not in serialized
+    assert "database_password" not in serialized
+
+
+def test_governance_review_export_preserves_intent_blocking_reasons(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session)
+        request = session.query(PreviewRequest).one()
+        request.request_state = "clarification_required"
+        candidate = session.query(PreviewCandidate).one()
+        candidate.candidate_state = "clarification_required"
+        candidate.guard_status = "blocked"
+        session.query(PreviewCandidateApproval).delete()
+        session.query(PreviewAuditEvent).filter_by(
+            event_type="execution_completed"
+        ).delete()
+        for event in session.query(PreviewAuditEvent).all():
+            event.candidate_state = (
+                "clarification_required"
+                if event.candidate_id == candidate.candidate_id
+                else event.candidate_state
+            )
+            event.audit_payload = {
+                **event.audit_payload,
+                "intent_mapping": {
+                    "status": "unsupported",
+                    "clarification": (
+                        "The requested concept is outside the governed vendor spend "
+                        "contract."
+                    ),
+                    "unsupported_concepts": [
+                        "employee headcount",
+                        "payroll expense",
+                    ],
+                },
+            }
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    semantic_mapping = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]["semanticMapping"]
+    assert semantic_mapping == {
+        "authority": "safequery_control_plane",
+        "status": "unsupported",
+        "dimensions": [],
+        "filters": [],
+        "insufficientEvidenceReason": (
+            "The requested concept is outside the governed vendor spend contract."
+        ),
+        "clarification": (
+            "The requested concept is outside the governed vendor spend contract."
+        ),
+        "unsupportedConcepts": [
+            "employee headcount",
+            "payroll expense",
+        ],
+    }
+    _assert_secret_safe(json.dumps(semantic_mapping, sort_keys=True))
+
+
+def test_governance_review_export_distinguishes_blocked_answer_generation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session)
+        request = session.query(PreviewRequest).one()
+        request.request_state = "blocked"
+        candidate = session.query(PreviewCandidate).one()
+        candidate.candidate_state = "blocked"
+        candidate.guard_status = "blocked"
+        session.query(PreviewCandidateApproval).delete()
+        session.query(PreviewAuditEvent).filter_by(
+            event_type="execution_completed"
+        ).delete()
+        guard_event = (
+            session.query(PreviewAuditEvent)
+            .filter_by(
+                candidate_id="candidate-governance-bundle",
+                event_type="guard_evaluated",
+            )
+            .one()
+        )
+        guard_event.candidate_state = "blocked"
+        guard_event.primary_deny_code = "DENY_WRITE_OPERATION"
+        guard_event.denial_cause = "guard_rejected"
+        guard_event.audit_payload = {
+            **guard_event.audit_payload,
+            "guard_decision": "reject",
+            "release_gate_scenario": {
+                "scenario_id": "gavsf-006-mutation-denied",
+                "source_id": request.source_id,
+                "candidate_id": candidate.candidate_id,
+                "guard_decision": "reject",
+                "guard_audit_event_id": str(guard_event.event_id),
+            },
+        }
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    evidence = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]
+    assert evidence["request"]["requestState"] == "blocked"
+    assert evidence["candidate"]["candidateState"] == "blocked"
+    assert evidence["candidate"]["guardStatus"] == "blocked"
+    assert evidence["candidate"]["guardDecision"]["decision"] == "reject"
+    assert evidence["candidate"]["sqlCandidate"] == {
+        "authority": "safequery_control_plane",
+        "candidateSqlRedaction": "raw_sql_excluded",
+        "releaseGateScenarioId": "gavsf-006-mutation-denied",
+    }
+    assert "review" not in evidence
+    assert "executeResult" not in evidence
+    _assert_secret_safe(json.dumps(evidence, sort_keys=True))
 
 
 def test_governance_review_export_rejects_unsafe_export_values_by_category(
@@ -736,7 +1267,9 @@ def test_support_bundle_endpoint_returns_secret_safe_json(monkeypatch) -> None:
         "connection_strings",
         "raw_credentials",
         "tokens",
+        "raw_request_text",
         "raw_result_rows",
+        "deterministic_result_hashes",
         "candidate_sql",
         "raw_identity_payloads",
         "workstation_local_paths",
@@ -813,7 +1346,9 @@ def test_bounded_result_summary_export_includes_execution_context_without_raw_ro
                 "connection_strings",
                 "raw_credentials",
                 "tokens",
+                "raw_request_text",
                 "raw_result_rows",
+                "deterministic_result_hashes",
                 "candidate_sql",
                 "raw_identity_payloads",
                 "workstation_local_paths",
