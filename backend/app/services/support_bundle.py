@@ -285,9 +285,12 @@ class GovernanceReviewRequestEvidence(BaseModel):
 
     authority: Literal["safequery_control_plane"] = "safequery_control_plane"
     request_state: str = Field(serialization_alias="requestState")
-    request_text: str = Field(serialization_alias="requestText")
-    request_text_redaction: Optional[Literal["sensitive_terms_redacted"]] = Field(
-        default=None,
+    request_text: Literal["[redacted_request_text]"] = Field(
+        default="[redacted_request_text]",
+        serialization_alias="requestText",
+    )
+    request_text_redaction: Literal["raw_request_text_excluded"] = Field(
+        default="raw_request_text_excluded",
         serialization_alias="requestTextRedaction",
     )
     semantic_contract_version: Optional[str] = Field(
@@ -308,6 +311,11 @@ class GovernanceReviewSemanticMappingEvidence(BaseModel):
     insufficient_evidence_reason: Optional[str] = Field(
         default=None,
         serialization_alias="insufficientEvidenceReason",
+    )
+    clarification: Optional[str] = None
+    unsupported_concepts: Optional[list[str]] = Field(
+        default=None,
+        serialization_alias="unsupportedConcepts",
     )
 
 
@@ -420,7 +428,6 @@ class GovernanceReviewAnswerEvidence(BaseModel):
     summary_strategy: str = Field(serialization_alias="summaryStrategy")
     answer_evidence_id: str = Field(serialization_alias="answerEvidenceId")
     execution_run_id: str = Field(serialization_alias="executionRunId")
-    result_hash: str = Field(serialization_alias="resultHash")
     insufficient_evidence_reason: Optional[str] = Field(
         default=None,
         serialization_alias="insufficientEvidenceReason",
@@ -614,7 +621,9 @@ def _redaction_policy() -> SupportBundleRedaction:
             "connection_strings",
             "raw_credentials",
             "tokens",
+            "raw_request_text",
             "raw_result_rows",
+            "deterministic_result_hashes",
             "candidate_sql",
             "raw_identity_payloads",
             "workstation_local_paths",
@@ -685,15 +694,8 @@ def _is_forbidden_export_string(value: str) -> bool:
 
 
 def _request_text_evidence(request: PreviewRequest) -> GovernanceReviewRequestEvidence:
-    request_text = request.request_text
-    request_text_redaction: Literal["sensitive_terms_redacted"] | None = None
-    if _is_forbidden_export_string(request_text):
-        request_text = "[redacted_request_text]"
-        request_text_redaction = "sensitive_terms_redacted"
     return GovernanceReviewRequestEvidence(
         request_state=request.request_state,
-        request_text=request_text,
-        request_text_redaction=request_text_redaction,
         semantic_contract_version=request.semantic_contract_version,
     )
 
@@ -732,6 +734,8 @@ def _semantic_mapping_evidence(
     status = _payload_string(intent_mapping, "status")
     if status is None:
         return None
+    clarification = _payload_string(intent_mapping, "clarification")
+    unsupported_concepts = _payload_string_list(intent_mapping, "unsupported_concepts")
     return GovernanceReviewSemanticMappingEvidence(
         status=status,
         intent=(
@@ -744,7 +748,10 @@ def _semantic_mapping_evidence(
         insufficient_evidence_reason=_payload_string(
             intent_mapping,
             "insufficient_evidence_reason",
-        ),
+        )
+        or clarification,
+        clarification=clarification,
+        unsupported_concepts=unsupported_concepts or None,
     )
 
 
@@ -814,13 +821,11 @@ def _answer_evidence(
     summary_strategy = _payload_string(answer_evidence, "summary_strategy")
     answer_evidence_id = _payload_string(answer_evidence, "answer_id")
     execution_run_id = _payload_string(answer_evidence, "execution_run_id")
-    result_hash = _payload_string(answer_evidence, "result_hash")
     if (
         answer_state is None
         or summary_strategy is None
         or answer_evidence_id is None
         or execution_run_id is None
-        or result_hash is None
     ):
         return None
     return GovernanceReviewAnswerEvidence(
@@ -828,7 +833,6 @@ def _answer_evidence(
         summary_strategy=summary_strategy,
         answer_evidence_id=answer_evidence_id,
         execution_run_id=execution_run_id,
-        result_hash=result_hash,
         insufficient_evidence_reason=_payload_string(
             answer_evidence,
             "insufficient_evidence_reason",
@@ -1027,7 +1031,7 @@ def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
         limitations=[
             "Bundle is read-only review evidence and does not authorize execution.",
             "Subordinate adapter, LLM, search, analyst, MLflow, UI, and external evidence is labeled as non-authoritative.",
-            "Raw SQL, result rows, credentials, connection references, tokens, and workstation-local paths are excluded.",
+            "Raw prompts, raw SQL, result rows, deterministic result hashes, credentials, connection references, tokens, and workstation-local paths are excluded.",
         ],
     )
 

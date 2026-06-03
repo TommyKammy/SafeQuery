@@ -404,7 +404,7 @@ def test_support_bundle_service_includes_bounded_diagnostics_without_secrets(
     assert governance_review["limitations"] == [
         "Bundle is read-only review evidence and does not authorize execution.",
         "Subordinate adapter, LLM, search, analyst, MLflow, UI, and external evidence is labeled as non-authoritative.",
-        "Raw SQL, result rows, credentials, connection references, tokens, and workstation-local paths are excluded.",
+        "Raw prompts, raw SQL, result rows, deterministic result hashes, credentials, connection references, tokens, and workstation-local paths are excluded.",
     ]
     assert governance_review["evidence"][0]["sourceId"] == "demo-business-postgres"
     assert governance_review["evidence"][0]["authority"] == "safequery_control_plane"
@@ -546,7 +546,9 @@ def test_support_bundle_service_includes_bounded_diagnostics_without_secrets(
                 "connection_strings",
                 "raw_credentials",
                 "tokens",
+                "raw_request_text",
                 "raw_result_rows",
+                "deterministic_result_hashes",
                 "candidate_sql",
                 "raw_identity_payloads",
                 "workstation_local_paths",
@@ -582,7 +584,7 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
     assert payload["governanceReview"]["limitations"] == [
         "Bundle is read-only review evidence and does not authorize execution.",
         "Subordinate adapter, LLM, search, analyst, MLflow, UI, and external evidence is labeled as non-authoritative.",
-        "Raw SQL, result rows, credentials, connection references, tokens, and workstation-local paths are excluded.",
+        "Raw prompts, raw SQL, result rows, deterministic result hashes, credentials, connection references, tokens, and workstation-local paths are excluded.",
     ]
     assert payload["governanceReview"]["evidence"] == [
         {
@@ -598,7 +600,8 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
             "request": {
                 "authority": "safequery_control_plane",
                 "requestState": "executed",
-                "requestText": "Show approved spend",
+                "requestText": "[redacted_request_text]",
+                "requestTextRedaction": "raw_request_text_excluded",
                 "semanticContractVersion": "approved_vendor_spend.v1",
             },
             "semanticMapping": {
@@ -710,7 +713,6 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
                     "executionRunId": payload["governanceReview"]["evidence"][0][
                         "executeResult"
                     ]["answer"]["executionRunId"],
-                    "resultHash": "sha256:" + "a" * 64,
                 },
             },
         }
@@ -718,6 +720,9 @@ def test_support_bundle_includes_source_aware_governance_review_evidence(
     serialized = json.dumps(payload, sort_keys=True)
     _assert_secret_safe(serialized)
     assert "raw_private_rows" not in serialized
+    assert "Show approved spend" not in serialized
+    assert "resultHash" not in serialized
+    assert "sha256:" + "a" * 64 not in serialized
 
 
 def test_governance_review_execute_result_rejects_boolean_row_count(
@@ -826,7 +831,7 @@ def test_governance_review_export_surfaces_insufficient_evidence_answer_state(
     _assert_secret_safe(json.dumps(evidence, sort_keys=True))
 
 
-def test_governance_review_export_redacts_unsafe_request_text(monkeypatch) -> None:
+def test_governance_review_export_always_redacts_request_text(monkeypatch) -> None:
     monkeypatch.setenv(
         "SAFEQUERY_APP_POSTGRES_URL",
         "postgresql://safequery:app-secret@db:5432/safequery",
@@ -837,7 +842,9 @@ def test_governance_review_export_redacts_unsafe_request_text(monkeypatch) -> No
     with _session_scope() as session:
         _add_governance_review_workflow_records(session)
         request = session.query(PreviewRequest).one()
-        request.request_text = "Show password reset request counts by quarter"
+        request.request_text = (
+            "Email operator@example.test the SSN and api key rotation counts"
+        )
         session.commit()
 
         bundle = build_support_bundle(
@@ -857,12 +864,14 @@ def test_governance_review_export_redacts_unsafe_request_text(monkeypatch) -> No
         "authority": "safequery_control_plane",
         "requestState": "executed",
         "requestText": "[redacted_request_text]",
-        "requestTextRedaction": "sensitive_terms_redacted",
+        "requestTextRedaction": "raw_request_text_excluded",
         "semanticContractVersion": "approved_vendor_spend.v1",
     }
     serialized = json.dumps(request_evidence, sort_keys=True)
     _assert_secret_safe(serialized)
-    assert "password reset" not in serialized
+    assert "operator@example.test" not in serialized
+    assert "SSN" not in serialized
+    assert "api key" not in serialized
 
 
 def test_governance_review_export_redacts_sensitive_redacted_column_names(
@@ -925,6 +934,81 @@ def test_governance_review_export_redacts_sensitive_redacted_column_names(
     _assert_secret_safe(serialized)
     assert "api_key" not in serialized
     assert "database_password" not in serialized
+
+
+def test_governance_review_export_preserves_intent_blocking_reasons(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session)
+        request = session.query(PreviewRequest).one()
+        request.request_state = "clarification_required"
+        candidate = session.query(PreviewCandidate).one()
+        candidate.candidate_state = "clarification_required"
+        candidate.guard_status = "blocked"
+        session.query(PreviewCandidateApproval).delete()
+        session.query(PreviewAuditEvent).filter_by(
+            event_type="execution_completed"
+        ).delete()
+        for event in session.query(PreviewAuditEvent).all():
+            event.candidate_state = (
+                "clarification_required"
+                if event.candidate_id == candidate.candidate_id
+                else event.candidate_state
+            )
+            event.audit_payload = {
+                **event.audit_payload,
+                "intent_mapping": {
+                    "status": "unsupported",
+                    "clarification": (
+                        "The requested concept is outside the governed vendor spend "
+                        "contract."
+                    ),
+                    "unsupported_concepts": [
+                        "employee headcount",
+                        "payroll expense",
+                    ],
+                },
+            }
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    semantic_mapping = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]["semanticMapping"]
+    assert semantic_mapping == {
+        "authority": "safequery_control_plane",
+        "status": "unsupported",
+        "dimensions": [],
+        "filters": [],
+        "insufficientEvidenceReason": (
+            "The requested concept is outside the governed vendor spend contract."
+        ),
+        "clarification": (
+            "The requested concept is outside the governed vendor spend contract."
+        ),
+        "unsupportedConcepts": [
+            "employee headcount",
+            "payroll expense",
+        ],
+    }
+    _assert_secret_safe(json.dumps(semantic_mapping, sort_keys=True))
 
 
 def test_governance_review_export_distinguishes_blocked_answer_generation(
@@ -1117,7 +1201,9 @@ def test_support_bundle_endpoint_returns_secret_safe_json(monkeypatch) -> None:
         "connection_strings",
         "raw_credentials",
         "tokens",
+        "raw_request_text",
         "raw_result_rows",
+        "deterministic_result_hashes",
         "candidate_sql",
         "raw_identity_payloads",
         "workstation_local_paths",
@@ -1194,7 +1280,9 @@ def test_bounded_result_summary_export_includes_execution_context_without_raw_ro
                 "connection_strings",
                 "raw_credentials",
                 "tokens",
+                "raw_request_text",
                 "raw_result_rows",
+                "deterministic_result_hashes",
                 "candidate_sql",
                 "raw_identity_payloads",
                 "workstation_local_paths",
