@@ -351,15 +351,15 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
 
     def test_execute_candidate_api_attaches_result_validation_metadata(self) -> None:
         def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
-            return [{"vendor_name": "Acme"}]
+            return [{"vendor_name": "Acme", "approved_spend": 1200}]
 
         app_session = create_test_application_session(build_dev_authenticated_subject())
         response = self._client(
             query_runner,
             result_validation_contract=ResultValidationContract(
                 semantic_contract_version="approved_vendor_spend.v1",
-                expected_columns=("vendor_name",),
-                required_columns=("vendor_name",),
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("vendor_name", "approved_spend"),
             ),
         ).post(
             "/candidates/candidate-123/execute",
@@ -381,8 +381,22 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             validation["execution_run_id"],
             response.json()["metadata"]["execution_run_id"],
         )
-        self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
+        self.assertEqual(
+            validation["evidence"]["expected_columns"],
+            ["vendor_name", "approved_spend"],
+        )
         self.assertEqual(validation["evidence"]["row_count"], 1)
+        answer_summary = response.json()["metadata"]["answer_summary"]
+        self.assertEqual(answer_summary["contract_version"], "mvp_answer_summary.v1")
+        self.assertEqual(answer_summary["validation_status"], "pass")
+        self.assertEqual(answer_summary["truncation_status"], "not_truncated")
+        self.assertEqual(answer_summary["redaction_status"], "not_required")
+        self.assertEqual(answer_summary["rows_used"], 1)
+        self.assertIn(
+            "Top approved vendor spend from 1 returned rows: "
+            "1. Acme (unspecified period) - 1200.",
+            answer_summary["answer_text"],
+        )
 
     def test_execute_candidate_api_redacts_sensitive_columns_before_result_rows(
         self,

@@ -25,6 +25,10 @@ from app.features.execution.connector_selection import (
     ExecutionConnectorSelectionError,
     select_execution_connector,
 )
+from app.features.mvp_answer_summary import (
+    MVPAnswerSummary,
+    generate_mvp_answer_summary,
+)
 from app.features.result_validation import (
     ResultValidationContract,
     ResultValidationMetadata,
@@ -113,6 +117,7 @@ class ExecutionResultMetadata(BaseModel):
     result_truncated: bool
     truncation_reason: Optional[NonEmptyTrimmedString] = None
     result_validation: Optional[ResultValidationOutcome] = None
+    answer_summary: Optional[MVPAnswerSummary] = None
 
 
 class ExecutionResult(BaseModel):
@@ -1149,6 +1154,13 @@ def execute_candidate_sql(
                 canonical_sql=candidate.canonical_sql,
                 audit_context=audit_context,
             )
+        answer_summary = generate_mvp_answer_summary(
+            rows=result_rows,
+            validation=result_validation,
+            source_id=selection.source_id,
+            source_family=selection.source_family,
+        )
+        metadata = metadata.model_copy(update={"answer_summary": answer_summary})
 
     result = ExecutionResult(
         source_id=selection.source_id,
