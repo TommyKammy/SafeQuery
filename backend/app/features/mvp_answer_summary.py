@@ -30,7 +30,7 @@ _MODEL_CONFIG = ConfigDict(
 _MAX_SUMMARY_ROWS = 5
 _VENDOR_COLUMN = "vendor_name"
 _QUARTER_COLUMN = "fiscal_quarter"
-_SPEND_COLUMN = "approved_spend"
+_SPEND_COLUMNS = ("approved_spend", "approved_amount")
 
 MVPAnswerTruncationStatus = Literal["not_truncated", "truncated"]
 
@@ -91,6 +91,7 @@ def generate_mvp_answer_summary(
 
     answer_text = _answer_text(
         rows=rows[:_MAX_SUMMARY_ROWS],
+        total_row_count=validation.evidence.row_count,
         source=source,
         assumptions=safe_assumptions,
         validation=validation,
@@ -112,6 +113,7 @@ def generate_mvp_answer_summary(
 def _answer_text(
     *,
     rows: list[Mapping[str, Any]],
+    total_row_count: int,
     source: MVPAnswerSource,
     assumptions: tuple[str, ...],
     validation: ResultValidationOutcome,
@@ -119,7 +121,11 @@ def _answer_text(
     redaction_status: ResultRedactionStatus,
 ) -> str:
     segments = [
-        _row_summary(rows),
+        _row_summary(
+            rows=rows,
+            total_row_count=total_row_count,
+            observed_columns=validation.evidence.observed_columns,
+        ),
         _source_sentence(source),
         _assumptions_sentence(assumptions),
         _validation_sentence(validation),
@@ -129,21 +135,84 @@ def _answer_text(
     return " ".join(segment for segment in segments if segment)
 
 
-def _row_summary(rows: list[Mapping[str, Any]]) -> str:
+def _row_summary(
+    *,
+    rows: list[Mapping[str, Any]],
+    total_row_count: int,
+    observed_columns: tuple[str, ...],
+) -> str:
     if not rows:
         return "No rows were returned, so no vendor spend ranking is available."
+
+    if not _has_vendor_spend_shape(observed_columns):
+        return _generic_row_summary(
+            rows=rows,
+            total_row_count=total_row_count,
+            observed_columns=observed_columns,
+        )
 
     row_entries = []
     for index, row in enumerate(rows, start=1):
         vendor = _row_text(row.get(_VENDOR_COLUMN), "unknown vendor")
         quarter = _row_text(row.get(_QUARTER_COLUMN), "unspecified period")
-        spend = _spend_text(row.get(_SPEND_COLUMN))
+        spend = _spend_text(_spend_value(row))
         row_entries.append(f"{index}. {vendor} ({quarter}) - {spend}")
     return (
-        f"Top approved vendor spend from {len(rows)} returned rows: "
+        f"Top approved vendor spend from {_returned_row_count_text(total_row_count)}: "
         + "; ".join(row_entries)
         + "."
     )
+
+
+def _generic_row_summary(
+    *,
+    rows: list[Mapping[str, Any]],
+    total_row_count: int,
+    observed_columns: tuple[str, ...],
+) -> str:
+    if not observed_columns:
+        return (
+            f"Returned {_display_row_count_text(total_row_count)}; "
+            "no displayable columns are available."
+        )
+
+    row_entries = []
+    for index, row in enumerate(rows, start=1):
+        cells = [
+            f"{column}={_row_text(row.get(column), 'unavailable')}"
+            for column in observed_columns
+        ]
+        row_entries.append(f"{index}. " + ", ".join(cells))
+    return (
+        f"Returned {_display_row_count_text(total_row_count)}; "
+        f"showing {_display_row_count_text(len(rows))}: "
+        + "; ".join(row_entries)
+        + "."
+    )
+
+
+def _has_vendor_spend_shape(observed_columns: tuple[str, ...]) -> bool:
+    observed = set(observed_columns)
+    return _VENDOR_COLUMN in observed and any(
+        column in observed for column in _SPEND_COLUMNS
+    )
+
+
+def _spend_value(row: Mapping[str, Any]) -> object:
+    for column in _SPEND_COLUMNS:
+        if column in row:
+            return row.get(column)
+    return None
+
+
+def _returned_row_count_text(count: int) -> str:
+    noun = "row" if count == 1 else "rows"
+    return f"{count} returned {noun}"
+
+
+def _display_row_count_text(count: int) -> str:
+    noun = "row" if count == 1 else "rows"
+    return f"{count} {noun}"
 
 
 def _source_sentence(source: MVPAnswerSource) -> str:

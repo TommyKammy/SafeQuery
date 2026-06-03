@@ -79,6 +79,97 @@ def test_mvp_answer_summary_uses_only_returned_rows_and_metadata() -> None:
     assert "fastest-growing" not in summary.answer_text
 
 
+def test_mvp_answer_summary_uses_mssql_approved_amount_spend_column() -> None:
+    rows = [
+        {"vendor_name": "Acme", "approved_amount": 1200},
+        {"vendor_name": "Beta", "approved_amount": 900},
+    ]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=2),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_amount"),
+            required_columns=("vendor_name", "approved_amount"),
+            aggregate_columns=("approved_amount",),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-mssql-source",
+        source_family="mssql",
+    )
+
+    assert summary.answer_text.startswith(
+        "Top approved vendor spend from 2 returned rows: "
+        "1. Acme (unspecified period) - 1200; "
+        "2. Beta (unspecified period) - 900."
+    )
+    assert "unavailable" not in summary.answer_text
+
+
+def test_mvp_answer_summary_preserves_total_row_count_when_display_is_capped() -> None:
+    rows = [
+        {"vendor_name": f"Vendor {index}", "approved_spend": index}
+        for index in range(1, 7)
+    ]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=6),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+            aggregate_columns=("approved_spend",),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+    )
+
+    assert summary.rows_used == 5
+    assert "Top approved vendor spend from 6 returned rows:" in summary.answer_text
+    assert "from 5 returned rows" not in summary.answer_text
+    assert "Vendor 5" in summary.answer_text
+    assert "Vendor 6" not in summary.answer_text
+
+
+def test_mvp_answer_summary_uses_neutral_template_for_aggregate_rows() -> None:
+    rows = [
+        {"region": "East", "vendor_count": 3},
+        {"region": "West", "vendor_count": 2},
+    ]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=2),
+        contract=ResultValidationContract(
+            expected_columns=("region", "vendor_count"),
+            required_columns=("region", "vendor_count"),
+            aggregate_columns=("vendor_count",),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+    )
+
+    assert summary.answer_text.startswith(
+        "Returned 2 rows; showing 2 rows: "
+        "1. region=East, vendor_count=3; "
+        "2. region=West, vendor_count=2."
+    )
+    assert "Top approved vendor spend" not in summary.answer_text
+    assert "unknown vendor" not in summary.answer_text
+    assert "unavailable" not in summary.answer_text
+
+
 def test_mvp_answer_summary_reports_no_rows_without_claiming_a_ranking() -> None:
     rows: list[dict[str, object]] = []
     validation = validate_execution_result(
