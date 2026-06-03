@@ -229,7 +229,16 @@
             "fiscal_quarter": "FY2025-Q2",
             "approved_spend": "98000.00"
           }
-        ]
+        ],
+        "citation_requirement": {
+          "required": true,
+          "style": "row_reference",
+          "accepted_formats": [
+            "[row:1]",
+            "[row:2]"
+          ],
+          "reviewer_note": "Future free-form summaries must cite each claimed row value to the returned row that supports it."
+        }
       },
       "forbidden_answer_claims": [
         "Do not report unapproved spend as approved spend.",

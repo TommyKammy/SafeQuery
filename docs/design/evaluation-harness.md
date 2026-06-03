@@ -131,6 +131,18 @@ in `schema_assumptions`, `source_binding`, semantic mapping values, SQL-shape
 constraints, and result-shape assertions so future source domains can add
 fixtures without rewriting the harness.
 
+Result-to-answer consistency review is required before any LLM-written summary
+can become user-facing. Fixtures may require row-reference citations such as
+`[row:1]` for result-backed claims. Observed artifacts activate that citation
+sub-gate by marking result metadata with `answer_surface: future_llm_summary` or
+`enforce_citations: true`; deterministic MVP template checks do not depend on
+the future-summary citation gate. The scorer fails missing citations,
+row-reference mismatches, unsupported result values, forbidden answer claims,
+column mismatches, row-count mismatches, and truncation mismatches. The report
+is reviewer-readable diagnostic evidence only. It does not grant execution
+authority, does not authorize SQL, and does not replace deterministic MVP answer
+templates.
+
 ## Baseline Success Dimensions
 
 The baseline evaluation dimensions are:

@@ -15,6 +15,8 @@ from pydantic import (
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+ResultValueClaim = tuple[str, int, int]
+RowCitationClaim = tuple[str, tuple[ResultValueClaim, ...]]
 
 GovernedAnswerCaseType = Literal[
     "positive",
@@ -40,6 +42,8 @@ GovernedAnswerUnsupportedClaimCategory = Literal[
     "truncation_mismatch",
     "forbidden_answer_claim",
     "unsupported_result_value",
+    "missing_citation",
+    "row_reference_mismatch",
 ]
 
 _RESULT_VALUE_PATTERN = re.compile(
@@ -143,6 +147,11 @@ _CLAIM_VALUE_NEGATED_COPULA_PATTERN = re.compile(
 _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN = re.compile(
     r"\b(?:compared|than|versus|vs\.?)\b|"
     r"\b(?:is|are|was|were)?\s*(?:after|before|follows?|precedes?)\s*$",
+    re.IGNORECASE,
+)
+_ROW_REFERENCE_CITATION_PATTERN = re.compile(r"\[row:(\d+)\]", re.IGNORECASE)
+_CLAIM_VALUE_ABBREVIATION_PERIOD_PATTERN = re.compile(
+    r"\b(?:approx|est|e\.g|i\.e|etc|vs)\.",
     re.IGNORECASE,
 )
 _FORBIDDEN_SUBJECT_SEPARATOR_PATTERN = re.compile(r"[\s\-\u2010-\u2015]+")
@@ -406,6 +415,14 @@ def score_governed_answer_consistency(
         categories=categories,
         unsupported_claims=unsupported_claims,
     )
+    _check_required_row_citations(
+        expected_result_shape=expected_result_shape,
+        answer_text=answer_text,
+        result_rows=result_rows,
+        result_metadata=result_metadata,
+        categories=categories,
+        unsupported_claims=unsupported_claims,
+    )
 
     unsupported_claim_categories = tuple(dict.fromkeys(categories))
     passed = not unsupported_claim_categories
@@ -513,6 +530,107 @@ def _check_deterministic_result_values(
     ):
         categories.append("unsupported_result_value")
         unsupported_claims.append(claim_value)
+
+
+def _check_required_row_citations(
+    *,
+    expected_result_shape: Mapping[str, Any],
+    answer_text: str,
+    result_rows: Sequence[Mapping[str, Any]],
+    result_metadata: Mapping[str, Any],
+    categories: list[GovernedAnswerUnsupportedClaimCategory],
+    unsupported_claims: list[str],
+) -> None:
+    citation_requirement = expected_result_shape.get("citation_requirement")
+    if not (
+        isinstance(citation_requirement, Mapping)
+        and citation_requirement.get("required") is True
+        and citation_requirement.get("style") == "row_reference"
+    ):
+        return
+    if not (
+        result_metadata.get("answer_surface") == "future_llm_summary"
+        or result_metadata.get("enforce_citations") is True
+    ):
+        return
+    for claim, claim_values in _required_row_citation_claims(
+        answer_text=answer_text,
+        result_rows=result_rows,
+        result_metadata=result_metadata,
+    ):
+        _check_required_row_citation_for_claim_values(
+            answer_text=answer_text,
+            claim_values=claim_values,
+            claim=claim,
+            result_rows=result_rows,
+            categories=categories,
+            unsupported_claims=unsupported_claims,
+        )
+
+
+def _required_row_citation_claims(
+    *,
+    answer_text: str,
+    result_rows: Sequence[Mapping[str, Any]],
+    result_metadata: Mapping[str, Any],
+) -> tuple[RowCitationClaim, ...]:
+    claimed_values = _claimed_result_value_matches(answer_text)
+    citation_claims: list[RowCitationClaim] = []
+    paired_claim_spans: set[tuple[int, int]] = set()
+    for left, right in _claimed_result_row_value_pairs(answer_text):
+        paired_claim_spans.add((left[1], left[2]))
+        paired_claim_spans.add((right[1], right[2]))
+        citation_claims.append((f"{left[0]} with {right[0]}", (left, right)))
+
+    for claim_value, start, end in claimed_values:
+        if (start, end) in paired_claim_spans:
+            continue
+        if _metadata_row_count_claim_is_supported(
+            answer_text=answer_text,
+            claim_value=claim_value,
+            start=start,
+            end=end,
+            result_metadata=result_metadata,
+        ):
+            continue
+        if result_rows and _value_forms(claim_value).isdisjoint(
+            _supported_result_values(result_rows)
+        ):
+            continue
+        citation_claims.append((claim_value, ((claim_value, start, end),)))
+
+    return tuple(citation_claims)
+
+
+def _check_required_row_citation_for_claim_values(
+    *,
+    answer_text: str,
+    claim_values: Sequence[ResultValueClaim],
+    claim: str,
+    result_rows: Sequence[Mapping[str, Any]],
+    categories: list[GovernedAnswerUnsupportedClaimCategory],
+    unsupported_claims: list[str],
+) -> None:
+    claim_start = min(value[1] for value in claim_values)
+    claim_end = max(value[2] for value in claim_values)
+    row_citation = _row_reference_citation_for_claim(
+        answer_text=answer_text,
+        claim_start=claim_start,
+        claim_end=claim_end,
+    )
+    if row_citation is None:
+        categories.append("missing_citation")
+        unsupported_claims.append(claim)
+        return
+    row_index = row_citation - 1
+    if row_index < 0 or row_index >= len(result_rows):
+        categories.append("row_reference_mismatch")
+        unsupported_claims.append(f"{claim} cited as row:{row_citation}")
+        return
+    row_forms = _row_value_forms(result_rows[row_index])
+    if any(_value_forms(value[0]).isdisjoint(row_forms) for value in claim_values):
+        categories.append("row_reference_mismatch")
+        unsupported_claims.append(f"{claim} cited as row:{row_citation}")
 
 
 def _observed_result_columns(
@@ -911,11 +1029,14 @@ def _claimed_result_values(answer_text: str) -> tuple[str, ...]:
     )
 
 
-def _claimed_result_value_matches(answer_text: str) -> tuple[tuple[str, int, int], ...]:
-    claimed_values: list[tuple[str, int, int]] = []
+def _claimed_result_value_matches(answer_text: str) -> tuple[ResultValueClaim, ...]:
+    claimed_values: list[ResultValueClaim] = []
     for match in _RESULT_VALUE_PATTERN.finditer(answer_text):
         value = match.group(0)
-        if _is_incidental_integer_claim(answer_text, match):
+        if _is_incidental_integer_claim(answer_text, match) or _is_row_reference_value(
+            answer_text,
+            match,
+        ):
             continue
         claimed_values.append((value, match.start(), match.end()))
     return tuple(claimed_values)
@@ -948,6 +1069,17 @@ def _is_numbered_list_marker(answer_text: str, match: re.Match[str]) -> bool:
     if value.startswith("(") and value.endswith(")"):
         return after.startswith((" ", "\t", "\n", "\r"))
     return after in {". ", ") "}
+
+
+def _is_row_reference_value(answer_text: str, match: re.Match[str]) -> bool:
+    if not match.group(0).isdigit():
+        return False
+    for citation_match in _ROW_REFERENCE_CITATION_PATTERN.finditer(answer_text):
+        citation_value_start = citation_match.start(1)
+        citation_value_end = citation_match.end(1)
+        if citation_value_start <= match.start() and match.end() <= citation_value_end:
+            return True
+    return False
 
 
 def _supported_result_values(result_rows: Sequence[Mapping[str, Any]]) -> set[str]:
@@ -1005,6 +1137,54 @@ def _unsupported_claimed_result_row_combinations(
         )
     )
     return tuple(unsupported)
+
+
+def _claimed_result_row_value_pairs(
+    answer_text: str,
+) -> tuple[tuple[ResultValueClaim, ResultValueClaim], ...]:
+    pairs: list[tuple[ResultValueClaim, ResultValueClaim]] = []
+    claimed_values = _claimed_result_value_matches(answer_text)
+    for left, right in zip(claimed_values, claimed_values[1:]):
+        between_values = _claim_value_link_context(answer_text[left[2] : right[1]])
+        if _claim_values_are_row_linked(between_values):
+            pairs.append((left, right))
+    return tuple(pairs)
+
+
+def _row_reference_citation_for_claim(
+    *,
+    answer_text: str,
+    claim_start: int,
+    claim_end: int,
+) -> int | None:
+    sentence_start = _sentence_start_before(answer_text, claim_start)
+    sentence_end = _sentence_end_after(answer_text, claim_end)
+    citation_matches = tuple(
+        _ROW_REFERENCE_CITATION_PATTERN.finditer(
+            answer_text[sentence_start:sentence_end]
+        )
+    )
+    if not citation_matches:
+        return None
+
+    def citation_distance(match: re.Match[str]) -> int:
+        citation_start = sentence_start + match.start()
+        citation_end = sentence_start + match.end()
+        if citation_end < claim_start:
+            return claim_start - citation_end
+        if citation_start > claim_end:
+            return citation_start - claim_end
+        return 0
+
+    nearest_citation = min(citation_matches, key=citation_distance)
+    return int(nearest_citation.group(1))
+
+
+def _sentence_end_after(text: str, start: int) -> int:
+    sentence_end = re.search(r"[.!?]", text[start:])
+    if sentence_end is None:
+        return len(text)
+    return start + sentence_end.start()
 
 
 def _unsupported_no_evidence_result_value_claims(
@@ -1084,16 +1264,31 @@ def _row_value_forms(row: Mapping[str, Any]) -> set[str]:
 
 
 def _claim_values_are_row_linked(between_values: str) -> bool:
-    row_link_match = _CLAIM_VALUE_ROW_LINK_PATTERN.search(between_values)
+    link_context = _claim_value_link_context(between_values)
+    if _claim_value_link_context_has_sentence_break(link_context):
+        return False
+    row_link_match = _CLAIM_VALUE_ROW_LINK_PATTERN.search(link_context)
     if row_link_match is None:
         return False
-    if _has_unlinked_value_conjunction(between_values):
+    if _has_unlinked_value_conjunction(link_context):
         return False
-    if _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN.search(between_values):
+    if _CLAIM_VALUE_NON_ROW_COMPARISON_PATTERN.search(link_context):
         return False
-    if _CLAIM_VALUE_NEGATED_COPULA_PATTERN.search(between_values):
+    if _CLAIM_VALUE_NEGATED_COPULA_PATTERN.search(link_context):
         return False
     return True
+
+
+def _claim_value_link_context(between_values: str) -> str:
+    return _ROW_REFERENCE_CITATION_PATTERN.sub(" ", between_values)
+
+
+def _claim_value_link_context_has_sentence_break(link_context: str) -> bool:
+    abbreviation_safe_context = _CLAIM_VALUE_ABBREVIATION_PERIOD_PATTERN.sub(
+        lambda match: match.group(0).replace(".", ""),
+        link_context,
+    )
+    return bool(re.search(r"[.!?]", abbreviation_safe_context))
 
 
 def _has_unlinked_value_conjunction(between_values: str) -> bool:
