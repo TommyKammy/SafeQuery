@@ -220,7 +220,12 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         )
         self.session.commit()
 
-    def _seed_review_decision(self, review_status: str) -> None:
+    def _seed_review_decision(
+        self,
+        review_status: str,
+        *,
+        assumptions: list[str] | None = None,
+    ) -> None:
         candidate = (
             self.session.query(PreviewCandidate)
             .filter_by(candidate_id="candidate-123")
@@ -281,7 +286,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
                 review_contract_version="review_llm_adapter_output.v1",
                 review_status=review_status,
                 review_confidence="high",
-                assumptions=[],
+                assumptions=list(assumptions or []),
                 risk_flags=[],
                 clarifying_questions=[],
                 review_payload={"status": review_status},
@@ -351,15 +356,15 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
 
     def test_execute_candidate_api_attaches_result_validation_metadata(self) -> None:
         def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
-            return [{"vendor_name": "Acme"}]
+            return [{"vendor_name": "Acme", "approved_spend": 1200}]
 
         app_session = create_test_application_session(build_dev_authenticated_subject())
         response = self._client(
             query_runner,
             result_validation_contract=ResultValidationContract(
                 semantic_contract_version="approved_vendor_spend.v1",
-                expected_columns=("vendor_name",),
-                required_columns=("vendor_name",),
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("vendor_name", "approved_spend"),
             ),
         ).post(
             "/candidates/candidate-123/execute",
@@ -381,8 +386,94 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             validation["execution_run_id"],
             response.json()["metadata"]["execution_run_id"],
         )
-        self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
+        self.assertEqual(
+            validation["evidence"]["expected_columns"],
+            ["vendor_name", "approved_spend"],
+        )
         self.assertEqual(validation["evidence"]["row_count"], 1)
+        answer_summary = response.json()["metadata"]["answer_summary"]
+        self.assertEqual(answer_summary["contract_version"], "mvp_answer_summary.v1")
+        self.assertEqual(answer_summary["validation_status"], "pass")
+        self.assertEqual(answer_summary["truncation_status"], "not_truncated")
+        self.assertEqual(answer_summary["redaction_status"], "not_required")
+        self.assertEqual(answer_summary["rows_used"], 1)
+        self.assertIn(
+            "Approved vendor spend rows from 1 returned row: "
+            "1. Acme (unspecified period) - 1200.",
+            answer_summary["answer_text"],
+        )
+
+    def test_execute_candidate_api_attaches_review_assumptions_to_answer_summary(
+        self,
+    ) -> None:
+        self._seed_review_decision(
+            "ready",
+            assumptions=["Rows are sorted by approved spend descending."],
+        )
+
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [{"vendor_name": "Acme", "approved_spend": 1200}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("vendor_name", "approved_spend"),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        answer_summary = response.json()["metadata"]["answer_summary"]
+        self.assertEqual(
+            answer_summary["assumptions"],
+            ["Rows are sorted by approved spend descending."],
+        )
+        self.assertIn(
+            "Assumptions: Rows are sorted by approved spend descending.",
+            answer_summary["answer_text"],
+        )
+
+    def test_execute_candidate_api_bounds_review_assumptions_in_answer_summary(
+        self,
+    ) -> None:
+        long_assumption = "Rows are sorted by " + ("approved spend " * 40)
+        self._seed_review_decision("ready", assumptions=[long_assumption])
+
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [{"vendor_name": "Acme", "approved_spend": 1200}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("vendor_name", "approved_spend"),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        answer_summary = response.json()["metadata"]["answer_summary"]
+        self.assertNotIn(long_assumption, answer_summary["answer_text"])
+        displayed_assumption = answer_summary["assumptions"][0]
+        self.assertTrue(displayed_assumption.endswith("... [truncated]"))
+        self.assertEqual(len(displayed_assumption), 160)
+        self.assertIn(
+            f"Assumptions: {displayed_assumption}.",
+            answer_summary["answer_text"],
+        )
 
     def test_execute_candidate_api_redacts_sensitive_columns_before_result_rows(
         self,
@@ -478,6 +569,41 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertIs(payload["metadata"]["result_truncated"], False)
         self.assertNotIn("truncation_reason", payload["metadata"])
         self.assertNotIn("private-note-", response.text)
+
+    def test_execute_candidate_api_summary_preserves_payload_truncation_reason(
+        self,
+    ) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "vendor_name": f"Vendor {index} " + ("x" * 4096),
+                    "approved_spend": index,
+                }
+                for index in range(200)
+            ]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("vendor_name", "approved_spend"),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIs(payload["metadata"]["result_truncated"], True)
+        self.assertEqual(payload["metadata"]["truncation_reason"], "payload_limit")
+        answer_text = payload["metadata"]["answer_summary"]["answer_text"]
+        self.assertIn("Truncation: truncated by payload limits.", answer_text)
+        self.assertNotIn("truncated by returned-row limits", answer_text)
 
     def test_execute_candidate_api_validates_returned_rows_after_redaction_and_capping(
         self,

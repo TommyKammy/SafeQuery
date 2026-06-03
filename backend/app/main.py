@@ -874,6 +874,7 @@ def create_app() -> FastAPI:
                 http_request
             )
             result_validation_contract: ResultValidationContract | None = None
+            answer_summary_assumptions: tuple[str, ...] = ()
 
             def prepare_execution(
                 revalidation_result: CandidateLifecycleRevalidationResult,
@@ -882,6 +883,7 @@ def create_app() -> FastAPI:
                 nonlocal selection
                 nonlocal cancellation_probe
                 nonlocal result_validation_contract
+                nonlocal answer_summary_assumptions
                 approved_sql = revalidation_result.approved_sql
                 if approved_sql is None:
                     raise api_error(
@@ -961,6 +963,7 @@ def create_app() -> FastAPI:
                 selection = prepared_selection
                 cancellation_probe = prepared_cancellation_probe
                 result_validation_contract = prepared_result_validation_contract
+                answer_summary_assumptions = revalidation_result.review_assumptions
 
             revalidate_authoritative_candidate_approval(
                 session=session,
@@ -1012,6 +1015,7 @@ def create_app() -> FastAPI:
                 runtime_safety_state=runtime_safety_state,
                 audit_context=execution_audit_context,
                 result_validation_contract=result_validation_contract,
+                answer_summary_assumptions=answer_summary_assumptions,
             )
         except CandidateLifecycleRevalidationError as exc:
             if exc.audit_event is not None:

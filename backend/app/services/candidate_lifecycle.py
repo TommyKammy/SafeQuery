@@ -97,6 +97,7 @@ class CandidateLifecycleRevalidationResult(BaseModel):
     state: Literal["execution_eligible"]
     source: SourceBoundCandidateMetadata
     approved_sql: Optional[str] = None
+    review_assumptions: tuple[str, ...] = ()
 
 
 class CandidateLifecycleRevalidationError(PermissionError):
@@ -542,12 +543,12 @@ def _approved_sql_from_approval(
     return approval.approved_sql
 
 
-def _deny_if_review_blocks_execution(
+def _review_decision_allowed_for_execution(
     *,
     session: Session,
     approval: PreviewCandidateApproval,
     audit_context: CandidateLifecycleAuditContext | None,
-) -> None:
+) -> PreviewReviewDecision | None:
     review_decision = session.scalar(
         select(PreviewReviewDecision).where(
             PreviewReviewDecision.preview_candidate_id == approval.preview_candidate_id
@@ -568,6 +569,7 @@ def _deny_if_review_blocks_execution(
             approval=approval,
             audit_context=audit_context,
         )
+    return review_decision
 
 
 def revalidate_authoritative_candidate_approval(
@@ -654,7 +656,7 @@ def revalidate_authoritative_candidate_approval(
         approval,
         audit_context=audit_context,
     )
-    _deny_if_review_blocks_execution(
+    review_decision = _review_decision_allowed_for_execution(
         session=session,
         approval=approval,
         audit_context=audit_context,
@@ -671,7 +673,15 @@ def revalidate_authoritative_candidate_approval(
         selected_source_id=selected_source_id,
         audit_context=audit_context,
     )
-    result = result.model_copy(update={"approved_sql": approved_sql})
+    review_assumptions = (
+        tuple(review_decision.assumptions) if review_decision is not None else ()
+    )
+    result = result.model_copy(
+        update={
+            "approved_sql": approved_sql,
+            "review_assumptions": review_assumptions,
+        }
+    )
     if before_mark_executed is not None:
         before_mark_executed(result)
     if mark_executed:
