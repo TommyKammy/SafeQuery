@@ -342,6 +342,10 @@ def _build_execution_audit_event(
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
+    answer_state: str | None = None,
+    answer_text: str | None = None,
+    insufficient_evidence_reason: str | None = None,
+    next_action: str | None = None,
     release_gate_guard_decision: Literal["allow", "reject"] | None = None,
 ) -> SourceAwareAuditEvent | None:
     if audit_context is None:
@@ -389,6 +393,10 @@ def _build_execution_audit_event(
         ),
         execution_row_count=execution_row_count,
         result_truncated=result_truncated,
+        answer_state=answer_state,
+        answer_text=answer_text,
+        insufficient_evidence_reason=insufficient_evidence_reason,
+        next_action=next_action,
     )
     if canonical_sql is not None and event_type in {
         "execution_completed",
@@ -434,6 +442,10 @@ def _build_execution_audit_events(
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
+    answer_state: str | None = None,
+    answer_text: str | None = None,
+    insufficient_evidence_reason: str | None = None,
+    next_action: str | None = None,
     release_gate_guard_decision: Literal["allow", "reject"] | None = None,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
@@ -467,6 +479,16 @@ def _build_execution_audit_events(
                 if event_type in {"execution_completed", "execution_denied"}
                 else None
             ),
+            answer_state=(
+                answer_state if event_type == "execution_completed" else None
+            ),
+            answer_text=answer_text if event_type == "execution_completed" else None,
+            insufficient_evidence_reason=(
+                insufficient_evidence_reason
+                if event_type == "execution_completed"
+                else None
+            ),
+            next_action=next_action if event_type == "execution_completed" else None,
             release_gate_guard_decision=(
                 release_gate_guard_decision
                 if event_type in {"execution_completed", "execution_denied"}
@@ -1125,6 +1147,7 @@ def execute_candidate_sql(
         audit_context=audit_context,
     )
     result_rows = capped_rows
+    answer_summary: MVPAnswerSummary | None = None
     if result_validation_contract is not None:
         assert candidate.source.semantic_contract_version is not None
         assert metadata.candidate_id is not None
@@ -1148,7 +1171,7 @@ def execute_candidate_sql(
             redaction_source_rows=redaction_source_rows,
         )
         metadata = metadata.model_copy(update={"result_validation": result_validation})
-        if not result_validation.answer_generation_allowed:
+        if "column_sensitivity_metadata_missing" in result_validation.reason_codes:
             _raise_result_validation_denial(
                 validation=result_validation,
                 candidate_source=candidate.source,
@@ -1179,6 +1202,30 @@ def execute_candidate_sql(
         canonical_sql=candidate.canonical_sql,
         execution_row_count=metadata.row_count,
         result_truncated=metadata.result_truncated,
+        answer_state=(
+            answer_summary.answer_state
+            if answer_summary is not None
+            and answer_summary.answer_state == "insufficient_evidence"
+            else None
+        ),
+        answer_text=(
+            answer_summary.answer_text
+            if answer_summary is not None
+            and answer_summary.answer_state == "insufficient_evidence"
+            else None
+        ),
+        insufficient_evidence_reason=(
+            answer_summary.insufficient_evidence_reason
+            if answer_summary is not None
+            and answer_summary.answer_state == "insufficient_evidence"
+            else None
+        ),
+        next_action=(
+            answer_summary.next_action
+            if answer_summary is not None
+            and answer_summary.answer_state == "insufficient_evidence"
+            else None
+        ),
     )
     result._audit_event = result._audit_events[-1] if result._audit_events else None
     return result

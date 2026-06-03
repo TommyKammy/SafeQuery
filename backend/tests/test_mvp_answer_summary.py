@@ -54,6 +54,7 @@ def test_mvp_answer_summary_uses_only_returned_rows_and_metadata() -> None:
 
     assert summary.to_wire_payload() == {
         "contractVersion": "mvp_answer_summary.v1",
+        "answerState": "answered",
         "answerText": (
             "Approved vendor spend rows from 2 returned rows: "
             "1. Acme (FY26-Q1) - 1200; 2. Beta (FY26-Q1) - 900. "
@@ -192,14 +193,15 @@ def test_mvp_answer_summary_reports_no_rows_without_claiming_a_ranking() -> None
     )
 
     assert summary.answer_text == (
-        "No rows were returned, so no vendor spend ranking is available. "
-        "Source: business-postgres-source (postgresql). "
-        "Assumptions: none. Validation: fail (missing_expected_columns). "
-        "Truncation: not truncated. Redaction: not required."
+        "Insufficient evidence: no rows were returned. "
+        "Next action: revise the query filters or source selection before requesting an answer."
     )
+    assert summary.answer_state == "insufficient_evidence"
+    assert summary.insufficient_evidence_reason == "no_rows"
+    assert summary.next_action == "revise_query_filters_or_source"
     assert summary.rows_used == 0
     assert summary.validation_status == "fail"
-    assert summary.validation_reason_codes == ("missing_expected_columns",)
+    assert summary.validation_reason_codes == ("missing_expected_columns", "no_rows")
 
 
 def test_mvp_answer_summary_does_not_claim_vendor_rows_are_top_ranked() -> None:
@@ -257,6 +259,9 @@ def test_mvp_answer_summary_surfaces_truncation_and_validation_warnings() -> Non
         truncation_reason="row_limit",
     )
 
+    assert summary.answer_state == "insufficient_evidence"
+    assert summary.insufficient_evidence_reason == "unsafe_truncation"
+    assert summary.next_action == "rerun_with_trusted_top_n_or_higher_limit"
     assert summary.validation_status == "warn"
     assert summary.validation_reason_codes == (
         "result_truncated",
@@ -264,10 +269,12 @@ def test_mvp_answer_summary_surfaces_truncation_and_validation_warnings() -> Non
         "outlier_values_present",
     )
     assert summary.truncation_status == "truncated"
-    assert "Validation: warn (result_truncated, null_values_present, outlier_values_present)." in (
-        summary.answer_text
+    assert summary.answer_text == (
+        "Insufficient evidence: result was truncated before the top set could be trusted. "
+        "Next action: rerun with an authoritative ORDER BY, tighter filters, or a higher trusted limit."
     )
-    assert "Truncation: truncated by returned-row limits." in summary.answer_text
+    assert "Acme" not in summary.answer_text
+    assert "Beta" not in summary.answer_text
 
 
 def test_mvp_answer_summary_uses_payload_truncation_reason_when_available() -> None:
@@ -289,8 +296,11 @@ def test_mvp_answer_summary_uses_payload_truncation_reason_when_available() -> N
         truncation_reason="payload_limit",
     )
 
-    assert "Truncation: truncated by payload limits." in summary.answer_text
-    assert "returned-row limits" not in summary.answer_text
+    assert summary.answer_state == "insufficient_evidence"
+    assert summary.insufficient_evidence_reason == "unsafe_truncation"
+    assert summary.next_action == "rerun_with_trusted_top_n_or_higher_limit"
+    assert "result was truncated before the top set could be trusted" in summary.answer_text
+    assert "Acme" not in summary.answer_text
 
 
 def test_mvp_answer_summary_uses_neutral_truncation_when_reason_is_unknown() -> None:
@@ -311,7 +321,8 @@ def test_mvp_answer_summary_uses_neutral_truncation_when_reason_is_unknown() -> 
         source_family="postgresql",
     )
 
-    assert "Truncation: truncated." in summary.answer_text
+    assert summary.answer_state == "insufficient_evidence"
+    assert summary.insufficient_evidence_reason == "unsafe_truncation"
     assert "returned-row limits" not in summary.answer_text
     assert "payload limits" not in summary.answer_text
 

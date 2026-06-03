@@ -232,6 +232,10 @@ def _execution_audit_event(
     retrieved_citations: list[dict[str, object]] | None = None,
     result_truncated: bool | None = None,
     row_count: int | None = None,
+    answer_state: str | None = None,
+    answer_text: str | None = None,
+    insufficient_evidence_reason: str | None = None,
+    next_action: str | None = None,
 ) -> SourceAwareAuditEvent:
     return SourceAwareAuditEvent(
         event_id=event_id,
@@ -252,6 +256,10 @@ def _execution_audit_event(
         executed_evidence=executed_evidence,
         execution_row_count=row_count,
         result_truncated=result_truncated,
+        answer_state=answer_state,
+        answer_text=answer_text,
+        insufficient_evidence_reason=insufficient_evidence_reason,
+        next_action=next_action,
     )
 
 
@@ -656,6 +664,74 @@ def test_operator_workflow_history_includes_execution_run_records() -> None:
             "resultTruncated": False,
         }
     ]
+
+
+def test_operator_workflow_history_surfaces_insufficient_evidence_run_state() -> None:
+    with _session_scope() as session:
+        _seed_authoritative_source_governance(session)
+
+        submit_preview_request(
+            PreviewSubmissionRequest(
+                question="Show approved vendors by quarterly spend",
+                source_id="sap-approved-spend",
+            ),
+            AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            session,
+            audit_context=_audit_context(
+                request_id="preview-request-234",
+                candidate_id="preview-candidate-234",
+            ),
+        )
+        persist_execution_audit_events(
+            session,
+            candidate_id="preview-candidate-234",
+            audit_events=[
+                _execution_audit_event(
+                    event_id=UUID("00000000-0000-4000-8000-000000000012"),
+                    event_type="execution_completed",
+                    occurred_at=datetime(2026, 1, 2, 3, 5, 3, tzinfo=timezone.utc),
+                    row_count=1,
+                    result_truncated=False,
+                    answer_state="insufficient_evidence",
+                    answer_text=(
+                        "Insufficient evidence: expected result columns were missing. "
+                        "Next action: revise the SQL projection or semantic contract columns "
+                        "before requesting an answer."
+                    ),
+                    insufficient_evidence_reason="missing_columns",
+                    next_action="revise_query_or_semantic_contract_columns",
+                ),
+            ],
+        )
+
+        snapshot = get_operator_workflow_snapshot(session)
+
+    run = snapshot.history[0].model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert {
+        "itemType": "run",
+        "recordId": "00000000-0000-4000-8000-000000000012",
+        "label": "Show approved vendors by quarterly spend",
+        "sourceId": "sap-approved-spend",
+        "sourceLabel": "SAP spend cube / approved_vendor_spend",
+        "lifecycleState": "insufficient_evidence",
+        "occurredAt": "2026-01-02T03:05:03Z",
+        "requestId": "preview-request-234",
+        "resultTruncated": False,
+        "rowCount": 1,
+        "runState": "insufficient_evidence",
+        "insufficientEvidence": {
+            "answerText": (
+                "Insufficient evidence: expected result columns were missing. "
+                "Next action: revise the SQL projection or semantic contract columns before "
+                "requesting an answer."
+            ),
+            "nextAction": "revise_query_or_semantic_contract_columns",
+            "reason": "missing_columns",
+        },
+    }.items() <= run.items()
 
 
 def test_operator_workflow_history_surfaces_safe_audit_evidence_and_citations() -> None:

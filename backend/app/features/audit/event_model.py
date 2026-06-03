@@ -159,3 +159,7 @@ class SourceAwareAuditEvent(BaseModel):
     candidate_state: Optional[NonEmptyTrimmedString] = None
     execution_row_count: Optional[int] = None
     result_truncated: Optional[bool] = None
+    answer_state: Optional[NonEmptyTrimmedString] = None
+    answer_text: Optional[NonEmptyTrimmedString] = None
+    insufficient_evidence_reason: Optional[NonEmptyTrimmedString] = None
+    next_action: Optional[NonEmptyTrimmedString] = None

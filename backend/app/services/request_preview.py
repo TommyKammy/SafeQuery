@@ -764,6 +764,8 @@ def _joined_governance_bindings(bindings: list[str]) -> str | None:
 
 def _terminal_run_state(event: PreviewAuditEvent) -> str | None:
     if event.event_type == "execution_completed":
+        if event.audit_payload.get("answer_state") == "insufficient_evidence":
+            return "insufficient_evidence"
         row_count = event.audit_payload.get("execution_row_count")
         return "empty" if row_count == 0 else "completed"
     if event.event_type == "execution_denied":
@@ -887,7 +889,13 @@ def _resolve_revision_record(
             "Revision context references an unknown execution run."
         )
     run_state = _terminal_run_state(run_event)
-    if run_state not in {"completed", "empty", "failed", "execution_denied"}:
+    if run_state not in {
+        "completed",
+        "empty",
+        "insufficient_evidence",
+        "failed",
+        "execution_denied",
+    }:
         raise PreviewSubmissionContractError(
             "Execution run state is not eligible for revision."
         )

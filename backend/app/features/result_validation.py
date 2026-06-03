@@ -90,7 +90,7 @@ class ResultValidationOutcome(BaseModel):
 
     @property
     def answer_generation_allowed(self) -> bool:
-        return self.status != "fail"
+        return self.status == "pass"
 
     def require_answer_generation_allowed(self) -> None:
         if not self.answer_generation_allowed:
@@ -158,7 +158,7 @@ def validate_execution_result(
         reason_codes.append("missing_expected_columns")
     if missing_required_columns:
         reason_codes.append("missing_required_columns")
-    if metadata.row_count == 0 and metadata.row_count < contract.minimum_row_count:
+    if metadata.row_count == 0:
         reason_codes.append("no_rows")
     elif metadata.row_count < contract.minimum_row_count:
         reason_codes.append("under_minimum_rows")
