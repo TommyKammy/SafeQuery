@@ -72,6 +72,7 @@ def generate_mvp_answer_summary(
     source_id: str,
     source_family: str | None = None,
     assumptions: tuple[str, ...] = (),
+    truncation_reason: str | None = None,
     freeform_llm_answer: str | None = None,
 ) -> MVPAnswerSummary:
     del freeform_llm_answer
@@ -97,6 +98,7 @@ def generate_mvp_answer_summary(
         assumptions=safe_assumptions,
         validation=validation,
         truncation_status=truncation_status,
+        truncation_reason=truncation_reason,
         redaction_status=redaction_status,
     )
     return MVPAnswerSummary(
@@ -119,6 +121,7 @@ def _answer_text(
     assumptions: tuple[str, ...],
     validation: ResultValidationOutcome,
     truncation_status: MVPAnswerTruncationStatus,
+    truncation_reason: str | None,
     redaction_status: ResultRedactionStatus,
 ) -> str:
     segments = [
@@ -130,7 +133,7 @@ def _answer_text(
         _source_sentence(source),
         _assumptions_sentence(assumptions),
         _validation_sentence(validation),
-        _truncation_sentence(truncation_status),
+        _truncation_sentence(truncation_status, truncation_reason),
         _redaction_sentence(redaction_status),
     ]
     return " ".join(segment for segment in segments if segment)
@@ -255,10 +258,17 @@ def _validation_sentence(validation: ResultValidationOutcome) -> str:
     )
 
 
-def _truncation_sentence(status: MVPAnswerTruncationStatus) -> str:
-    if status == "truncated":
+def _truncation_sentence(
+    status: MVPAnswerTruncationStatus,
+    reason: str | None,
+) -> str:
+    if status != "truncated":
+        return "Truncation: not truncated."
+    if reason == "row_limit":
         return "Truncation: truncated by returned-row limits."
-    return "Truncation: not truncated."
+    if reason == "payload_limit":
+        return "Truncation: truncated by payload limits."
+    return "Truncation: truncated."
 
 
 def _redaction_sentence(status: ResultRedactionStatus) -> str:

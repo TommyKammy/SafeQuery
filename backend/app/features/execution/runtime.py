@@ -1014,6 +1014,7 @@ def execute_candidate_sql(
     runtime_safety_state: ExecutionRuntimeSafetyState | None = None,
     audit_context: ExecutionAuditContext | None = None,
     result_validation_contract: ResultValidationContract | None = None,
+    answer_summary_assumptions: tuple[str, ...] = (),
 ) -> ExecutionResult:
     if result_validation_contract is not None:
         _require_result_validation_linkage_before_execution(
@@ -1159,6 +1160,8 @@ def execute_candidate_sql(
             validation=result_validation,
             source_id=selection.source_id,
             source_family=selection.source_family,
+            assumptions=answer_summary_assumptions,
+            truncation_reason=metadata.truncation_reason,
         )
         metadata = metadata.model_copy(update={"answer_summary": answer_summary})
 

@@ -224,6 +224,7 @@ def test_mvp_answer_summary_surfaces_truncation_and_validation_warnings() -> Non
         validation=validation,
         source_id="business-postgres-source",
         source_family="postgresql",
+        truncation_reason="row_limit",
     )
 
     assert summary.validation_status == "warn"
@@ -237,6 +238,52 @@ def test_mvp_answer_summary_surfaces_truncation_and_validation_warnings() -> Non
         summary.answer_text
     )
     assert "Truncation: truncated by returned-row limits." in summary.answer_text
+
+
+def test_mvp_answer_summary_uses_payload_truncation_reason_when_available() -> None:
+    rows = [{"vendor_name": "Acme", "approved_spend": 1200}]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=1, result_truncated=True),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+        truncation_reason="payload_limit",
+    )
+
+    assert "Truncation: truncated by payload limits." in summary.answer_text
+    assert "returned-row limits" not in summary.answer_text
+
+
+def test_mvp_answer_summary_uses_neutral_truncation_when_reason_is_unknown() -> None:
+    rows = [{"vendor_name": "Acme", "approved_spend": 1200}]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=1, result_truncated=True),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+    )
+
+    assert "Truncation: truncated." in summary.answer_text
+    assert "returned-row limits" not in summary.answer_text
+    assert "payload limits" not in summary.answer_text
 
 
 def test_mvp_answer_summary_reports_redaction_without_exposing_redacted_inputs() -> None:
