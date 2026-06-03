@@ -1123,13 +1123,13 @@ def execute_candidate_sql(
         assert candidate.source.semantic_contract_version is not None
         assert metadata.candidate_id is not None
         assert metadata.execution_run_id is not None
-        validation_rows = (
-            rows
+        redaction_source_rows = (
+            rows[: len(capped_rows)]
             if result_validation_contract.redaction_required
-            else capped_rows
+            else None
         )
         result_validation = validate_execution_result(
-            rows=validation_rows,
+            rows=capped_rows,
             metadata=ResultValidationMetadata(
                 semantic_contract_version=candidate.source.semantic_contract_version,
                 candidate_id=metadata.candidate_id,
@@ -1139,6 +1139,7 @@ def execute_candidate_sql(
                 result_truncated=metadata.result_truncated,
             ),
             contract=result_validation_contract,
+            redaction_source_rows=redaction_source_rows,
         )
         metadata = metadata.model_copy(update={"result_validation": result_validation})
         if not result_validation.answer_generation_allowed:

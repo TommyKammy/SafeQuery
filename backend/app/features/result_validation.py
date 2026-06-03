@@ -109,17 +109,27 @@ def validate_execution_result(
     rows: list[dict[str, Any]],
     metadata: ResultValidationMetadata,
     contract: ResultValidationContract,
+    redaction_source_rows: list[dict[str, Any]] | None = None,
 ) -> ResultValidationOutcome:
     expected_columns = _unique_ordered(contract.expected_columns)
     required_columns = _unique_ordered(contract.required_columns)
     observed_columns = _observed_columns(rows)
+    redaction_observed_columns = (
+        _observed_columns(redaction_source_rows)
+        if redaction_source_rows is not None
+        else observed_columns
+    )
     redaction_status, redacted_columns, unclassified_columns = _redaction_evidence(
-        observed_columns=observed_columns,
+        observed_columns=redaction_observed_columns,
         contract=contract,
     )
-    contract_observed_columns = _contract_observed_columns_after_redaction(
-        observed_columns=observed_columns,
-        contract=contract,
+    contract_observed_columns = (
+        observed_columns
+        if redaction_source_rows is not None and contract.redaction_required
+        else _contract_observed_columns_after_redaction(
+            observed_columns=observed_columns,
+            contract=contract,
+        )
     )
     observed_set = set(contract_observed_columns)
     missing_expected_columns = tuple(
