@@ -140,6 +140,7 @@ _EXECUTION_DENIAL_AUDIT_FIELDS = frozenset(
         "connector_profile_version",
         "primary_deny_code",
         "denial_cause",
+        "denial_reason",
         "candidate_state",
         "execution_row_count",
         "result_truncated",
@@ -809,6 +810,18 @@ def create_app() -> FastAPI:
                         else revalidation_result.source
                     ),
                 )
+                if (
+                    result_validation_contract is not None
+                    and (
+                        prepared_candidate.source.semantic_contract_version is None
+                        or not prepared_candidate.source.semantic_contract_version.strip()
+                    )
+                ):
+                    raise api_error(
+                        503,
+                        "execution_unavailable",
+                        "Candidate execution is unavailable.",
+                    )
                 prepared_selection = select_execution_connector(
                     candidate_source=prepared_candidate.source
                 )

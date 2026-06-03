@@ -36,6 +36,7 @@ from app.features.guard.deny_taxonomy import (
     DENY_RUNTIME_CONCURRENCY_LIMIT,
     DENY_RUNTIME_KILL_SWITCH,
     DENY_RUNTIME_RATE_LIMIT,
+    DENY_RESULT_VALIDATION_FAILED,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_UNSUPPORTED_SOURCE_BINDING,
 )
@@ -318,6 +319,7 @@ def _execution_denial_cause_for_code(deny_code: str) -> str:
         DENY_RUNTIME_KILL_SWITCH: "runtime_kill_switch",
         DENY_RUNTIME_RATE_LIMIT: "runtime_rate_limit",
         DENY_RUNTIME_CONCURRENCY_LIMIT: "runtime_concurrency_limit",
+        DENY_RESULT_VALIDATION_FAILED: "result_validation_failed",
         DENY_SOURCE_BINDING_MISMATCH: "source_binding_mismatch",
         DENY_UNSUPPORTED_SOURCE_BINDING: "unsupported_source_binding",
     }.get(deny_code, "execution_denied")
@@ -330,6 +332,7 @@ def _build_execution_audit_event(
     audit_context: ExecutionAuditContext | None,
     canonical_sql: str | None = None,
     primary_deny_code: str | None = None,
+    denial_reason: str | None = None,
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
@@ -371,6 +374,7 @@ def _build_execution_audit_event(
             if primary_deny_code is not None
             else None
         ),
+        denial_reason=denial_reason,
         candidate_state=(
             candidate_state
             if candidate_state is not None
@@ -417,6 +421,7 @@ def _build_execution_audit_events(
     audit_context: ExecutionAuditContext | None,
     canonical_sql: str | None = None,
     primary_deny_code: str | None = None,
+    denial_reason: str | None = None,
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
@@ -438,6 +443,7 @@ def _build_execution_audit_events(
                 in {"execution_denied", "request_rate_limited", "concurrency_rejected"}
                 else None
             ),
+            denial_reason=denial_reason if event_type == "execution_denied" else None,
             candidate_state=(
                 candidate_state if event_type == "execution_failed" else None
             ),
@@ -519,6 +525,47 @@ def _attach_runtime_failure_audit_event(
             audit_context=audit_context,
             canonical_sql=None,
             candidate_state="failed",
+        ),
+    )
+
+
+def _require_result_validation_linkage_before_execution(
+    *,
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: ExecutionAuditContext | None,
+) -> None:
+    if (
+        candidate_source.semantic_contract_version is None
+        or not str(candidate_source.semantic_contract_version).strip()
+        or audit_context is None
+        or audit_context.query_candidate_id is None
+    ):
+        raise RuntimeError(
+            "Result validation requires semantic contract version, candidate id, "
+            "and execution run id before execution."
+        )
+
+
+def _raise_result_validation_denial(
+    *,
+    validation: ResultValidationOutcome,
+    candidate_source: SourceBoundCandidateMetadata,
+    audit_context: ExecutionAuditContext | None,
+) -> None:
+    denial_reason = ",".join(validation.reason_codes) or "result_validation_failed"
+    raise ExecutionConnectorExecutionError(
+        deny_code=DENY_RESULT_VALIDATION_FAILED,
+        message=(
+            "Result validation failed before answer generation: "
+            f"{denial_reason}"
+        ),
+        audit_events=_build_execution_audit_events(
+            event_types=["execution_requested", "execution_started", "execution_denied"],
+            candidate_source=candidate_source,
+            audit_context=audit_context,
+            canonical_sql=None,
+            primary_deny_code=DENY_RESULT_VALIDATION_FAILED,
+            denial_reason=denial_reason,
         ),
     )
 
@@ -935,6 +982,12 @@ def execute_candidate_sql(
     audit_context: ExecutionAuditContext | None = None,
     result_validation_contract: ResultValidationContract | None = None,
 ) -> ExecutionResult:
+    if result_validation_contract is not None:
+        _require_result_validation_linkage_before_execution(
+            candidate_source=candidate.source,
+            audit_context=audit_context,
+        )
+
     try:
         _require_matching_selection(
             candidate_source=candidate.source,
@@ -1033,15 +1086,9 @@ def execute_candidate_sql(
         audit_context=audit_context,
     )
     if result_validation_contract is not None:
-        if (
-            candidate.source.semantic_contract_version is None
-            or metadata.candidate_id is None
-            or metadata.execution_run_id is None
-        ):
-            raise RuntimeError(
-                "Result validation requires semantic contract version, candidate id, "
-                "and execution run id."
-            )
+        assert candidate.source.semantic_contract_version is not None
+        assert metadata.candidate_id is not None
+        assert metadata.execution_run_id is not None
         result_validation = validate_execution_result(
             rows=capped_rows,
             metadata=ResultValidationMetadata(
@@ -1055,6 +1102,12 @@ def execute_candidate_sql(
             contract=result_validation_contract,
         )
         metadata = metadata.model_copy(update={"result_validation": result_validation})
+        if not result_validation.answer_generation_allowed:
+            _raise_result_validation_denial(
+                validation=result_validation,
+                candidate_source=candidate.source,
+                audit_context=audit_context,
+            )
 
     result = ExecutionResult(
         source_id=selection.source_id,

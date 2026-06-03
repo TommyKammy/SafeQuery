@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
 from app.features.guard.deny_taxonomy import (
+    DENY_RESULT_VALIDATION_FAILED,
     DENY_RUNTIME_RATE_LIMIT,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_UNSUPPORTED_SOURCE_BINDING,
@@ -356,6 +357,46 @@ def test_execute_candidate_sql_attaches_result_validation_to_execution_metadata(
     assert validation.execution_run_id == result.metadata.execution_run_id
     assert validation.evidence.expected_columns == ("vendor_name", "approved_spend")
     assert validation.evidence.row_count == 1
+
+
+def test_execute_candidate_sql_blocks_failed_result_validation_before_success() -> None:
+    from app.features.execution import (
+        ExecutionConnectorExecutionError,
+        execute_candidate_sql,
+    )
+
+    calls: list[str] = []
+
+    def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+        calls.append(canonical_sql)
+        return [{"vendor_name": "Acme"}]
+
+    with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+        execute_candidate_sql(
+            candidate=_candidate(),
+            selection=_selection(),
+            query_runner=query_runner,
+            audit_context=_audit_context(),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            result_validation_contract=ResultValidationContract(
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("approved_spend",),
+            ),
+        )
+
+    assert calls == ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"]
+    assert exc_info.value.deny_code == DENY_RESULT_VALIDATION_FAILED
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_started",
+        "execution_denied",
+    ]
+    assert {
+        "primary_deny_code": DENY_RESULT_VALIDATION_FAILED,
+        "denial_cause": "result_validation_failed",
+        "denial_reason": "missing_expected_columns,missing_required_columns",
+    }.items() <= exc_info.value.audit_event.model_dump(exclude_none=True).items()
 
 
 def test_execution_result_omits_executed_evidence_for_negative_audit_row_count() -> None:

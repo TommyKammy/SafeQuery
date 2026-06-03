@@ -76,6 +76,7 @@ _SAFE_EXECUTION_AUDIT_FIELDS = frozenset(
         "connector_profile_version",
         "primary_deny_code",
         "denial_cause",
+        "denial_reason",
         "candidate_state",
     }
 )

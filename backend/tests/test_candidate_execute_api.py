@@ -380,6 +380,89 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
         self.assertEqual(validation["evidence"]["row_count"], 1)
 
+    def test_execute_candidate_api_rejects_missing_semantic_version_before_runner(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        candidate = (
+            self.session.query(PreviewCandidate)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        candidate.semantic_contract_version = None
+        self.session.commit()
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            lambda **_: calls.append("called"),
+            result_validation_contract=ResultValidationContract(
+                expected_columns=("vendor_name",),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "execution_unavailable")
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_blocks_failed_result_validation_before_success(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            calls.append(canonical_sql)
+            return [{"vendor_name": "Acme"}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("approved_spend",),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            [event["event_type"] for event in payload["audit"]["events"]],
+            ["execution_requested", "execution_started", "execution_denied"],
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["primary_deny_code"],
+            "DENY_RESULT_VALIDATION_FAILED",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["denial_cause"],
+            "result_validation_failed",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["denial_reason"],
+            "missing_expected_columns,missing_required_columns",
+        )
+        self.assertEqual(
+            calls,
+            ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
+        )
+
     def test_execute_candidate_api_rejects_malformed_validation_contract_before_consuming_approval(
         self,
     ) -> None:
