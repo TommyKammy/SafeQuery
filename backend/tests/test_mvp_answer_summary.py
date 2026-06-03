@@ -55,7 +55,7 @@ def test_mvp_answer_summary_uses_only_returned_rows_and_metadata() -> None:
     assert summary.to_wire_payload() == {
         "contractVersion": "mvp_answer_summary.v1",
         "answerText": (
-            "Top approved vendor spend from 2 returned rows: "
+            "Approved vendor spend rows from 2 returned rows: "
             "1. Acme (FY26-Q1) - 1200; 2. Beta (FY26-Q1) - 900. "
             "Source: business-postgres-source (postgresql). "
             "Assumptions: Rows are sorted by approved spend descending. "
@@ -102,7 +102,7 @@ def test_mvp_answer_summary_uses_mssql_approved_amount_spend_column() -> None:
     )
 
     assert summary.answer_text.startswith(
-        "Top approved vendor spend from 2 returned rows: "
+        "Approved vendor spend rows from 2 returned rows: "
         "1. Acme (unspecified period) - 1200; "
         "2. Beta (unspecified period) - 900."
     )
@@ -133,7 +133,7 @@ def test_mvp_answer_summary_preserves_total_row_count_when_display_is_capped() -
 
     assert summary.rows_used == 5
     assert (
-        "Top approved vendor spend from 6 returned rows; showing 5 rows:"
+        "Approved vendor spend rows from 6 returned rows; showing 5 rows:"
         in summary.answer_text
     )
     assert "from 5 returned rows" not in summary.answer_text
@@ -200,6 +200,36 @@ def test_mvp_answer_summary_reports_no_rows_without_claiming_a_ranking() -> None
     assert summary.rows_used == 0
     assert summary.validation_status == "fail"
     assert summary.validation_reason_codes == ("missing_expected_columns",)
+
+
+def test_mvp_answer_summary_does_not_claim_vendor_rows_are_top_ranked() -> None:
+    rows = [
+        {"vendor_name": "Acme", "approved_spend": 900},
+        {"vendor_name": "Beta", "approved_spend": 1200},
+    ]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=2),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+    )
+
+    assert summary.answer_text.startswith(
+        "Approved vendor spend rows from 2 returned rows: "
+        "1. Acme (unspecified period) - 900; "
+        "2. Beta (unspecified period) - 1200."
+    )
+    assert "Top approved vendor spend" not in summary.answer_text
+    assert "ranking" not in summary.answer_text
 
 
 def test_mvp_answer_summary_surfaces_truncation_and_validation_warnings() -> None:
@@ -363,3 +393,31 @@ def test_mvp_answer_summary_redacts_secret_and_path_like_row_values() -> None:
     assert "hidden value" not in serialized
     assert unsafe_home_path not in serialized
     assert "[redacted]" in serialized
+
+
+def test_mvp_answer_summary_bounds_large_row_values() -> None:
+    long_note = "A" * 400
+    rows = [{"vendor_name": long_note, "approved_spend": 1200}]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=1),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+    )
+
+    assert long_note not in summary.answer_text
+    displayed_vendor = summary.answer_text.split("1. ", maxsplit=1)[1].split(
+        " (unspecified period) - ",
+        maxsplit=1,
+    )[0]
+    assert displayed_vendor.endswith("... [truncated]")
+    assert len(displayed_vendor) == 160

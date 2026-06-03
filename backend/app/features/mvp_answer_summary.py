@@ -28,6 +28,8 @@ _MODEL_CONFIG = ConfigDict(
     populate_by_name=True,
 )
 _MAX_SUMMARY_ROWS = 5
+_MAX_CELL_TEXT_CHARS = 160
+_TRUNCATED_CELL_SUFFIX = "... [truncated]"
 _VENDOR_COLUMN = "vendor_name"
 _QUARTER_COLUMN = "fiscal_quarter"
 _SPEND_COLUMNS = ("approved_spend", "approved_amount")
@@ -215,12 +217,12 @@ def _spend_value(row: Mapping[str, Any]) -> object:
 def _vendor_spend_intro(*, total_row_count: int, displayed_row_count: int) -> str:
     if displayed_row_count < total_row_count:
         return (
-            "Top approved vendor spend from "
+            "Approved vendor spend rows from "
             f"{_returned_row_count_text(total_row_count)}; "
             f"showing {_display_row_count_text(displayed_row_count)}: "
         )
     return (
-        "Top approved vendor spend from "
+        "Approved vendor spend rows from "
         f"{_returned_row_count_text(total_row_count)}: "
     )
 
@@ -278,7 +280,7 @@ def _redaction_sentence(status: ResultRedactionStatus) -> str:
 def _row_text(value: object, fallback: str) -> str:
     if value is None:
         return fallback
-    return _safe_text(str(value)) or fallback
+    return _bounded_text(_safe_text(str(value))) or fallback
 
 
 def _spend_text(value: object) -> str:
@@ -296,6 +298,13 @@ def _safe_text_items(values: tuple[str, ...]) -> tuple[str, ...]:
 def _safe_text(value: str) -> str:
     safe_values = sanitize_review_llm_surface_text_items((value,))
     return safe_values[0] if safe_values else ""
+
+
+def _bounded_text(value: str) -> str:
+    if len(value) <= _MAX_CELL_TEXT_CHARS:
+        return value
+    prefix_length = _MAX_CELL_TEXT_CHARS - len(_TRUNCATED_CELL_SUFFIX)
+    return value[:prefix_length].rstrip() + _TRUNCATED_CELL_SUFFIX
 
 
 def _trim_terminal_period(value: str) -> str:

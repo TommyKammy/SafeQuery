@@ -398,7 +398,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(answer_summary["redaction_status"], "not_required")
         self.assertEqual(answer_summary["rows_used"], 1)
         self.assertIn(
-            "Top approved vendor spend from 1 returned row: "
+            "Approved vendor spend rows from 1 returned row: "
             "1. Acme (unspecified period) - 1200.",
             answer_summary["answer_text"],
         )
