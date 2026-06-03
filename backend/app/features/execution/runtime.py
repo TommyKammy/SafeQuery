@@ -29,6 +29,7 @@ from app.features.result_validation import (
     ResultValidationContract,
     ResultValidationMetadata,
     ResultValidationOutcome,
+    redact_execution_result_rows,
     validate_execution_result,
 )
 from app.features.guard.deny_taxonomy import (
@@ -1113,6 +1114,7 @@ def execute_candidate_sql(
         candidate_source=candidate.source,
         audit_context=audit_context,
     )
+    result_rows = capped_rows
     if result_validation_contract is not None:
         assert candidate.source.semantic_contract_version is not None
         assert metadata.candidate_id is not None
@@ -1137,12 +1139,16 @@ def execute_candidate_sql(
                 canonical_sql=candidate.canonical_sql,
                 audit_context=audit_context,
             )
+        result_rows = redact_execution_result_rows(
+            rows=capped_rows,
+            contract=result_validation_contract,
+        )
 
     result = ExecutionResult(
         source_id=selection.source_id,
         connector_id=selection.connector_id,
         ownership=selection.ownership,
-        rows=capped_rows,
+        rows=result_rows,
         metadata=metadata,
     )
     result._audit_events = _build_execution_audit_events(

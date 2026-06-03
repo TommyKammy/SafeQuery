@@ -9,6 +9,7 @@ from app.features.result_validation import (
     ResultValidationContract,
     ResultValidationError,
     ResultValidationMetadata,
+    redact_execution_result_rows,
     validate_execution_result,
 )
 
@@ -103,6 +104,93 @@ def test_result_validation_warns_on_decimal_outliers() -> None:
     assert validation.status == "warn"
     assert validation.reason_codes == ("outlier_values_present",)
     assert validation.evidence.outlier_columns == ("approved_spend",)
+
+
+def test_result_validation_reports_applied_redaction_policy() -> None:
+    validation = validate_execution_result(
+        rows=[
+            {
+                "vendor_name": "Acme",
+                "vendor_email": "buyer@example.test",
+                "approved_spend": 1200,
+            }
+        ],
+        metadata=_metadata(),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+            redaction_required=True,
+            column_sensitivity={
+                "vendor_name": "public",
+                "vendor_email": "sensitive",
+                "approved_spend": "public",
+            },
+        ),
+    )
+
+    assert validation.status == "pass"
+    assert validation.evidence.redaction_status == "applied"
+    assert validation.evidence.redacted_columns == ("vendor_email",)
+    assert validation.evidence.unclassified_columns == ()
+
+
+def test_result_validation_fails_closed_when_redaction_metadata_is_missing() -> None:
+    validation = validate_execution_result(
+        rows=[
+            {
+                "vendor_name": "Acme",
+                "vendor_email": "buyer@example.test",
+                "approved_spend": 1200,
+            }
+        ],
+        metadata=_metadata(),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+            redaction_required=True,
+            column_sensitivity={
+                "vendor_name": "public",
+                "approved_spend": "public",
+            },
+        ),
+    )
+
+    assert validation.status == "fail"
+    assert validation.reason_codes == ("column_sensitivity_metadata_missing",)
+    assert validation.evidence.redaction_status == "fail"
+    assert validation.evidence.redacted_columns == ()
+    assert validation.evidence.unclassified_columns == ("vendor_email",)
+    with pytest.raises(
+        ResultValidationError,
+        match="column_sensitivity_metadata_missing",
+    ):
+        validation.require_answer_generation_allowed()
+
+
+def test_result_redaction_removes_sensitive_columns_without_mutating_source_rows() -> None:
+    rows = [
+        {
+            "vendor_name": "Acme",
+            "vendor_email": "buyer@example.test",
+            "approved_spend": 1200,
+        }
+    ]
+
+    redacted = redact_execution_result_rows(
+        rows=rows,
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            redaction_required=True,
+            column_sensitivity={
+                "vendor_name": "public",
+                "vendor_email": "sensitive",
+                "approved_spend": "public",
+            },
+        ),
+    )
+
+    assert redacted == [{"vendor_name": "Acme", "approved_spend": 1200}]
+    assert rows[0]["vendor_email"] == "buyer@example.test"
 
 
 def test_result_validation_reports_under_minimum_rows_separately_from_no_rows() -> None:

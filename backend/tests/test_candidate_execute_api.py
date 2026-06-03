@@ -384,6 +384,97 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
         self.assertEqual(validation["evidence"]["row_count"], 1)
 
+    def test_execute_candidate_api_redacts_sensitive_columns_before_result_rows(
+        self,
+    ) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "vendor_name": "Acme",
+                    "vendor_email": "buyer@example.test",
+                    "approved_spend": 1200,
+                }
+            ]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("vendor_name", "approved_spend"),
+                redaction_required=True,
+                column_sensitivity={
+                    "vendor_name": "public",
+                    "vendor_email": "sensitive",
+                    "approved_spend": "public",
+                },
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            payload["rows"],
+            [{"vendor_name": "Acme", "approved_spend": 1200}],
+        )
+        self.assertNotIn("buyer@example.test", response.text)
+        validation = payload["metadata"]["result_validation"]
+        self.assertEqual(validation["status"], "pass")
+        self.assertEqual(validation["evidence"]["redaction_status"], "applied")
+        self.assertEqual(validation["evidence"]["redacted_columns"], ["vendor_email"])
+        self.assertEqual(validation["evidence"]["unclassified_columns"], [])
+
+    def test_execute_candidate_api_fails_closed_when_redaction_metadata_is_missing(
+        self,
+    ) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "vendor_name": "Acme",
+                    "vendor_email": "buyer@example.test",
+                    "approved_spend": 1200,
+                }
+            ]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("vendor_name", "approved_spend"),
+                redaction_required=True,
+                column_sensitivity={
+                    "vendor_name": "public",
+                    "approved_spend": "public",
+                },
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertNotIn("buyer@example.test", response.text)
+        self.assertEqual(
+            payload["audit"]["events"][-1]["primary_deny_code"],
+            "DENY_RESULT_VALIDATION_FAILED",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["denial_reason"],
+            "column_sensitivity_metadata_missing",
+        )
+
     def test_execute_candidate_api_selects_validation_contract_by_semantic_version(
         self,
     ) -> None:
