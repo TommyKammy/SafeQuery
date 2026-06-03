@@ -151,6 +151,7 @@ _EXECUTION_DENIAL_AUDIT_FIELDS = frozenset(
         "answer_text",
         "insufficient_evidence_reason",
         "next_action",
+        "answer_evidence",
     }
 )
 

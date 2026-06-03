@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import importlib
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -14,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr, StringConstraints
 from typing_extensions import Annotated
 
 from app.features.audit.event_model import (
+    AnswerEvidenceAuditPayload,
+    AnswerEvidenceBoundedMetadata,
     ExecutedEvidenceAuditPayload,
     SourceAwareAuditEvent,
 )
@@ -346,6 +349,7 @@ def _build_execution_audit_event(
     answer_text: str | None = None,
     insufficient_evidence_reason: str | None = None,
     next_action: str | None = None,
+    answer_evidence: AnswerEvidenceAuditPayload | None = None,
     release_gate_guard_decision: Literal["allow", "reject"] | None = None,
 ) -> SourceAwareAuditEvent | None:
     if audit_context is None:
@@ -397,6 +401,7 @@ def _build_execution_audit_event(
         answer_text=answer_text,
         insufficient_evidence_reason=insufficient_evidence_reason,
         next_action=next_action,
+        answer_evidence=answer_evidence,
     )
     if canonical_sql is not None and event_type in {
         "execution_completed",
@@ -446,6 +451,7 @@ def _build_execution_audit_events(
     answer_text: str | None = None,
     insufficient_evidence_reason: str | None = None,
     next_action: str | None = None,
+    answer_evidence: AnswerEvidenceAuditPayload | None = None,
     release_gate_guard_decision: Literal["allow", "reject"] | None = None,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
@@ -489,6 +495,9 @@ def _build_execution_audit_events(
                 else None
             ),
             next_action=next_action if event_type == "execution_completed" else None,
+            answer_evidence=(
+                answer_evidence if event_type == "execution_completed" else None
+            ),
             release_gate_guard_decision=(
                 release_gate_guard_decision
                 if event_type in {"execution_completed", "execution_denied"}
@@ -951,6 +960,60 @@ def _result_payload_size(rows: list[dict[str, Any]]) -> int:
     )
 
 
+def _result_hash(rows: list[dict[str, Any]]) -> str:
+    payload = json.dumps(
+        rows,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+        default=str,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _build_answer_evidence(
+    *,
+    rows: list[dict[str, Any]],
+    metadata: ExecutionResultMetadata,
+    answer_summary: MVPAnswerSummary | None,
+    audit_context: ExecutionAuditContext | None,
+) -> AnswerEvidenceAuditPayload | None:
+    validation = metadata.result_validation
+    if (
+        audit_context is None
+        or validation is None
+        or answer_summary is None
+        or metadata.execution_run_id is None
+        or metadata.candidate_id is None
+    ):
+        return None
+
+    return AnswerEvidenceAuditPayload(
+        answer_id=audit_context.event_id,
+        request_id=audit_context.request_id,
+        candidate_id=metadata.candidate_id,
+        execution_run_id=metadata.execution_run_id,
+        validation_status=validation.status,
+        redaction_status=validation.evidence.redaction_status,
+        summary_strategy=answer_summary.contract_version,
+        result_hash=_result_hash(rows),
+        bounded_metadata=AnswerEvidenceBoundedMetadata(
+            row_count=metadata.row_count,
+            row_limit=metadata.row_limit,
+            result_truncated=metadata.result_truncated,
+            truncation_reason=metadata.truncation_reason,
+            rows_used=answer_summary.rows_used,
+            reason_codes=validation.reason_codes,
+            redacted_columns=validation.evidence.redacted_columns,
+            missing_expected_columns=validation.evidence.missing_expected_columns,
+            missing_required_columns=validation.evidence.missing_required_columns,
+        ),
+        answer_state=answer_summary.answer_state,
+        insufficient_evidence_reason=answer_summary.insufficient_evidence_reason,
+        audit_event_id=audit_context.event_id,
+    )
+
+
 def _postgres_identity_from_url(
     *,
     database_url: str,
@@ -1195,6 +1258,12 @@ def execute_candidate_sql(
         rows=result_rows,
         metadata=metadata,
     )
+    answer_evidence = _build_answer_evidence(
+        rows=result_rows,
+        metadata=metadata,
+        answer_summary=answer_summary,
+        audit_context=audit_context,
+    )
     result._audit_events = _build_execution_audit_events(
         event_types=["execution_requested", "execution_started", "execution_completed"],
         candidate_source=candidate.source,
@@ -1226,6 +1295,7 @@ def execute_candidate_sql(
             and answer_summary.answer_state == "insufficient_evidence"
             else None
         ),
+        answer_evidence=answer_evidence,
     )
     result._audit_event = result._audit_events[-1] if result._audit_events else None
     return result
