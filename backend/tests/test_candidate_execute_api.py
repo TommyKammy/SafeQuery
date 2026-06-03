@@ -402,6 +402,20 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             "1. Acme (unspecified period) - 1200.",
             answer_summary["answer_text"],
         )
+        persisted_events = (
+            self.session.query(PreviewAuditEvent)
+            .order_by(PreviewAuditEvent.lifecycle_order)
+            .all()
+        )
+        answer_evidence = persisted_events[-1].audit_payload["answer_evidence"]
+        self.assertEqual(answer_evidence["answer_state"], "answered")
+        self.assertEqual(answer_evidence["validation_status"], "pass")
+        self.assertEqual(answer_evidence["redaction_status"], "not_required")
+        self.assertEqual(answer_evidence["summary_strategy"], "mvp_answer_summary.v1")
+        self.assertEqual(answer_evidence["bounded_metadata"]["row_count"], 1)
+        self.assertEqual(answer_evidence["bounded_metadata"]["rows_used"], 1)
+        self.assertNotIn("rows", answer_evidence)
+        self.assertNotIn("Acme", str(answer_evidence))
 
     def test_execute_candidate_api_attaches_review_assumptions_to_answer_summary(
         self,
@@ -940,6 +954,39 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             "expected result columns were missing",
             persisted_events[-1].audit_payload["answer_text"],
         )
+        answer_evidence = persisted_events[-1].audit_payload["answer_evidence"]
+        self.assertEqual(
+            answer_evidence["answer_id"],
+            str(persisted_events[-1].event_id),
+        )
+        self.assertEqual(answer_evidence["request_id"], "request-123")
+        self.assertEqual(answer_evidence["candidate_id"], "candidate-123")
+        self.assertEqual(
+            answer_evidence["execution_run_id"],
+            payload["metadata"]["execution_run_id"],
+        )
+        self.assertEqual(answer_evidence["validation_status"], "fail")
+        self.assertEqual(answer_evidence["redaction_status"], "not_required")
+        self.assertEqual(
+            answer_evidence["summary_strategy"],
+            "mvp_answer_summary.v1",
+        )
+        self.assertEqual(answer_evidence["answer_state"], "insufficient_evidence")
+        self.assertEqual(
+            answer_evidence["insufficient_evidence_reason"],
+            "missing_columns",
+        )
+        self.assertEqual(
+            answer_evidence["audit_event_id"],
+            str(persisted_events[-1].event_id),
+        )
+        self.assertIn("result_hash", answer_evidence)
+        self.assertEqual(
+            answer_evidence["bounded_metadata"]["reason_codes"],
+            ["missing_expected_columns", "missing_required_columns"],
+        )
+        self.assertNotIn("rows", answer_evidence)
+        self.assertNotIn("Acme", str(answer_evidence))
 
         workflow_response = client.get(
             "/operator/workflow",
@@ -1006,7 +1053,14 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             return [{"vendor_name": f"Vendor {index}"} for index in range(225)]
 
         app_session = create_test_application_session(build_dev_authenticated_subject())
-        response = self._client(query_runner).post(
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name",),
+                required_columns=("vendor_name",),
+            ),
+        ).post(
             "/candidates/candidate-123/execute",
             headers=app_session.headers,
             cookies=app_session.cookies,
@@ -1063,6 +1117,23 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             self.assertEqual(event.audit_payload["execution_policy_version"], 3)
             self.assertNotIn("safequery_exec:secret", str(event.audit_payload))
             self.assertNotIn("business-postgres-source", str(event.audit_payload))
+
+        answer_evidence = persisted_events[-1].audit_payload["answer_evidence"]
+        self.assertEqual(answer_evidence["answer_state"], "insufficient_evidence")
+        self.assertEqual(answer_evidence["validation_status"], "warn")
+        self.assertEqual(answer_evidence["redaction_status"], "not_required")
+        self.assertEqual(
+            answer_evidence["insufficient_evidence_reason"],
+            "unsafe_truncation",
+        )
+        self.assertEqual(answer_evidence["bounded_metadata"]["row_count"], 200)
+        self.assertIs(answer_evidence["bounded_metadata"]["result_truncated"], True)
+        self.assertEqual(
+            answer_evidence["bounded_metadata"]["truncation_reason"],
+            "row_limit",
+        )
+        self.assertNotIn("rows", answer_evidence)
+        self.assertNotIn("Vendor 0", str(answer_evidence))
 
     def test_execute_candidate_missing_request_id_uses_controlled_fail_closed_error(
         self,

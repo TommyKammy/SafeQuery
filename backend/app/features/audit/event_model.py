@@ -97,6 +97,39 @@ class ExecutedEvidenceAuditPayload(BaseModel):
     can_authorize_execution: Literal[False] = False
 
 
+class AnswerEvidenceBoundedMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row_count: NonNegativeInt
+    row_limit: PositiveInt
+    result_truncated: bool
+    truncation_reason: Optional[NonEmptyTrimmedString] = None
+    rows_used: NonNegativeInt
+    reason_codes: tuple[NonEmptyTrimmedString, ...] = ()
+    redacted_columns: tuple[NonEmptyTrimmedString, ...] = ()
+    missing_expected_columns: tuple[NonEmptyTrimmedString, ...] = ()
+    missing_required_columns: tuple[NonEmptyTrimmedString, ...] = ()
+
+
+class AnswerEvidenceAuditPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["answer_evidence"] = "answer_evidence"
+    answer_id: UUID
+    request_id: NonEmptyTrimmedString
+    candidate_id: NonEmptyTrimmedString
+    execution_run_id: UUID
+    validation_status: Literal["pass", "warn", "fail"]
+    redaction_status: Literal["not_required", "applied", "fail"]
+    summary_strategy: NonEmptyTrimmedString
+    result_hash: NonEmptyTrimmedString
+    bounded_metadata: AnswerEvidenceBoundedMetadata
+    answer_state: Literal["answered", "insufficient_evidence"]
+    insufficient_evidence_reason: Optional[NonEmptyTrimmedString] = None
+    audit_event_id: UUID
+    audit_event_type: Literal["execution_completed"] = "execution_completed"
+
+
 class ReleaseGateScenarioAuditPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -140,6 +173,7 @@ class SourceAwareAuditEvent(BaseModel):
     retrieved_asset_ids: Optional[list[NonEmptyTrimmedString]] = None
     retrieved_citations: Optional[list[RetrievalCitationAuditPayload]] = None
     executed_evidence: Optional[list[ExecutedEvidenceAuditPayload]] = None
+    answer_evidence: Optional[AnswerEvidenceAuditPayload] = None
     release_gate_scenario: Optional[ReleaseGateScenarioAuditPayload] = None
     intent_mapping: Optional[dict[str, object]] = None
     analyst_mode_version: Optional[NonEmptyTrimmedString] = None
