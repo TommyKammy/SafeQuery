@@ -262,6 +262,24 @@ describe("HomePage", () => {
                     runState: "failed",
                     sourceId: "sap-approved-spend",
                     sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  },
+                  {
+                    insufficientEvidence: {
+                      answerText:
+                        "Insufficient evidence: expected result columns were missing. Next action: revise the SQL projection or semantic contract columns before requesting an answer.",
+                      nextAction: "revise_query_or_semantic_contract_columns",
+                      reason: "missing_columns"
+                    },
+                    itemType: "run",
+                    label: "Insufficient evidence run",
+                    lifecycleState: "insufficient_evidence",
+                    occurredAt: "2026-04-21T14:36:00Z",
+                    recordId: "run-insufficient-123",
+                    resultTruncated: false,
+                    rowCount: 1,
+                    runState: "insufficient_evidence",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
                   }
                 ],
                 sources: workflowPayload().sources
@@ -281,6 +299,9 @@ describe("HomePage", () => {
       name: /ambiguous candidate/i
     });
     const failedRunLink = within(history).getByRole("link", { name: /failed run/i });
+    const insufficientRunLink = within(history).getByRole("link", {
+      name: /insufficient evidence run/i
+    });
 
     expect(deniedCandidateLink).toHaveAttribute("href", expect.stringContaining("state=review_denied"));
     expect(deniedCandidateLink).toHaveAttribute(
@@ -297,6 +318,88 @@ describe("HomePage", () => {
     );
     expect(failedRunLink).toHaveAttribute("href", expect.stringContaining("state=failed"));
     expect(failedRunLink).toHaveAttribute("href", expect.stringContaining("history_record_id=run-123"));
+    expect(insufficientRunLink).toHaveAttribute(
+      "href",
+      expect.stringContaining("state=insufficient_evidence")
+    );
+    expect(insufficientRunLink).toHaveAttribute(
+      "href",
+      expect.stringContaining("history_record_id=run-insufficient-123")
+    );
+  });
+
+  it("reopens persisted insufficient evidence runs into the explicit state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    auditEvents: [
+                      {
+                        candidateId: "candidate-selected",
+                        eventId: "00000000-0000-4000-8000-000000000301",
+                        eventType: "execution_completed",
+                        executionRunId: "run-insufficient-123",
+                        occurredAt: "2026-04-21T14:36:00Z",
+                        requestId: "request-selected",
+                        resultTruncated: false,
+                        rowCount: 1,
+                        sourceId: "sap-approved-spend"
+                      }
+                    ],
+                    insufficientEvidence: {
+                      answerText:
+                        "Insufficient evidence: expected result columns were missing. Next action: revise the SQL projection or semantic contract columns before requesting an answer.",
+                      nextAction: "revise_query_or_semantic_contract_columns",
+                      reason: "missing_columns"
+                    },
+                    itemType: "run",
+                    label: "Insufficient evidence run",
+                    lifecycleState: "insufficient_evidence",
+                    occurredAt: "2026-04-21T14:36:00Z",
+                    recordId: "run-insufficient-123",
+                    resultTruncated: false,
+                    rowCount: 1,
+                    runState: "insufficient_evidence",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-insufficient-123",
+          question: "Insufficient evidence run",
+          source_id: "sap-approved-spend",
+          state: "insufficient_evidence"
+        }
+      })
+    );
+
+    expect(
+      screen.getByRole("heading", { name: /insufficient evidence state/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/insufficient evidence state reached/i)).toBeInTheDocument();
+    expect(screen.getByText(/expected result columns were missing/i)).toBeInTheDocument();
+    expect(screen.getByText(/Reason: missing columns/i)).toBeInTheDocument();
+    expect(screen.getByText(/Next action: revise query or semantic contract columns/i)).toBeInTheDocument();
   });
 
   it("reports malformed workflow payloads separately from unavailable transport", async () => {
@@ -1565,6 +1668,9 @@ describe("HomePage", () => {
       expect(screen.getByText(/insufficient evidence state reached/i)).toBeInTheDocument();
     });
 
+    expect(
+      screen.getByRole("heading", { name: /insufficient evidence state/i })
+    ).toBeInTheDocument();
     expect(screen.getByText(/expected result columns were missing/i)).toBeInTheDocument();
     expect(screen.getByText(/Reason: missing columns/i)).toBeInTheDocument();
     expect(screen.getByText(/Next action: revise query or semantic contract columns/i)).toBeInTheDocument();

@@ -923,6 +923,22 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             persisted_events[-1].audit_payload["result_truncated"],
             False,
         )
+        self.assertEqual(
+            persisted_events[-1].audit_payload["answer_state"],
+            "insufficient_evidence",
+        )
+        self.assertEqual(
+            persisted_events[-1].audit_payload["insufficient_evidence_reason"],
+            "missing_columns",
+        )
+        self.assertEqual(
+            persisted_events[-1].audit_payload["next_action"],
+            "revise_query_or_semantic_contract_columns",
+        )
+        self.assertIn(
+            "expected result columns were missing",
+            persisted_events[-1].audit_payload["answer_text"],
+        )
 
     def test_execute_candidate_api_rejects_malformed_validation_contract_before_consuming_approval(
         self,

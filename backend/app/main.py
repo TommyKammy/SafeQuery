@@ -147,6 +147,10 @@ _EXECUTION_DENIAL_AUDIT_FIELDS = frozenset(
         "candidate_state",
         "execution_row_count",
         "result_truncated",
+        "answer_state",
+        "answer_text",
+        "insufficient_evidence_reason",
+        "next_action",
     }
 )
 

@@ -103,6 +103,18 @@ export type OperatorWorkflowRevisionContext = {
   sourceId: string;
 };
 
+export type OperatorWorkflowInsufficientEvidenceReason =
+  | "no_rows"
+  | "missing_columns"
+  | "unsafe_truncation"
+  | "blocking_validation_warnings";
+
+export type OperatorWorkflowInsufficientEvidenceState = {
+  answerText: string;
+  nextAction: string;
+  reason: OperatorWorkflowInsufficientEvidenceReason;
+};
+
 export type OperatorHistoryItem = {
   analystResponse: AnalystResponsePayload | null;
   auditEvents: OperatorWorkflowAuditEvent[];
@@ -110,6 +122,7 @@ export type OperatorHistoryItem = {
   candidateSql?: string | null;
   executedEvidence: OperatorWorkflowExecutedEvidence[];
   guardStatus?: string | null;
+  insufficientEvidence?: OperatorWorkflowInsufficientEvidenceState | null;
   itemType: "request" | "candidate" | "run";
   label: string;
   lifecycleState: string;
@@ -422,6 +435,40 @@ function parseRevisionContext(value: unknown): OperatorWorkflowRevisionContext |
   };
 }
 
+function isInsufficientEvidenceReason(
+  value: unknown
+): value is OperatorWorkflowInsufficientEvidenceReason {
+  return (
+    value === "no_rows" ||
+    value === "missing_columns" ||
+    value === "unsafe_truncation" ||
+    value === "blocking_validation_warnings"
+  );
+}
+
+function parseInsufficientEvidenceState(
+  value: unknown
+): OperatorWorkflowInsufficientEvidenceState | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const answerText = readOptionalString(value.answerText);
+  const nextAction = readOptionalString(value.nextAction);
+  if (!answerText || !nextAction || !isInsufficientEvidenceReason(value.reason)) {
+    return null;
+  }
+
+  return {
+    answerText,
+    nextAction,
+    reason: value.reason
+  };
+}
+
 function parseGovernanceBindingStatus(value: unknown): GovernanceBindingStatus | null {
   if (!isObject(value)) {
     return null;
@@ -499,6 +546,11 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
   const retrievedCitations = parseArray(value.retrievedCitations, parseRetrievedCitation);
   const reviewEvidence = parseArray(value.reviewEvidence, parseReviewEvidence);
   const revisionContext = parseRevisionContext(value.revisionContext);
+  const hasInsufficientEvidence = Object.prototype.hasOwnProperty.call(
+    value,
+    "insufficientEvidence"
+  );
+  const insufficientEvidence = parseInsufficientEvidenceState(value.insufficientEvidence);
   const analystResponse =
     value.analystResponse === undefined || value.analystResponse === null
       ? null
@@ -516,7 +568,10 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     candidateAttempts === null ||
     executedEvidence === null ||
     retrievedCitations === null ||
-    reviewEvidence === null
+    reviewEvidence === null ||
+    (hasInsufficientEvidence &&
+      value.insufficientEvidence !== null &&
+      insufficientEvidence === null)
   ) {
     return null;
   }
@@ -528,6 +583,7 @@ function parseHistoryItem(value: unknown): OperatorHistoryItem | null {
     candidateSql: readOptionalString(value.candidateSql) ?? null,
     executedEvidence,
     guardStatus: readOptionalString(value.guardStatus) ?? null,
+    insufficientEvidence,
     itemType,
     label,
     lifecycleState,

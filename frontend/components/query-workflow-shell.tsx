@@ -1134,6 +1134,13 @@ function historyItemToState(item: OperatorHistoryItem): CanonicalWorkflowState {
     return "empty";
   }
 
+  if (
+    runState === "insufficient_evidence" ||
+    lifecycleState === "insufficient_evidence"
+  ) {
+    return "insufficient_evidence";
+  }
+
   if (runState === "execution_denied" || lifecycleState === "execution_denied") {
     return "execution_denied";
   }
@@ -1263,6 +1270,7 @@ function findAuthoritativeRunContext(
     analystResponse: run.analystResponse,
     auditEvents: run.auditEvents,
     executedEvidence: run.executedEvidence,
+    insufficientEvidence: run.insufficientEvidence ?? null,
     lifecycleState: run.lifecycleState,
     lifecycleTimestamp: run.occurredAt,
     primaryDenyCode: run.primaryDenyCode,
@@ -2173,6 +2181,29 @@ function renderStatePanel(
         <p className="section-copy">
           Empty outcomes are modeled explicitly so the operator can distinguish no-data from
           denial, auth failure, or transport issues.
+        </p>
+        <div className="action-row">
+          {onStartRevision ? (
+            <button className="action-button" onClick={onStartRevision} type="button">
+              Revise attempt
+            </button>
+          ) : null}
+          <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
+            Back to SQL preview
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "insufficient_evidence") {
+    return (
+      <div className="state-hero">
+        <p className="eyebrow">Validation held</p>
+        <h2>Insufficient evidence state</h2>
+        <p className="section-copy">
+          Execution completed, but validation could not support an answer. The operator must
+          revise the query, source, or validation inputs before treating rows as evidence.
         </p>
         <div className="action-row">
           {onStartRevision ? (

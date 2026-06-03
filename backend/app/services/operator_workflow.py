@@ -88,6 +88,10 @@ class OperatorWorkflowHistoryItem(BaseModel):
     )
     row_count: Optional[int] = Field(default=None, serialization_alias="rowCount")
     run_state: Optional[str] = Field(default=None, serialization_alias="runState")
+    insufficient_evidence: Optional["OperatorWorkflowInsufficientEvidenceState"] = Field(
+        default=None,
+        serialization_alias="insufficientEvidence",
+    )
     audit_events: list["OperatorWorkflowAuditEventSummary"] = Field(
         default_factory=list,
         serialization_alias="auditEvents",
@@ -130,6 +134,19 @@ class OperatorWorkflowReviewEvidence(BaseModel):
         default_factory=list,
         serialization_alias="clarifyingQuestions",
     )
+
+
+class OperatorWorkflowInsufficientEvidenceState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer_text: str = Field(serialization_alias="answerText")
+    next_action: str = Field(serialization_alias="nextAction")
+    reason: Literal[
+        "no_rows",
+        "missing_columns",
+        "unsafe_truncation",
+        "blocking_validation_warnings",
+    ]
 
 
 class OperatorWorkflowCandidateAttemptSummary(BaseModel):
@@ -427,6 +444,8 @@ def _latest_candidate_events(
 
 def _run_state_for_event(event: PreviewAuditEvent) -> str | None:
     if event.event_type == "execution_completed":
+        if _insufficient_evidence_for_event(event) is not None:
+            return "insufficient_evidence"
         row_count = event.audit_payload.get("execution_row_count")
         return "empty" if row_count == 0 else "completed"
 
@@ -440,7 +459,7 @@ def _run_state_for_event(event: PreviewAuditEvent) -> str | None:
 
 
 def _run_row_count_for_event(event: PreviewAuditEvent, run_state: str) -> int | None:
-    if run_state not in {"completed", "empty"}:
+    if run_state not in {"completed", "empty", "insufficient_evidence"}:
         return None
 
     row_count = event.audit_payload.get("execution_row_count")
@@ -451,7 +470,7 @@ def _run_result_truncated_for_event(
     event: PreviewAuditEvent,
     run_state: str,
 ) -> bool | None:
-    if run_state not in {"completed", "empty"}:
+    if run_state not in {"completed", "empty", "insufficient_evidence"}:
         return None
 
     result_truncated = event.audit_payload.get("result_truncated")
@@ -472,6 +491,38 @@ def _read_non_negative_int(value: object) -> int | None:
 
 def _read_positive_int(value: object) -> int | None:
     return value if isinstance(value, int) and value > 0 else None
+
+
+def _insufficient_evidence_for_event(
+    event: PreviewAuditEvent,
+) -> OperatorWorkflowInsufficientEvidenceState | None:
+    if (
+        event.event_type != "execution_completed"
+        or event.audit_payload.get("answer_state") != "insufficient_evidence"
+    ):
+        return None
+
+    answer_text = _read_text(event.audit_payload.get("answer_text"))
+    next_action = _read_text(event.audit_payload.get("next_action"))
+    reason = event.audit_payload.get("insufficient_evidence_reason")
+    if (
+        answer_text is None
+        or next_action is None
+        or reason
+        not in {
+            "no_rows",
+            "missing_columns",
+            "unsafe_truncation",
+            "blocking_validation_warnings",
+        }
+    ):
+        return None
+
+    return OperatorWorkflowInsufficientEvidenceState(
+        answer_text=answer_text,
+        next_action=next_action,
+        reason=reason,
+    )
 
 
 def _read_payload_items(value: object) -> list[dict[str, object]]:
@@ -857,6 +908,7 @@ def _build_operator_history(
                 result_truncated=_run_result_truncated_for_event(event, run_state),
                 row_count=_run_row_count_for_event(event, run_state),
                 run_state=run_state,
+                insufficient_evidence=_insufficient_evidence_for_event(event),
                 audit_events=[_audit_event_summary(event)],
                 executed_evidence=_executed_evidence_for_event(event),
                 retrieved_citations=_retrieved_citations_for_event(event),
