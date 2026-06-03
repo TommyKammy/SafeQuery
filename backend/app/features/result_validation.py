@@ -12,6 +12,7 @@ ResultValidationStatus = Literal["pass", "warn", "fail"]
 ResultValidationReason = Literal[
     "missing_expected_columns",
     "missing_required_columns",
+    "column_sensitivity_metadata_missing",
     "no_rows",
     "under_minimum_rows",
     "row_count_mismatch",
@@ -20,6 +21,8 @@ ResultValidationReason = Literal[
     "outlier_values_present",
     "aggregation_shape_mismatch",
 ]
+ColumnSensitivity = Literal["public", "sensitive"]
+ResultRedactionStatus = Literal["not_required", "applied", "fail"]
 
 
 class ResultValidationContract(BaseModel):
@@ -35,6 +38,8 @@ class ResultValidationContract(BaseModel):
     outlier_numeric_min: Optional[float] = None
     outlier_numeric_max: Optional[float] = None
     aggregate_columns: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
+    redaction_required: bool = False
+    column_sensitivity: Optional[dict[NonEmptyTrimmedString, ColumnSensitivity]] = None
 
 
 class ResultValidationMetadata(BaseModel):
@@ -68,6 +73,9 @@ class ResultValidationEvidence(BaseModel):
     )
     null_columns: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
     outlier_columns: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
+    redaction_status: ResultRedactionStatus = "not_required"
+    redacted_columns: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
+    unclassified_columns: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
 
 
 class ResultValidationOutcome(BaseModel):
@@ -101,11 +109,25 @@ def validate_execution_result(
     rows: list[dict[str, Any]],
     metadata: ResultValidationMetadata,
     contract: ResultValidationContract,
+    redaction_source_rows: list[dict[str, Any]] | None = None,
 ) -> ResultValidationOutcome:
     expected_columns = _unique_ordered(contract.expected_columns)
     required_columns = _unique_ordered(contract.required_columns)
     observed_columns = _observed_columns(rows)
-    observed_set = set(observed_columns)
+    redaction_observed_columns = (
+        _observed_columns(redaction_source_rows)
+        if redaction_source_rows is not None
+        else observed_columns
+    )
+    redaction_status, redacted_columns, unclassified_columns = _redaction_evidence(
+        observed_columns=redaction_observed_columns,
+        contract=contract,
+    )
+    contract_observed_columns = _contract_observed_columns_after_redaction(
+        observed_columns=observed_columns,
+        contract=contract,
+    )
+    observed_set = set(contract_observed_columns)
     missing_expected_columns = tuple(
         column for column in expected_columns if column not in observed_set
     )
@@ -125,11 +147,13 @@ def validate_execution_result(
     aggregation_shape = _aggregation_shape(
         rows=rows,
         expected_columns=expected_columns,
-        observed_columns=observed_columns,
+        observed_columns=contract_observed_columns,
         aggregate_columns=contract.aggregate_columns,
     )
 
     reason_codes: list[ResultValidationReason] = []
+    if unclassified_columns:
+        reason_codes.append("column_sensitivity_metadata_missing")
     if missing_expected_columns:
         reason_codes.append("missing_expected_columns")
     if missing_required_columns:
@@ -156,6 +180,7 @@ def validate_execution_result(
         reason_codes.append("aggregation_shape_mismatch")
 
     fail_reasons = {
+        "column_sensitivity_metadata_missing",
         "missing_expected_columns",
         "missing_required_columns",
         "no_rows",
@@ -183,6 +208,9 @@ def validate_execution_result(
         aggregation_shape=aggregation_shape,
         null_columns=null_columns,
         outlier_columns=outlier_columns,
+        redaction_status=redaction_status,
+        redacted_columns=redacted_columns,
+        unclassified_columns=unclassified_columns,
     )
     return ResultValidationOutcome(
         status=status,
@@ -194,6 +222,31 @@ def validate_execution_result(
     )
 
 
+def redact_execution_result_rows(
+    *,
+    rows: list[dict[str, Any]],
+    contract: ResultValidationContract | None,
+) -> list[dict[str, Any]]:
+    if contract is None or not contract.redaction_required:
+        return rows
+    sensitivity = contract.column_sensitivity or {}
+    redacted_columns = {
+        column
+        for column, classification in sensitivity.items()
+        if classification == "sensitive"
+    }
+    if not redacted_columns:
+        return rows
+    return [
+        {
+            column: value
+            for column, value in row.items()
+            if column not in redacted_columns
+        }
+        for row in rows
+    ]
+
+
 def _unique_ordered(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
@@ -203,6 +256,45 @@ def _observed_columns(rows: list[dict[str, Any]]) -> tuple[str, ...]:
     for row in rows:
         columns.update(str(column) for column in row)
     return tuple(sorted(columns))
+
+
+def _redaction_evidence(
+    *,
+    observed_columns: tuple[str, ...],
+    contract: ResultValidationContract,
+) -> tuple[ResultRedactionStatus, tuple[str, ...], tuple[str, ...]]:
+    if not contract.redaction_required:
+        return "not_required", (), ()
+
+    sensitivity = contract.column_sensitivity
+    if sensitivity is None:
+        return "fail", (), observed_columns
+
+    unclassified_columns = tuple(
+        column for column in observed_columns if column not in sensitivity
+    )
+    redacted_columns = tuple(
+        column
+        for column in observed_columns
+        if sensitivity.get(column) == "sensitive"
+    )
+    if unclassified_columns:
+        return "fail", redacted_columns, unclassified_columns
+    return "applied", redacted_columns, ()
+
+
+def _contract_observed_columns_after_redaction(
+    *,
+    observed_columns: tuple[str, ...],
+    contract: ResultValidationContract,
+) -> tuple[str, ...]:
+    if not contract.redaction_required or contract.column_sensitivity is None:
+        return observed_columns
+    return tuple(
+        column
+        for column in observed_columns
+        if contract.column_sensitivity.get(column) != "sensitive"
+    )
 
 
 def _columns_with_nulls(

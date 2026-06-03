@@ -29,6 +29,7 @@ from app.features.result_validation import (
     ResultValidationContract,
     ResultValidationMetadata,
     ResultValidationOutcome,
+    redact_execution_result_rows,
     validate_execution_result,
 )
 from app.features.guard.deny_taxonomy import (
@@ -1107,16 +1108,26 @@ def execute_candidate_sql(
             audit_context=audit_context,
         ) from exc
 
+    rows_for_payload_limits = redact_execution_result_rows(
+        rows=rows,
+        contract=result_validation_contract,
+    )
     capped_rows, metadata = _cap_rows(
-        rows,
+        rows_for_payload_limits,
         runtime_controls=runtime_controls,
         candidate_source=candidate.source,
         audit_context=audit_context,
     )
+    result_rows = capped_rows
     if result_validation_contract is not None:
         assert candidate.source.semantic_contract_version is not None
         assert metadata.candidate_id is not None
         assert metadata.execution_run_id is not None
+        redaction_source_rows = (
+            rows[: len(capped_rows)]
+            if result_validation_contract.redaction_required
+            else None
+        )
         result_validation = validate_execution_result(
             rows=capped_rows,
             metadata=ResultValidationMetadata(
@@ -1128,6 +1139,7 @@ def execute_candidate_sql(
                 result_truncated=metadata.result_truncated,
             ),
             contract=result_validation_contract,
+            redaction_source_rows=redaction_source_rows,
         )
         metadata = metadata.model_copy(update={"result_validation": result_validation})
         if not result_validation.answer_generation_allowed:
@@ -1142,7 +1154,7 @@ def execute_candidate_sql(
         source_id=selection.source_id,
         connector_id=selection.connector_id,
         ownership=selection.ownership,
-        rows=capped_rows,
+        rows=result_rows,
         metadata=metadata,
     )
     result._audit_events = _build_execution_audit_events(
