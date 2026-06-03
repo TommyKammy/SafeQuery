@@ -452,10 +452,14 @@ def _build_execution_audit_events(
                 candidate_state if event_type == "execution_failed" else None
             ),
             execution_row_count=(
-                execution_row_count if event_type == "execution_completed" else None
+                execution_row_count
+                if event_type in {"execution_completed", "execution_denied"}
+                else None
             ),
             result_truncated=(
-                result_truncated if event_type == "execution_completed" else None
+                result_truncated
+                if event_type in {"execution_completed", "execution_denied"}
+                else None
             ),
             release_gate_guard_decision=(
                 release_gate_guard_decision
@@ -586,6 +590,8 @@ def _raise_result_validation_denial(
             canonical_sql=canonical_sql,
             primary_deny_code=DENY_RESULT_VALIDATION_FAILED,
             denial_reason=denial_reason,
+            execution_row_count=validation.evidence.row_count,
+            result_truncated=validation.evidence.result_truncated,
             release_gate_guard_decision="allow",
         ),
     )

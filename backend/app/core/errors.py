@@ -71,13 +71,17 @@ _SAFE_EXECUTION_AUDIT_FIELDS = frozenset(
         "source_family",
         "source_flavor",
         "dataset_contract_version",
+        "semantic_contract_version",
         "schema_snapshot_version",
         "execution_policy_version",
         "connector_profile_version",
+        "release_gate_scenario",
         "primary_deny_code",
         "denial_cause",
         "denial_reason",
         "candidate_state",
+        "execution_row_count",
+        "result_truncated",
     }
 )
 

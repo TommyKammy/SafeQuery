@@ -124,6 +124,7 @@ def validate_execution_result(
     )
     aggregation_shape = _aggregation_shape(
         rows=rows,
+        expected_columns=expected_columns,
         observed_columns=observed_columns,
         aggregate_columns=contract.aggregate_columns,
     )
@@ -257,6 +258,7 @@ def _decimal_for_outlier_value(value: object) -> Decimal | None:
 def _aggregation_shape(
     *,
     rows: list[dict[str, Any]],
+    expected_columns: tuple[str, ...],
     observed_columns: tuple[str, ...],
     aggregate_columns: tuple[str, ...],
 ) -> Literal["not_applicable", "valid", "mismatch"]:
@@ -267,7 +269,7 @@ def _aggregation_shape(
         return "mismatch"
 
     grouping_columns = tuple(
-        column for column in observed_columns if column not in aggregate_column_set
+        column for column in expected_columns if column not in aggregate_column_set
     )
     if not grouping_columns:
         return "mismatch" if len(rows) > 1 else "valid"

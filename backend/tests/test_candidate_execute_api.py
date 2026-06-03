@@ -506,9 +506,28 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             payload["audit"]["events"][-1]["denial_reason"],
             "missing_expected_columns,missing_required_columns",
         )
+        self.assertEqual(payload["audit"]["events"][-1]["execution_row_count"], 1)
+        self.assertIs(payload["audit"]["events"][-1]["result_truncated"], False)
         self.assertEqual(
             calls,
             ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
+        )
+        persisted_events = (
+            self.session.query(PreviewAuditEvent)
+            .order_by(PreviewAuditEvent.lifecycle_order)
+            .all()
+        )
+        self.assertEqual(
+            [event.event_type for event in persisted_events],
+            ["execution_requested", "execution_started", "execution_denied"],
+        )
+        self.assertEqual(
+            persisted_events[-1].audit_payload["execution_row_count"],
+            1,
+        )
+        self.assertIs(
+            persisted_events[-1].audit_payload["result_truncated"],
+            False,
         )
 
     def test_execute_candidate_api_rejects_malformed_validation_contract_before_consuming_approval(

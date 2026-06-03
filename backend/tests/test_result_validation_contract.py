@@ -161,6 +161,33 @@ def test_result_validation_rejects_multi_row_ungrouped_aggregate_shape() -> None
     assert validation.evidence.aggregation_shape == "mismatch"
 
 
+def test_result_validation_uses_expected_grouping_columns_for_aggregate_shape() -> None:
+    validation = validate_execution_result(
+        rows=[
+            {
+                "invoice_id": "invoice-1",
+                "vendor_name": "Acme",
+                "approved_spend": 100,
+            },
+            {
+                "invoice_id": "invoice-2",
+                "vendor_name": "Acme",
+                "approved_spend": 200,
+            },
+        ],
+        metadata=_metadata(row_count=2),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+            aggregate_columns=("approved_spend",),
+        ),
+    )
+
+    assert validation.status == "fail"
+    assert "aggregation_shape_mismatch" in validation.reason_codes
+    assert validation.evidence.aggregation_shape == "mismatch"
+
+
 def test_result_validation_does_not_assume_expected_columns_for_empty_results() -> None:
     validation = validate_execution_result(
         rows=[],
