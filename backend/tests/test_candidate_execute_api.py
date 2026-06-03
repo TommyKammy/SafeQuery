@@ -430,6 +430,55 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(validation["evidence"]["redacted_columns"], ["vendor_email"])
         self.assertEqual(validation["evidence"]["unclassified_columns"], [])
 
+    def test_execute_candidate_api_applies_payload_limit_after_redaction(
+        self,
+    ) -> None:
+        sensitive_note = "private-note-" + ("x" * 70_000)
+
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "vendor_name": "Acme",
+                    "analyst_note": sensitive_note,
+                },
+                {
+                    "vendor_name": "Beta",
+                    "analyst_note": sensitive_note,
+                },
+            ]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name",),
+                required_columns=("vendor_name",),
+                redaction_required=True,
+                column_sensitivity={
+                    "vendor_name": "public",
+                    "analyst_note": "sensitive",
+                },
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            payload["rows"],
+            [{"vendor_name": "Acme"}, {"vendor_name": "Beta"}],
+        )
+        self.assertEqual(payload["metadata"]["row_count"], 2)
+        self.assertLess(payload["metadata"]["payload_bytes"], 64 * 1024)
+        self.assertIs(payload["metadata"]["result_truncated"], False)
+        self.assertNotIn("truncation_reason", payload["metadata"])
+        self.assertNotIn("private-note-", response.text)
+
     def test_execute_candidate_api_fails_closed_when_redaction_metadata_is_missing(
         self,
     ) -> None:

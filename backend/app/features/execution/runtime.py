@@ -1108,8 +1108,12 @@ def execute_candidate_sql(
             audit_context=audit_context,
         ) from exc
 
+    rows_for_payload_limits = redact_execution_result_rows(
+        rows=rows,
+        contract=result_validation_contract,
+    )
     capped_rows, metadata = _cap_rows(
-        rows,
+        rows_for_payload_limits,
         runtime_controls=runtime_controls,
         candidate_source=candidate.source,
         audit_context=audit_context,
@@ -1119,8 +1123,13 @@ def execute_candidate_sql(
         assert candidate.source.semantic_contract_version is not None
         assert metadata.candidate_id is not None
         assert metadata.execution_run_id is not None
+        validation_rows = (
+            rows
+            if result_validation_contract.redaction_required
+            else capped_rows
+        )
         result_validation = validate_execution_result(
-            rows=capped_rows,
+            rows=validation_rows,
             metadata=ResultValidationMetadata(
                 semantic_contract_version=candidate.source.semantic_contract_version,
                 candidate_id=metadata.candidate_id,
@@ -1139,10 +1148,6 @@ def execute_candidate_sql(
                 canonical_sql=candidate.canonical_sql,
                 audit_context=audit_context,
             )
-        result_rows = redact_execution_result_rows(
-            rows=capped_rows,
-            contract=result_validation_contract,
-        )
 
     result = ExecutionResult(
         source_id=selection.source_id,

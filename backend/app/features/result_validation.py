@@ -117,7 +117,11 @@ def validate_execution_result(
         observed_columns=observed_columns,
         contract=contract,
     )
-    observed_set = set(observed_columns)
+    contract_observed_columns = _contract_observed_columns_after_redaction(
+        observed_columns=observed_columns,
+        contract=contract,
+    )
+    observed_set = set(contract_observed_columns)
     missing_expected_columns = tuple(
         column for column in expected_columns if column not in observed_set
     )
@@ -137,7 +141,7 @@ def validate_execution_result(
     aggregation_shape = _aggregation_shape(
         rows=rows,
         expected_columns=expected_columns,
-        observed_columns=observed_columns,
+        observed_columns=contract_observed_columns,
         aggregate_columns=contract.aggregate_columns,
     )
 
@@ -271,6 +275,20 @@ def _redaction_evidence(
     if unclassified_columns:
         return "fail", redacted_columns, unclassified_columns
     return "applied", redacted_columns, ()
+
+
+def _contract_observed_columns_after_redaction(
+    *,
+    observed_columns: tuple[str, ...],
+    contract: ResultValidationContract,
+) -> tuple[str, ...]:
+    if not contract.redaction_required or contract.column_sensitivity is None:
+        return observed_columns
+    return tuple(
+        column
+        for column in observed_columns
+        if contract.column_sensitivity.get(column) != "sensitive"
+    )
 
 
 def _columns_with_nulls(
