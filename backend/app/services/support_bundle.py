@@ -280,12 +280,72 @@ class GovernanceReviewAdapterEvidence(BaseModel):
     )
 
 
+class GovernanceReviewRequestEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authority: Literal["safequery_control_plane"] = "safequery_control_plane"
+    request_state: str = Field(serialization_alias="requestState")
+    request_text: str = Field(serialization_alias="requestText")
+    semantic_contract_version: Optional[str] = Field(
+        default=None,
+        serialization_alias="semanticContractVersion",
+    )
+
+
+class GovernanceReviewSemanticMappingEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authority: Literal["safequery_control_plane"] = "safequery_control_plane"
+    status: str
+    intent: Optional[str] = None
+    metric: Optional[str] = None
+    dimensions: list[str] = Field(default_factory=list)
+    filters: list[str] = Field(default_factory=list)
+    insufficient_evidence_reason: Optional[str] = Field(
+        default=None,
+        serialization_alias="insufficientEvidenceReason",
+    )
+
+
+class GovernanceReviewSqlCandidateEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authority: Literal["safequery_control_plane"] = "safequery_control_plane"
+    candidate_sql_redaction: Literal["raw_sql_excluded"] = Field(
+        default="raw_sql_excluded",
+        serialization_alias="candidateSqlRedaction",
+    )
+    release_gate_scenario_id: Optional[str] = Field(
+        default=None,
+        serialization_alias="releaseGateScenarioId",
+    )
+
+
+class GovernanceReviewGuardDecisionEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authority: Literal["safequery_control_plane"] = "safequery_control_plane"
+    decision: str
+    guard_version: Optional[str] = Field(
+        default=None,
+        serialization_alias="guardVersion",
+    )
+    guard_audit_event_id: str = Field(serialization_alias="guardAuditEventId")
+
+
 class GovernanceReviewCandidateEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     authority: Literal["safequery_control_plane"] = "safequery_control_plane"
     candidate_state: str = Field(serialization_alias="candidateState")
     guard_status: str = Field(serialization_alias="guardStatus")
+    sql_candidate: GovernanceReviewSqlCandidateEvidence = Field(
+        serialization_alias="sqlCandidate",
+    )
+    guard_decision: Optional[GovernanceReviewGuardDecisionEvidence] = Field(
+        default=None,
+        serialization_alias="guardDecision",
+    )
     adapter_evidence: GovernanceReviewAdapterEvidence = Field(
         serialization_alias="adapterEvidence",
     )
@@ -319,6 +379,48 @@ class GovernanceReviewExecuteResultEvidence(BaseModel):
         default=None,
         serialization_alias="resultTruncated",
     )
+    validation: Optional["GovernanceReviewValidationEvidence"] = None
+    redaction: Optional["GovernanceReviewRedactionEvidence"] = None
+    answer: Optional["GovernanceReviewAnswerEvidence"] = None
+
+
+class GovernanceReviewValidationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authority: Literal["safequery_control_plane"] = "safequery_control_plane"
+    status: str
+    reason_codes: list[str] = Field(
+        default_factory=list,
+        serialization_alias="reasonCodes",
+    )
+    row_limit: Optional[int] = Field(default=None, serialization_alias="rowLimit")
+    rows_used: Optional[int] = Field(default=None, serialization_alias="rowsUsed")
+
+
+class GovernanceReviewRedactionEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authority: Literal["safequery_control_plane"] = "safequery_control_plane"
+    status: str
+    redacted_columns: list[str] = Field(
+        default_factory=list,
+        serialization_alias="redactedColumns",
+    )
+
+
+class GovernanceReviewAnswerEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authority: Literal["safequery_control_plane"] = "safequery_control_plane"
+    answer_state: str = Field(serialization_alias="answerState")
+    summary_strategy: str = Field(serialization_alias="summaryStrategy")
+    answer_evidence_id: str = Field(serialization_alias="answerEvidenceId")
+    execution_run_id: str = Field(serialization_alias="executionRunId")
+    result_hash: str = Field(serialization_alias="resultHash")
+    insufficient_evidence_reason: Optional[str] = Field(
+        default=None,
+        serialization_alias="insufficientEvidenceReason",
+    )
 
 
 class GovernanceReviewEvidence(BaseModel):
@@ -336,6 +438,11 @@ class GovernanceReviewEvidence(BaseModel):
     source_flavor: Optional[str] = Field(default=None, serialization_alias="sourceFlavor")
     dataset_contract_version: int = Field(serialization_alias="datasetContractVersion")
     schema_snapshot_version: int = Field(serialization_alias="schemaSnapshotVersion")
+    request: GovernanceReviewRequestEvidence
+    semantic_mapping: Optional[GovernanceReviewSemanticMappingEvidence] = Field(
+        default=None,
+        serialization_alias="semanticMapping",
+    )
     lifecycle: list[GovernanceReviewLifecycleEvent]
     actor: GovernanceReviewActorEvidence
     candidate: Optional[GovernanceReviewCandidateEvidence] = None
@@ -544,6 +651,149 @@ def _payload_bool(payload: Mapping[str, object], key: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def _payload_mapping(
+    payload: Mapping[str, object],
+    key: str,
+) -> Mapping[str, object] | None:
+    value = payload.get(key)
+    return value if isinstance(value, Mapping) else None
+
+
+def _payload_string(payload: Mapping[str, object], key: str) -> str | None:
+    value = payload.get(key)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _payload_string_list(
+    payload: Mapping[str, object],
+    key: str,
+) -> list[str]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def _latest_payload_mapping(
+    events: list[PreviewAuditEvent],
+    key: str,
+) -> Mapping[str, object] | None:
+    for event in sorted(events, key=_audit_event_sort_key, reverse=True):
+        payload = _payload_mapping(event.audit_payload, key)
+        if payload is not None:
+            return payload
+    return None
+
+
+def _semantic_mapping_evidence(
+    events: list[PreviewAuditEvent],
+) -> GovernanceReviewSemanticMappingEvidence | None:
+    intent_mapping = _latest_payload_mapping(events, "intent_mapping")
+    if intent_mapping is None:
+        return None
+    semantic_mapping = _payload_mapping(intent_mapping, "semantic_mapping") or {}
+    status = _payload_string(intent_mapping, "status")
+    if status is None:
+        return None
+    return GovernanceReviewSemanticMappingEvidence(
+        status=status,
+        intent=_payload_string(intent_mapping, "intent"),
+        metric=_payload_string(semantic_mapping, "metric"),
+        dimensions=_payload_string_list(semantic_mapping, "dimensions"),
+        filters=_payload_string_list(semantic_mapping, "filters"),
+        insufficient_evidence_reason=_payload_string(
+            intent_mapping,
+            "insufficient_evidence_reason",
+        ),
+    )
+
+
+def _release_gate_payload(
+    events: list[PreviewAuditEvent],
+) -> Mapping[str, object] | None:
+    return _latest_payload_mapping(events, "release_gate_scenario")
+
+
+def _guard_decision_evidence(
+    events: list[PreviewAuditEvent],
+) -> GovernanceReviewGuardDecisionEvidence | None:
+    guard_event = next(
+        (
+            event
+            for event in sorted(events, key=_audit_event_sort_key, reverse=True)
+            if event.event_type == "guard_evaluated"
+        ),
+        None,
+    )
+    if guard_event is None:
+        return None
+    decision = _payload_string(guard_event.audit_payload, "guard_decision")
+    if decision is None:
+        return None
+    return GovernanceReviewGuardDecisionEvidence(
+        decision=decision,
+        guard_version=_payload_string(guard_event.audit_payload, "guard_version"),
+        guard_audit_event_id=str(guard_event.event_id),
+    )
+
+
+def _validation_evidence(
+    answer_evidence: Mapping[str, object],
+) -> GovernanceReviewValidationEvidence | None:
+    status = _payload_string(answer_evidence, "validation_status")
+    bounded_metadata = _payload_mapping(answer_evidence, "bounded_metadata")
+    if status is None or bounded_metadata is None:
+        return None
+    return GovernanceReviewValidationEvidence(
+        status=status,
+        reason_codes=_payload_string_list(bounded_metadata, "reason_codes"),
+        row_limit=_payload_non_negative_int(bounded_metadata, "row_limit"),
+        rows_used=_payload_non_negative_int(bounded_metadata, "rows_used"),
+    )
+
+
+def _redaction_evidence(
+    answer_evidence: Mapping[str, object],
+) -> GovernanceReviewRedactionEvidence | None:
+    status = _payload_string(answer_evidence, "redaction_status")
+    if status is None:
+        return None
+    bounded_metadata = _payload_mapping(answer_evidence, "bounded_metadata") or {}
+    return GovernanceReviewRedactionEvidence(
+        status=status,
+        redacted_columns=_payload_string_list(bounded_metadata, "redacted_columns"),
+    )
+
+
+def _answer_evidence(
+    answer_evidence: Mapping[str, object],
+) -> GovernanceReviewAnswerEvidence | None:
+    answer_state = _payload_string(answer_evidence, "answer_state")
+    summary_strategy = _payload_string(answer_evidence, "summary_strategy")
+    answer_evidence_id = _payload_string(answer_evidence, "answer_id")
+    execution_run_id = _payload_string(answer_evidence, "execution_run_id")
+    result_hash = _payload_string(answer_evidence, "result_hash")
+    if (
+        answer_state is None
+        or summary_strategy is None
+        or answer_evidence_id is None
+        or execution_run_id is None
+        or result_hash is None
+    ):
+        return None
+    return GovernanceReviewAnswerEvidence(
+        answer_state=answer_state,
+        summary_strategy=summary_strategy,
+        answer_evidence_id=answer_evidence_id,
+        execution_run_id=execution_run_id,
+        result_hash=result_hash,
+        insufficient_evidence_reason=_payload_string(
+            answer_evidence,
+            "insufficient_evidence_reason",
+        ),
+    )
+
+
 def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
     requests = (
         session.execute(select(PreviewRequest).order_by(PreviewRequest.created_at))
@@ -624,6 +874,12 @@ def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
                 ),
                 None,
             )
+            release_gate = _release_gate_payload(lifecycle_events)
+            answer_payload = (
+                _payload_mapping(execution_event.audit_payload, "answer_evidence")
+                if execution_event is not None
+                else None
+            )
             evidence.append(
                 GovernanceReviewEvidence(
                     request_id=request.request_id,
@@ -633,6 +889,12 @@ def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
                     source_flavor=request.source_flavor,
                     dataset_contract_version=request.dataset_contract_version,
                     schema_snapshot_version=request.schema_snapshot_version,
+                    request=GovernanceReviewRequestEvidence(
+                        request_state=request.request_state,
+                        request_text=request.request_text,
+                        semantic_contract_version=request.semantic_contract_version,
+                    ),
+                    semantic_mapping=_semantic_mapping_evidence(lifecycle_events),
                     lifecycle=lifecycle,
                     actor=GovernanceReviewActorEvidence(
                         authenticated_subject_id=request.authenticated_subject_id,
@@ -644,6 +906,14 @@ def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
                         GovernanceReviewCandidateEvidence(
                             candidate_state=candidate.candidate_state,
                             guard_status=candidate.guard_status,
+                            sql_candidate=GovernanceReviewSqlCandidateEvidence(
+                                release_gate_scenario_id=(
+                                    _payload_string(release_gate, "scenario_id")
+                                    if release_gate is not None
+                                    else None
+                                ),
+                            ),
+                            guard_decision=_guard_decision_evidence(lifecycle_events),
                             adapter_evidence=GovernanceReviewAdapterEvidence(
                                 adapter_provider=candidate.adapter_provider,
                                 adapter_model=candidate.adapter_model,
@@ -691,6 +961,21 @@ def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
                             result_truncated=_payload_bool(
                                 execution_event.audit_payload,
                                 "result_truncated",
+                            ),
+                            validation=(
+                                _validation_evidence(answer_payload)
+                                if answer_payload is not None
+                                else None
+                            ),
+                            redaction=(
+                                _redaction_evidence(answer_payload)
+                                if answer_payload is not None
+                                else None
+                            ),
+                            answer=(
+                                _answer_evidence(answer_payload)
+                                if answer_payload is not None
+                                else None
                             ),
                         )
                         if execution_event is not None
