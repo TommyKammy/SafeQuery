@@ -400,6 +400,10 @@ describe("HomePage", () => {
     expect(screen.getByText(/expected result columns were missing/i)).toBeInTheDocument();
     expect(screen.getByText(/Reason: missing columns/i)).toBeInTheDocument();
     expect(screen.getByText(/Next action: revise query or semantic contract columns/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /revise attempt/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /query input state/i })
+    ).not.toBeInTheDocument();
   });
 
   it("reports malformed workflow payloads separately from unavailable transport", async () => {
@@ -1674,6 +1678,10 @@ describe("HomePage", () => {
     expect(screen.getByText(/expected result columns were missing/i)).toBeInTheDocument();
     expect(screen.getByText(/Reason: missing columns/i)).toBeInTheDocument();
     expect(screen.getByText(/Next action: revise query or semantic contract columns/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /revise attempt/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /query input state/i })
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: /execute response result rows/i })).not.toBeInTheDocument();
     expect(screen.queryByText("Acme Supplies")).not.toBeInTheDocument();
     expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent("execution_completed");

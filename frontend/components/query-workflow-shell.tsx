@@ -1359,6 +1359,7 @@ function revisionDraftFromSelectedContext(
     sourceId &&
     (state === "completed" ||
       state === "empty" ||
+      state === "insufficient_evidence" ||
       state === "failed" ||
       state === "execution_denied")
   ) {

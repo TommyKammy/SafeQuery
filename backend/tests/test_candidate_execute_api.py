@@ -863,14 +863,15 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             return [{"vendor_name": "Acme"}]
 
         app_session = create_test_application_session(build_dev_authenticated_subject())
-        response = self._client(
+        client = self._client(
             query_runner,
             result_validation_contract=ResultValidationContract(
                 semantic_contract_version="approved_vendor_spend.v1",
                 expected_columns=("vendor_name", "approved_spend"),
                 required_columns=("approved_spend",),
             ),
-        ).post(
+        )
+        response = client.post(
             "/candidates/candidate-123/execute",
             headers=app_session.headers,
             cookies=app_session.cookies,
@@ -939,6 +940,36 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             "expected result columns were missing",
             persisted_events[-1].audit_payload["answer_text"],
         )
+
+        workflow_response = client.get(
+            "/operator/workflow",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+        )
+        self.assertEqual(workflow_response.status_code, 200)
+        workflow_payload = workflow_response.json()
+        run_history = [
+            item
+            for item in workflow_payload["history"]
+            if item["itemType"] == "run"
+            and item["recordId"] == payload["metadata"]["execution_run_id"]
+        ]
+        self.assertEqual(len(run_history), 1)
+        self.assertEqual(run_history[0]["runState"], "insufficient_evidence")
+        self.assertEqual(
+            run_history[0]["lifecycleState"],
+            "insufficient_evidence",
+        )
+        self.assertEqual(
+            run_history[0]["insufficientEvidence"],
+            {
+                "answerText": persisted_events[-1].audit_payload["answer_text"],
+                "nextAction": "revise_query_or_semantic_contract_columns",
+                "reason": "missing_columns",
+            },
+        )
+        self.assertEqual(run_history[0]["rowCount"], 1)
+        self.assertIs(run_history[0]["resultTruncated"], False)
 
     def test_execute_candidate_api_rejects_malformed_validation_contract_before_consuming_approval(
         self,
