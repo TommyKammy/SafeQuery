@@ -15,6 +15,8 @@ from pydantic import (
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+ResultValueClaim = tuple[str, int, int]
+RowCitationClaim = tuple[str, tuple[ResultValueClaim, ...]]
 
 GovernedAnswerCaseType = Literal[
     "positive",
@@ -551,8 +553,29 @@ def _check_required_row_citations(
         or result_metadata.get("enforce_citations") is True
     ):
         return
+    for claim, claim_values in _required_row_citation_claims(
+        answer_text=answer_text,
+        result_rows=result_rows,
+        result_metadata=result_metadata,
+    ):
+        _check_required_row_citation_for_claim_values(
+            answer_text=answer_text,
+            claim_values=claim_values,
+            claim=claim,
+            result_rows=result_rows,
+            categories=categories,
+            unsupported_claims=unsupported_claims,
+        )
+
+
+def _required_row_citation_claims(
+    *,
+    answer_text: str,
+    result_rows: Sequence[Mapping[str, Any]],
+    result_metadata: Mapping[str, Any],
+) -> tuple[RowCitationClaim, ...]:
     claimed_values = _claimed_result_value_matches(answer_text)
-    citation_claims: list[tuple[str, tuple[tuple[str, int, int], ...]]] = []
+    citation_claims: list[RowCitationClaim] = []
     paired_claim_spans: set[tuple[int, int]] = set()
     for left, right in _claimed_result_row_value_pairs(answer_text):
         paired_claim_spans.add((left[1], left[2]))
@@ -576,21 +599,13 @@ def _check_required_row_citations(
             continue
         citation_claims.append((claim_value, ((claim_value, start, end),)))
 
-    for claim, claim_values in citation_claims:
-        _check_required_row_citation_for_claim_values(
-            answer_text=answer_text,
-            claim_values=claim_values,
-            claim=claim,
-            result_rows=result_rows,
-            categories=categories,
-            unsupported_claims=unsupported_claims,
-        )
+    return tuple(citation_claims)
 
 
 def _check_required_row_citation_for_claim_values(
     *,
     answer_text: str,
-    claim_values: Sequence[tuple[str, int, int]],
+    claim_values: Sequence[ResultValueClaim],
     claim: str,
     result_rows: Sequence[Mapping[str, Any]],
     categories: list[GovernedAnswerUnsupportedClaimCategory],
@@ -1014,8 +1029,8 @@ def _claimed_result_values(answer_text: str) -> tuple[str, ...]:
     )
 
 
-def _claimed_result_value_matches(answer_text: str) -> tuple[tuple[str, int, int], ...]:
-    claimed_values: list[tuple[str, int, int]] = []
+def _claimed_result_value_matches(answer_text: str) -> tuple[ResultValueClaim, ...]:
+    claimed_values: list[ResultValueClaim] = []
     for match in _RESULT_VALUE_PATTERN.finditer(answer_text):
         value = match.group(0)
         if _is_incidental_integer_claim(answer_text, match) or _is_row_reference_value(
@@ -1126,11 +1141,12 @@ def _unsupported_claimed_result_row_combinations(
 
 def _claimed_result_row_value_pairs(
     answer_text: str,
-) -> tuple[tuple[tuple[str, int, int], tuple[str, int, int]], ...]:
-    pairs: list[tuple[tuple[str, int, int], tuple[str, int, int]]] = []
+) -> tuple[tuple[ResultValueClaim, ResultValueClaim], ...]:
+    pairs: list[tuple[ResultValueClaim, ResultValueClaim]] = []
     claimed_values = _claimed_result_value_matches(answer_text)
     for left, right in zip(claimed_values, claimed_values[1:]):
-        if _claim_values_are_row_linked(answer_text[left[2] : right[1]]):
+        between_values = _claim_value_link_context(answer_text[left[2] : right[1]])
+        if _claim_values_are_row_linked(between_values):
             pairs.append((left, right))
     return tuple(pairs)
 
