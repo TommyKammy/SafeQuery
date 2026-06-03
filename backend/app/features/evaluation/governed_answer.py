@@ -548,19 +548,12 @@ def _check_required_row_citations(
     ):
         return
     claimed_values = _claimed_result_value_matches(answer_text)
+    citation_claims: list[tuple[str, tuple[tuple[str, int, int], ...]]] = []
     paired_claim_spans: set[tuple[int, int]] = set()
     for left, right in _claimed_result_row_value_pairs(answer_text):
         paired_claim_spans.add((left[1], left[2]))
         paired_claim_spans.add((right[1], right[2]))
-        claim = f"{left[0]} with {right[0]}"
-        _check_required_row_citation_for_claim_values(
-            answer_text=answer_text,
-            claim_values=(left, right),
-            claim=claim,
-            result_rows=result_rows,
-            categories=categories,
-            unsupported_claims=unsupported_claims,
-        )
+        citation_claims.append((f"{left[0]} with {right[0]}", (left, right)))
 
     for claim_value, start, end in claimed_values:
         if (start, end) in paired_claim_spans:
@@ -577,10 +570,13 @@ def _check_required_row_citations(
             _supported_result_values(result_rows)
         ):
             continue
+        citation_claims.append((claim_value, ((claim_value, start, end),)))
+
+    for claim, claim_values in citation_claims:
         _check_required_row_citation_for_claim_values(
             answer_text=answer_text,
-            claim_values=((claim_value, start, end),),
-            claim=claim_value,
+            claim_values=claim_values,
+            claim=claim,
             result_rows=result_rows,
             categories=categories,
             unsupported_claims=unsupported_claims,
