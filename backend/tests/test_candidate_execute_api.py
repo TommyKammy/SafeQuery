@@ -440,6 +440,41 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             answer_summary["answer_text"],
         )
 
+    def test_execute_candidate_api_bounds_review_assumptions_in_answer_summary(
+        self,
+    ) -> None:
+        long_assumption = "Rows are sorted by " + ("approved spend " * 40)
+        self._seed_review_decision("ready", assumptions=[long_assumption])
+
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [{"vendor_name": "Acme", "approved_spend": 1200}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("vendor_name", "approved_spend"),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        answer_summary = response.json()["metadata"]["answer_summary"]
+        self.assertNotIn(long_assumption, answer_summary["answer_text"])
+        displayed_assumption = answer_summary["assumptions"][0]
+        self.assertTrue(displayed_assumption.endswith("... [truncated]"))
+        self.assertEqual(len(displayed_assumption), 160)
+        self.assertIn(
+            f"Assumptions: {displayed_assumption}.",
+            answer_summary["answer_text"],
+        )
+
     def test_execute_candidate_api_redacts_sensitive_columns_before_result_rows(
         self,
     ) -> None:

@@ -421,3 +421,87 @@ def test_mvp_answer_summary_bounds_large_row_values() -> None:
     )[0]
     assert displayed_vendor.endswith("... [truncated]")
     assert len(displayed_vendor) == 160
+
+
+def test_mvp_answer_summary_bounds_large_numeric_spend_values() -> None:
+    long_amount = int("9" * 400)
+    rows = [{"vendor_name": "Acme", "approved_spend": long_amount}]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=1),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+    )
+
+    assert str(long_amount) not in summary.answer_text
+    displayed_amount = summary.answer_text.split(
+        " (unspecified period) - ",
+        maxsplit=1,
+    )[1].split(". Source:", maxsplit=1)[0]
+    assert displayed_amount.endswith("... [truncated]")
+    assert len(displayed_amount) == 160
+
+
+def test_mvp_answer_summary_bounds_large_assumptions() -> None:
+    long_assumption = "Rows are ordered by " + ("approved spend " * 40)
+    rows = [{"vendor_name": "Acme", "approved_spend": 1200}]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=1),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+        assumptions=(long_assumption,),
+    )
+
+    assert long_assumption not in summary.answer_text
+    displayed_assumption = summary.assumptions[0]
+    assert displayed_assumption.endswith("... [truncated]")
+    assert len(displayed_assumption) == 160
+    assert f"Assumptions: {displayed_assumption}." in summary.answer_text
+
+
+def test_mvp_answer_summary_bounds_generic_column_names() -> None:
+    long_column = "column_" + ("alias_" * 80)
+    rows = [{long_column: "East", "vendor_count": 3}]
+    validation = validate_execution_result(
+        rows=rows,
+        metadata=_metadata(row_count=1),
+        contract=ResultValidationContract(
+            expected_columns=(long_column, "vendor_count"),
+            required_columns=(long_column, "vendor_count"),
+            aggregate_columns=("vendor_count",),
+        ),
+    )
+
+    summary = generate_mvp_answer_summary(
+        rows=rows,
+        validation=validation,
+        source_id="business-postgres-source",
+        source_family="postgresql",
+    )
+
+    assert long_column not in summary.answer_text
+    displayed_column = summary.answer_text.split("1. ", maxsplit=1)[1].split(
+        "=East",
+        maxsplit=1,
+    )[0]
+    assert displayed_column.endswith("... [truncated]")
+    assert len(displayed_column) == 160

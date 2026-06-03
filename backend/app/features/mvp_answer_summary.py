@@ -30,6 +30,7 @@ _MODEL_CONFIG = ConfigDict(
 _MAX_SUMMARY_ROWS = 5
 _MAX_CELL_TEXT_CHARS = 160
 _TRUNCATED_CELL_SUFFIX = "... [truncated]"
+_UNNAMED_COLUMN_LABEL = "unnamed column"
 _VENDOR_COLUMN = "vendor_name"
 _QUARTER_COLUMN = "fiscal_quarter"
 _SPEND_COLUMNS = ("approved_spend", "approved_amount")
@@ -188,7 +189,7 @@ def _generic_row_summary(
     row_entries = []
     for index, row in enumerate(rows, start=1):
         cells = [
-            f"{column}={_row_text(row.get(column), 'unavailable')}"
+            f"{_column_label(column)}={_row_text(row.get(column), 'unavailable')}"
             for column in observed_columns
         ]
         row_entries.append(f"{index}. " + ", ".join(cells))
@@ -287,12 +288,15 @@ def _spend_text(value: object) -> str:
     if isinstance(value, bool):
         return "unavailable"
     if isinstance(value, (Decimal, int, float)):
-        return str(value)
+        return _bounded_text(str(value))
     return _row_text(value, "unavailable")
 
 
 def _safe_text_items(values: tuple[str, ...]) -> tuple[str, ...]:
-    return sanitize_review_llm_surface_text_items(values)
+    return tuple(
+        _bounded_text(value)
+        for value in sanitize_review_llm_surface_text_items(values)
+    )
 
 
 def _safe_text(value: str) -> str:
@@ -305,6 +309,10 @@ def _bounded_text(value: str) -> str:
         return value
     prefix_length = _MAX_CELL_TEXT_CHARS - len(_TRUNCATED_CELL_SUFFIX)
     return value[:prefix_length].rstrip() + _TRUNCATED_CELL_SUFFIX
+
+
+def _column_label(value: str) -> str:
+    return _bounded_text(_safe_text(value)) or _UNNAMED_COLUMN_LABEL
 
 
 def _trim_terminal_period(value: str) -> str:
