@@ -283,12 +283,10 @@ def _add_governance_review_workflow_records(
                     "intent_mapping": (
                         {
                             "status": "mapped",
-                            "intent": "approved_vendor_spend",
-                            "semantic_mapping": {
-                                "metric": "sum_approved_vendor_spend",
-                                "dimensions": ["vendor_name", "fiscal_quarter"],
-                                "filters": ["approved_spend_only"],
-                            },
+                            "mapping_id": "approved_vendor_spend",
+                            "metric": "sum_approved_vendor_spend",
+                            "dimensions": ["vendor_name", "fiscal_quarter"],
+                            "filters": ["approved_spend_only"],
                         }
                         if event_type
                         in {
@@ -826,6 +824,107 @@ def test_governance_review_export_surfaces_insufficient_evidence_answer_state(
     assert execute_result["answer"]["answerState"] == "insufficient_evidence"
     assert execute_result["answer"]["insufficientEvidenceReason"] == "no_rows"
     _assert_secret_safe(json.dumps(evidence, sort_keys=True))
+
+
+def test_governance_review_export_redacts_unsafe_request_text(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session)
+        request = session.query(PreviewRequest).one()
+        request.request_text = "Show password reset request counts by quarter"
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    request_evidence = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]["request"]
+    assert request_evidence == {
+        "authority": "safequery_control_plane",
+        "requestState": "executed",
+        "requestText": "[redacted_request_text]",
+        "requestTextRedaction": "sensitive_terms_redacted",
+        "semanticContractVersion": "approved_vendor_spend.v1",
+    }
+    serialized = json.dumps(request_evidence, sort_keys=True)
+    _assert_secret_safe(serialized)
+    assert "password reset" not in serialized
+
+
+def test_governance_review_export_redacts_sensitive_redacted_column_names(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session)
+        execution_event = (
+            session.query(PreviewAuditEvent)
+            .filter_by(
+                candidate_id="candidate-governance-bundle",
+                event_type="execution_completed",
+            )
+            .one()
+        )
+        answer_evidence = dict(execution_event.audit_payload["answer_evidence"])
+        bounded_metadata = dict(answer_evidence["bounded_metadata"])
+        bounded_metadata["redacted_columns"] = [
+            "vendor_email",
+            "api_key",
+            "database_password",
+        ]
+        answer_evidence["bounded_metadata"] = bounded_metadata
+        execution_event.audit_payload = {
+            **execution_event.audit_payload,
+            "answer_evidence": answer_evidence,
+        }
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    redaction = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]["executeResult"]["redaction"]
+    assert redaction == {
+        "authority": "safequery_control_plane",
+        "status": "applied",
+        "redactedColumns": [
+            "vendor_email",
+            "redacted_column_1",
+            "redacted_column_2",
+        ],
+    }
+    serialized = json.dumps(redaction, sort_keys=True)
+    _assert_secret_safe(serialized)
+    assert "api_key" not in serialized
+    assert "database_password" not in serialized
 
 
 def test_governance_review_export_distinguishes_blocked_answer_generation(

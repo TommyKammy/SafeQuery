@@ -286,6 +286,10 @@ class GovernanceReviewRequestEvidence(BaseModel):
     authority: Literal["safequery_control_plane"] = "safequery_control_plane"
     request_state: str = Field(serialization_alias="requestState")
     request_text: str = Field(serialization_alias="requestText")
+    request_text_redaction: Optional[Literal["sensitive_terms_redacted"]] = Field(
+        default=None,
+        serialization_alias="requestTextRedaction",
+    )
     semantic_contract_version: Optional[str] = Field(
         default=None,
         serialization_alias="semanticContractVersion",
@@ -674,6 +678,38 @@ def _payload_string_list(
     return [item for item in value if isinstance(item, str) and item.strip()]
 
 
+def _is_forbidden_export_string(value: str) -> bool:
+    return any(
+        pattern.search(value) for _category, pattern in _FORBIDDEN_EXPORT_VALUE_PATTERNS
+    )
+
+
+def _request_text_evidence(request: PreviewRequest) -> GovernanceReviewRequestEvidence:
+    request_text = request.request_text
+    request_text_redaction: Literal["sensitive_terms_redacted"] | None = None
+    if _is_forbidden_export_string(request_text):
+        request_text = "[redacted_request_text]"
+        request_text_redaction = "sensitive_terms_redacted"
+    return GovernanceReviewRequestEvidence(
+        request_state=request.request_state,
+        request_text=request_text,
+        request_text_redaction=request_text_redaction,
+        semantic_contract_version=request.semantic_contract_version,
+    )
+
+
+def _redacted_column_names_for_export(columns: list[str]) -> list[str]:
+    redacted: list[str] = []
+    redacted_count = 0
+    for column in columns:
+        if _is_forbidden_export_string(column):
+            redacted_count += 1
+            redacted.append(f"redacted_column_{redacted_count}")
+        else:
+            redacted.append(column)
+    return redacted
+
+
 def _latest_payload_mapping(
     events: list[PreviewAuditEvent],
     key: str,
@@ -691,16 +727,20 @@ def _semantic_mapping_evidence(
     intent_mapping = _latest_payload_mapping(events, "intent_mapping")
     if intent_mapping is None:
         return None
-    semantic_mapping = _payload_mapping(intent_mapping, "semantic_mapping") or {}
+    semantic_mapping = _payload_mapping(intent_mapping, "semantic_mapping")
+    mapping_payload = semantic_mapping or intent_mapping
     status = _payload_string(intent_mapping, "status")
     if status is None:
         return None
     return GovernanceReviewSemanticMappingEvidence(
         status=status,
-        intent=_payload_string(intent_mapping, "intent"),
-        metric=_payload_string(semantic_mapping, "metric"),
-        dimensions=_payload_string_list(semantic_mapping, "dimensions"),
-        filters=_payload_string_list(semantic_mapping, "filters"),
+        intent=(
+            _payload_string(intent_mapping, "intent")
+            or _payload_string(intent_mapping, "mapping_id")
+        ),
+        metric=_payload_string(mapping_payload, "metric"),
+        dimensions=_payload_string_list(mapping_payload, "dimensions"),
+        filters=_payload_string_list(mapping_payload, "filters"),
         insufficient_evidence_reason=_payload_string(
             intent_mapping,
             "insufficient_evidence_reason",
@@ -761,7 +801,9 @@ def _redaction_evidence(
     bounded_metadata = _payload_mapping(answer_evidence, "bounded_metadata") or {}
     return GovernanceReviewRedactionEvidence(
         status=status,
-        redacted_columns=_payload_string_list(bounded_metadata, "redacted_columns"),
+        redacted_columns=_redacted_column_names_for_export(
+            _payload_string_list(bounded_metadata, "redacted_columns"),
+        ),
     )
 
 
@@ -889,11 +931,7 @@ def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
                     source_flavor=request.source_flavor,
                     dataset_contract_version=request.dataset_contract_version,
                     schema_snapshot_version=request.schema_snapshot_version,
-                    request=GovernanceReviewRequestEvidence(
-                        request_state=request.request_state,
-                        request_text=request.request_text,
-                        semantic_contract_version=request.semantic_contract_version,
-                    ),
+                    request=_request_text_evidence(request),
                     semantic_mapping=_semantic_mapping_evidence(lifecycle_events),
                     lifecycle=lifecycle,
                     actor=GovernanceReviewActorEvidence(
