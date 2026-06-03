@@ -447,8 +447,13 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             json={"selected_source_id": "demo-business-postgres"},
         )
 
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["error"]["code"], "execution_unavailable")
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_POLICY_VERSION_STALE",
+        )
         self.assertEqual(calls, [])
         approval = (
             self.session.query(PreviewCandidateApproval)

@@ -409,7 +409,7 @@ def test_result_validation_denial_preserves_release_gate_metadata() -> None:
     scenario = next(
         scenario
         for scenario in list_postgresql_evaluation_scenarios()
-        if scenario.scenario_id == "postgresql-safety-wrong-source-binding-denied"
+        if scenario.scenario_id == "postgresql-positive-approved-vendor-spend-top-vendors"
     )
     candidate = ExecutableCandidateRecord(
         canonical_sql=scenario.canonical_sql,
@@ -457,7 +457,7 @@ def test_result_validation_denial_preserves_release_gate_metadata() -> None:
     release_gate_scenario = exc_info.value.audit_event.release_gate_scenario
     assert release_gate_scenario is not None
     assert release_gate_scenario.scenario_id == scenario.scenario_id
-    assert release_gate_scenario.guard_decision == "reject"
+    assert release_gate_scenario.guard_decision == "allow"
     assert (
         release_gate_scenario.execution_audit_event_id
         == exc_info.value.audit_event.event_id

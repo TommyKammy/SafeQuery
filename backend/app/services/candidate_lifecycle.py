@@ -161,6 +161,7 @@ def _build_revalidation_audit_event(
         source_family=candidate.source.source_family,
         source_flavor=candidate.source.source_flavor,
         dataset_contract_version=candidate.source.dataset_contract_version,
+        semantic_contract_version=candidate.source.semantic_contract_version,
         schema_snapshot_version=candidate.source.schema_snapshot_version,
         execution_policy_version=candidate.source.execution_policy_version,
         connector_profile_version=candidate.source.connector_profile_version,
@@ -177,6 +178,13 @@ def _require_aware_datetime(value: datetime, *, field_name: str) -> datetime:
             message=f"Candidate {field_name} must be timezone-aware.",
         )
     return value
+
+
+def _normalized_optional_version(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
 def _raise_revalidation_error(
@@ -312,6 +320,18 @@ def revalidate_candidate_lifecycle(
             deny_code=DENY_POLICY_VERSION_STALE,
             message=(
                 "Candidate dataset contract version is stale against the "
+                "authoritative source-scoped governance record."
+            ),
+            candidate=candidate,
+            audit_context=audit_context,
+        )
+    if _normalized_optional_version(
+        dataset_contract.semantic_contract_version
+    ) != _normalized_optional_version(candidate.source.semantic_contract_version):
+        _raise_revalidation_error(
+            deny_code=DENY_POLICY_VERSION_STALE,
+            message=(
+                "Candidate semantic contract version is stale against the "
                 "authoritative source-scoped governance record."
             ),
             candidate=candidate,

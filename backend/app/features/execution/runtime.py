@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
@@ -336,6 +336,7 @@ def _build_execution_audit_event(
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
+    release_gate_guard_decision: Literal["allow", "reject"] | None = None,
 ) -> SourceAwareAuditEvent | None:
     if audit_context is None:
         return None
@@ -387,7 +388,9 @@ def _build_execution_audit_event(
         "execution_completed",
         "execution_denied",
     }:
-        guard_decision = "allow" if primary_deny_code is None else "reject"
+        guard_decision = release_gate_guard_decision or (
+            "allow" if primary_deny_code is None else "reject"
+        )
         metadata = build_release_gate_scenario_metadata(
             source_id=candidate_source.source_id,
             source_family=candidate_source.source_family,
@@ -425,6 +428,7 @@ def _build_execution_audit_events(
     candidate_state: str | None = None,
     execution_row_count: int | None = None,
     result_truncated: bool | None = None,
+    release_gate_guard_decision: Literal["allow", "reject"] | None = None,
 ) -> list[SourceAwareAuditEvent]:
     if audit_context is None:
         return []
@@ -452,6 +456,11 @@ def _build_execution_audit_events(
             ),
             result_truncated=(
                 result_truncated if event_type == "execution_completed" else None
+            ),
+            release_gate_guard_decision=(
+                release_gate_guard_decision
+                if event_type in {"execution_completed", "execution_denied"}
+                else None
             ),
         )
         if event is None:
@@ -577,6 +586,7 @@ def _raise_result_validation_denial(
             canonical_sql=canonical_sql,
             primary_deny_code=DENY_RESULT_VALIDATION_FAILED,
             denial_reason=denial_reason,
+            release_gate_guard_decision="allow",
         ),
     )
 
