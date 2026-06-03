@@ -13,6 +13,7 @@ ResultValidationReason = Literal[
     "missing_expected_columns",
     "missing_required_columns",
     "no_rows",
+    "under_minimum_rows",
     "row_count_mismatch",
     "result_truncated",
     "null_values_present",
@@ -132,11 +133,16 @@ def validate_execution_result(
         reason_codes.append("missing_expected_columns")
     if missing_required_columns:
         reason_codes.append("missing_required_columns")
-    if metadata.row_count < contract.minimum_row_count:
+    if metadata.row_count == 0 and metadata.row_count < contract.minimum_row_count:
         reason_codes.append("no_rows")
+    elif metadata.row_count < contract.minimum_row_count:
+        reason_codes.append("under_minimum_rows")
     if (
         contract.expected_row_count is not None
-        and metadata.row_count != contract.expected_row_count
+        and (
+            metadata.row_count != contract.expected_row_count
+            or metadata.result_truncated
+        )
     ):
         reason_codes.append("row_count_mismatch")
     if metadata.result_truncated:
@@ -152,6 +158,7 @@ def validate_execution_result(
         "missing_expected_columns",
         "missing_required_columns",
         "no_rows",
+        "under_minimum_rows",
         "row_count_mismatch",
         "aggregation_shape_mismatch",
     }
@@ -263,7 +270,7 @@ def _aggregation_shape(
         column for column in observed_columns if column not in aggregate_column_set
     )
     if not grouping_columns:
-        return "valid"
+        return "mismatch" if len(rows) > 1 else "valid"
 
     seen_keys: set[tuple[object, ...]] = set()
     for row in rows:

@@ -1345,5 +1345,69 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         )
 
 
+def test_execution_denial_serializer_preserves_release_gate_metadata(
+    monkeypatch,
+) -> None:
+    from app.features.audit.event_model import SourceAwareAuditEvent
+
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@app-postgres:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_ENVIRONMENT", "development")
+    monkeypatch.setenv("SAFEQUERY_DEV_AUTH_ENABLED", "true")
+    monkeypatch.delenv("SAFEQUERY_SESSION_SIGNING_KEY", raising=False)
+    get_settings.cache_clear()
+    from app.main import _serialize_execution_audit_events
+
+    event_id = uuid4()
+    guard_event_id = uuid4()
+    event = SourceAwareAuditEvent(
+        event_id=event_id,
+        event_type="execution_denied",
+        occurred_at=datetime.now(timezone.utc),
+        request_id="request-123",
+        correlation_id="correlation-123",
+        user_subject="user:demo-local-operator",
+        session_id="session-123",
+        query_candidate_id="candidate-123",
+        candidate_owner_subject="user:demo-local-operator",
+        source_id="business-postgres-source",
+        source_family="postgresql",
+        source_flavor="warehouse",
+        dataset_contract_version=4,
+        semantic_contract_version="approved_vendor_spend.v1",
+        schema_snapshot_version=9,
+        execution_policy_version=3,
+        connector_profile_version=1,
+        release_gate_scenario={
+            "scenario_id": "postgresql-positive-approved-vendor-spend-top-vendors",
+            "source_id": "business-postgres-source",
+            "candidate_id": "candidate-123",
+            "guard_decision": "allow",
+            "guard_audit_event_id": guard_event_id,
+            "execution_run_id": event_id,
+            "execution_audit_event_id": event_id,
+        },
+        primary_deny_code="DENY_RESULT_VALIDATION_FAILED",
+        denial_cause="result_validation_failed",
+        denial_reason="row_count_mismatch",
+        candidate_state="denied",
+    )
+
+    serialized = _serialize_execution_audit_events([event])
+
+    assert serialized[0]["semantic_contract_version"] == "approved_vendor_spend.v1"
+    assert serialized[0]["release_gate_scenario"] == {
+        "scenario_id": "postgresql-positive-approved-vendor-spend-top-vendors",
+        "source_id": "business-postgres-source",
+        "candidate_id": "candidate-123",
+        "guard_decision": "allow",
+        "guard_audit_event_id": str(guard_event_id),
+        "execution_run_id": str(event_id),
+        "execution_audit_event_id": str(event_id),
+    }
+
+
 if __name__ == "__main__":
     unittest.main()

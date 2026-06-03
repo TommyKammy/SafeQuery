@@ -105,6 +105,62 @@ def test_result_validation_warns_on_decimal_outliers() -> None:
     assert validation.evidence.outlier_columns == ("approved_spend",)
 
 
+def test_result_validation_reports_under_minimum_rows_separately_from_no_rows() -> None:
+    validation = validate_execution_result(
+        rows=[
+            {"vendor_name": "Acme", "approved_spend": 100},
+            {"vendor_name": "Beta", "approved_spend": 200},
+            {"vendor_name": "Cypher", "approved_spend": 300},
+        ],
+        metadata=_metadata(row_count=3),
+        contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+            minimum_row_count=5,
+        ),
+    )
+
+    assert validation.status == "fail"
+    assert "under_minimum_rows" in validation.reason_codes
+    assert "no_rows" not in validation.reason_codes
+    assert validation.evidence.row_count == 3
+
+
+def test_result_validation_fails_exact_count_when_result_is_truncated() -> None:
+    validation = validate_execution_result(
+        rows=[{"row_id": index} for index in range(200)],
+        metadata=_metadata(row_count=200, result_truncated=True),
+        contract=ResultValidationContract(
+            expected_columns=("row_id",),
+            required_columns=("row_id",),
+            expected_row_count=200,
+        ),
+    )
+
+    assert validation.status == "fail"
+    assert "row_count_mismatch" in validation.reason_codes
+    assert "result_truncated" in validation.reason_codes
+
+
+def test_result_validation_rejects_multi_row_ungrouped_aggregate_shape() -> None:
+    validation = validate_execution_result(
+        rows=[
+            {"approved_spend": 100},
+            {"approved_spend": 200},
+        ],
+        metadata=_metadata(row_count=2),
+        contract=ResultValidationContract(
+            expected_columns=("approved_spend",),
+            required_columns=("approved_spend",),
+            aggregate_columns=("approved_spend",),
+        ),
+    )
+
+    assert validation.status == "fail"
+    assert "aggregation_shape_mismatch" in validation.reason_codes
+    assert validation.evidence.aggregation_shape == "mismatch"
+
+
 def test_result_validation_does_not_assume_expected_columns_for_empty_results() -> None:
     validation = validate_execution_result(
         rows=[],
