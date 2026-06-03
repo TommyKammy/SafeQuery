@@ -20,6 +20,7 @@ from app.db.models.preview import (
 )
 from app.db.models.schema_snapshot import SchemaSnapshot
 from app.db.models.source_registry import RegisteredSource, SourceActivationPosture
+from app.features.guard.deny_taxonomy import DENY_RESULT_VALIDATION_FAILED
 from app.services.first_run_doctor import _alembic_heads
 from app.services.health import build_operator_health
 from app.services.operator_workflow import (
@@ -687,6 +688,12 @@ def _payload_string_list(
     return [item for item in value if isinstance(item, str) and item.strip()]
 
 
+def _split_csv_reason_codes(value: str | None) -> list[str]:
+    if value is None:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _is_forbidden_export_string(value: str) -> bool:
     return any(
         pattern.search(value) for _category, pattern in _FORBIDDEN_EXPORT_VALUE_PATTERNS
@@ -796,6 +803,25 @@ def _validation_evidence(
         reason_codes=_payload_string_list(bounded_metadata, "reason_codes"),
         row_limit=_payload_non_negative_int(bounded_metadata, "row_limit"),
         rows_used=_payload_non_negative_int(bounded_metadata, "rows_used"),
+    )
+
+
+def _execution_validation_evidence(
+    execution_event: PreviewAuditEvent,
+    answer_evidence: Mapping[str, object] | None,
+) -> GovernanceReviewValidationEvidence | None:
+    if answer_evidence is not None:
+        return _validation_evidence(answer_evidence)
+    if (
+        execution_event.event_type != "execution_denied"
+        or execution_event.primary_deny_code != DENY_RESULT_VALIDATION_FAILED
+    ):
+        return None
+    return GovernanceReviewValidationEvidence(
+        status="fail",
+        reason_codes=_split_csv_reason_codes(
+            _payload_string(execution_event.audit_payload, "denial_reason"),
+        ),
     )
 
 
@@ -1005,9 +1031,10 @@ def _governance_review_bundle(session: Session) -> GovernanceReviewBundle:
                                 "result_truncated",
                             ),
                             validation=(
-                                _validation_evidence(answer_payload)
-                                if answer_payload is not None
-                                else None
+                                _execution_validation_evidence(
+                                    execution_event,
+                                    answer_payload,
+                                )
                             ),
                             redaction=(
                                 _redaction_evidence(answer_payload)

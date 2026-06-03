@@ -24,6 +24,7 @@ from app.db.models.preview import (
 from app.db.models.source_registry import RegisteredSource
 from app.db.session import require_preview_submission_session
 from app.features.auth.context import AuthenticatedSubject, require_authenticated_subject
+from app.features.guard.deny_taxonomy import DENY_RESULT_VALIDATION_FAILED
 from app.services.demo_source_seed import seed_demo_source_governance
 from app.services.support_bundle import (
     build_bounded_result_summary_export,
@@ -829,6 +830,71 @@ def test_governance_review_export_surfaces_insufficient_evidence_answer_state(
     assert execute_result["answer"]["answerState"] == "insufficient_evidence"
     assert execute_result["answer"]["insufficientEvidenceReason"] == "no_rows"
     _assert_secret_safe(json.dumps(evidence, sort_keys=True))
+
+
+def test_governance_review_export_surfaces_validation_denied_execution(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:app-secret@db:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_SQL_GENERATION_PROVIDER", "disabled")
+    get_settings.cache_clear()
+
+    with _session_scope() as session:
+        _add_governance_review_workflow_records(session, execution_row_count=3)
+        execution_event = (
+            session.query(PreviewAuditEvent)
+            .filter_by(
+                candidate_id="candidate-governance-bundle",
+                event_type="execution_completed",
+            )
+            .one()
+        )
+        execution_event.event_type = "execution_denied"
+        execution_event.candidate_state = "denied"
+        execution_event.primary_deny_code = DENY_RESULT_VALIDATION_FAILED
+        execution_event.denial_cause = "result_validation_failed"
+        execution_event.audit_payload = {
+            **execution_event.audit_payload,
+            "event_type": "execution_denied",
+            "candidate_state": "denied",
+            "primary_deny_code": DENY_RESULT_VALIDATION_FAILED,
+            "denial_cause": "result_validation_failed",
+            "denial_reason": "missing_expected_columns,under_minimum_rows",
+            "execution_row_count": 3,
+            "result_truncated": False,
+            "answer_evidence": None,
+        }
+        session.commit()
+
+        bundle = build_support_bundle(
+            session,
+            settings=get_settings(),
+            database={"status": "ok", "detail": "ready"},
+            sql_generation={"status": "disabled", "detail": "provider_disabled"},
+            generated_at=datetime(2026, 1, 2, 3, 10, 5, tzinfo=timezone.utc),
+        )
+
+    execute_result = bundle.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )["governanceReview"]["evidence"][0]["executeResult"]
+    assert execute_result == {
+        "authority": "safequery_control_plane",
+        "eventType": "execution_denied",
+        "occurredAt": "2026-01-02T03:11:05Z",
+        "rowCount": 3,
+        "resultTruncated": False,
+        "validation": {
+            "authority": "safequery_control_plane",
+            "status": "fail",
+            "reasonCodes": ["missing_expected_columns", "under_minimum_rows"],
+        },
+    }
+    _assert_secret_safe(json.dumps(execute_result, sort_keys=True))
 
 
 def test_governance_review_export_always_redacts_request_text(monkeypatch) -> None:
