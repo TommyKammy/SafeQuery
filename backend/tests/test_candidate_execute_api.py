@@ -27,6 +27,7 @@ from app.db.models.source_registry import RegisteredSource, SourceActivationPost
 from app.db.session import require_preview_submission_session
 from app.features.auth.dev import build_dev_authenticated_subject
 from app.features.auth.session import create_test_application_session
+from app.features.result_validation import ResultValidationContract
 from app.services.candidate_lifecycle import (
     CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
 )
@@ -81,13 +82,23 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
                 os.environ[name] = value
         get_settings.cache_clear()
 
-    def _client(self, query_runner) -> TestClient:
+    def _client(
+        self,
+        query_runner,
+        *,
+        result_validation_contract: ResultValidationContract | None = None,
+        result_validation_contracts: dict[str, ResultValidationContract] | None = None,
+    ) -> TestClient:
         main_module = importlib.import_module("app.main")
         app = main_module.create_app()
         app.dependency_overrides[require_preview_submission_session] = (
             lambda: self.session
         )
         app.state.execution_query_runner = query_runner
+        if result_validation_contract is not None:
+            app.state.result_validation_contract = result_validation_contract
+        if result_validation_contracts is not None:
+            app.state.result_validation_contracts = result_validation_contracts
         return TestClient(app)
 
     def _seed_approved_candidate(self) -> None:
@@ -123,6 +134,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             registered_source_id=source.id,
             schema_snapshot_id=snapshot.id,
             contract_version=3,
+            semantic_contract_version="approved_vendor_spend.v1",
             display_name="Demo business contract",
             owner_binding="group:safequery-demo-local-operators",
             security_review_binding=None,
@@ -143,6 +155,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             source_flavor=source.source_flavor,
             dataset_contract_id=contract.id,
             dataset_contract_version=contract.contract_version,
+            semantic_contract_version=contract.semantic_contract_version,
             schema_snapshot_id=snapshot.id,
             schema_snapshot_version=snapshot.snapshot_version,
             authenticated_subject_id="user:demo-local-operator",
@@ -167,6 +180,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             source_flavor=source.source_flavor,
             dataset_contract_id=contract.id,
             dataset_contract_version=contract.contract_version,
+            semantic_contract_version=contract.semantic_contract_version,
             schema_snapshot_id=snapshot.id,
             schema_snapshot_version=snapshot.snapshot_version,
             authenticated_subject_id="user:demo-local-operator",
@@ -334,6 +348,215 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             calls,
             ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
         )
+
+    def test_execute_candidate_api_attaches_result_validation_metadata(self) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [{"vendor_name": "Acme"}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name",),
+                required_columns=("vendor_name",),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        validation = response.json()["metadata"]["result_validation"]
+
+        self.assertEqual(validation["status"], "pass")
+        self.assertEqual(
+            validation["semantic_contract_version"],
+            "approved_vendor_spend.v1",
+        )
+        self.assertEqual(validation["candidate_id"], "candidate-123")
+        self.assertEqual(
+            validation["execution_run_id"],
+            response.json()["metadata"]["execution_run_id"],
+        )
+        self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
+        self.assertEqual(validation["evidence"]["row_count"], 1)
+
+    def test_execute_candidate_api_selects_validation_contract_by_semantic_version(
+        self,
+    ) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [{"vendor_name": "Acme"}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contracts={
+                "other_contract.v1": ResultValidationContract(
+                    semantic_contract_version="other_contract.v1",
+                    expected_columns=("missing_column",),
+                    required_columns=("missing_column",),
+                ),
+                "approved_vendor_spend.v1": ResultValidationContract(
+                    semantic_contract_version="approved_vendor_spend.v1",
+                    expected_columns=("vendor_name",),
+                    required_columns=("vendor_name",),
+                ),
+            },
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        validation = response.json()["metadata"]["result_validation"]
+        self.assertEqual(validation["status"], "pass")
+        self.assertEqual(
+            validation["semantic_contract_version"],
+            "approved_vendor_spend.v1",
+        )
+        self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
+
+    def test_execute_candidate_api_rejects_missing_semantic_version_before_runner(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        candidate = (
+            self.session.query(PreviewCandidate)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        candidate.semantic_contract_version = None
+        self.session.commit()
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            lambda **_: calls.append("called"),
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name",),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            payload["audit"]["events"][0]["primary_deny_code"],
+            "DENY_POLICY_VERSION_STALE",
+        )
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
+
+    def test_execute_candidate_api_blocks_failed_result_validation_before_success(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            calls.append(canonical_sql)
+            return [{"vendor_name": "Acme"}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("approved_spend",),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "execution_denied")
+        self.assertEqual(
+            [event["event_type"] for event in payload["audit"]["events"]],
+            ["execution_requested", "execution_started", "execution_denied"],
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["primary_deny_code"],
+            "DENY_RESULT_VALIDATION_FAILED",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["denial_cause"],
+            "result_validation_failed",
+        )
+        self.assertEqual(
+            payload["audit"]["events"][-1]["denial_reason"],
+            "missing_expected_columns,missing_required_columns",
+        )
+        self.assertEqual(payload["audit"]["events"][-1]["execution_row_count"], 1)
+        self.assertIs(payload["audit"]["events"][-1]["result_truncated"], False)
+        self.assertEqual(
+            calls,
+            ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
+        )
+        persisted_events = (
+            self.session.query(PreviewAuditEvent)
+            .order_by(PreviewAuditEvent.lifecycle_order)
+            .all()
+        )
+        self.assertEqual(
+            [event.event_type for event in persisted_events],
+            ["execution_requested", "execution_started", "execution_denied"],
+        )
+        self.assertEqual(
+            persisted_events[-1].audit_payload["execution_row_count"],
+            1,
+        )
+        self.assertIs(
+            persisted_events[-1].audit_payload["result_truncated"],
+            False,
+        )
+
+    def test_execute_candidate_api_rejects_malformed_validation_contract_before_consuming_approval(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        client = self._client(lambda **_: calls.append("called"))
+        client.app.state.result_validation_contract = {
+            "expected_columns": ["vendor_name"],
+        }
+
+        response = client.post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "execution_unavailable")
+        self.assertEqual(calls, [])
+        approval = (
+            self.session.query(PreviewCandidateApproval)
+            .filter_by(candidate_id="candidate-123")
+            .one()
+        )
+        self.assertEqual(approval.approval_state, "approved")
+        self.assertIsNone(approval.executed_at)
 
     def test_execute_candidate_api_persists_source_aware_execution_audit_events(
         self,
@@ -1139,6 +1362,70 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             calls,
             ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
         )
+
+
+def test_execution_denial_serializer_preserves_release_gate_metadata(
+    monkeypatch,
+) -> None:
+    from app.features.audit.event_model import SourceAwareAuditEvent
+
+    monkeypatch.setenv(
+        "SAFEQUERY_APP_POSTGRES_URL",
+        "postgresql://safequery:safequery@app-postgres:5432/safequery",
+    )
+    monkeypatch.setenv("SAFEQUERY_ENVIRONMENT", "development")
+    monkeypatch.setenv("SAFEQUERY_DEV_AUTH_ENABLED", "true")
+    monkeypatch.delenv("SAFEQUERY_SESSION_SIGNING_KEY", raising=False)
+    get_settings.cache_clear()
+    from app.main import _serialize_execution_audit_events
+
+    event_id = uuid4()
+    guard_event_id = uuid4()
+    event = SourceAwareAuditEvent(
+        event_id=event_id,
+        event_type="execution_denied",
+        occurred_at=datetime.now(timezone.utc),
+        request_id="request-123",
+        correlation_id="correlation-123",
+        user_subject="user:demo-local-operator",
+        session_id="session-123",
+        query_candidate_id="candidate-123",
+        candidate_owner_subject="user:demo-local-operator",
+        source_id="business-postgres-source",
+        source_family="postgresql",
+        source_flavor="warehouse",
+        dataset_contract_version=4,
+        semantic_contract_version="approved_vendor_spend.v1",
+        schema_snapshot_version=9,
+        execution_policy_version=3,
+        connector_profile_version=1,
+        release_gate_scenario={
+            "scenario_id": "postgresql-positive-approved-vendor-spend-top-vendors",
+            "source_id": "business-postgres-source",
+            "candidate_id": "candidate-123",
+            "guard_decision": "allow",
+            "guard_audit_event_id": guard_event_id,
+            "execution_run_id": event_id,
+            "execution_audit_event_id": event_id,
+        },
+        primary_deny_code="DENY_RESULT_VALIDATION_FAILED",
+        denial_cause="result_validation_failed",
+        denial_reason="row_count_mismatch",
+        candidate_state="denied",
+    )
+
+    serialized = _serialize_execution_audit_events([event])
+
+    assert serialized[0]["semantic_contract_version"] == "approved_vendor_spend.v1"
+    assert serialized[0]["release_gate_scenario"] == {
+        "scenario_id": "postgresql-positive-approved-vendor-spend-top-vendors",
+        "source_id": "business-postgres-source",
+        "candidate_id": "candidate-123",
+        "guard_decision": "allow",
+        "guard_audit_event_id": str(guard_event_id),
+        "execution_run_id": str(event_id),
+        "execution_audit_event_id": str(event_id),
+    }
 
 
 if __name__ == "__main__":

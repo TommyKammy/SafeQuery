@@ -61,6 +61,7 @@ class SourceBoundCandidateMetadata(BaseModel):
     source_family: str
     source_flavor: Optional[str] = None
     dataset_contract_version: int
+    semantic_contract_version: Optional[str] = None
     schema_snapshot_version: int
     execution_policy_version: Optional[int] = None
     connector_profile_version: Optional[int] = None
@@ -160,6 +161,7 @@ def _build_revalidation_audit_event(
         source_family=candidate.source.source_family,
         source_flavor=candidate.source.source_flavor,
         dataset_contract_version=candidate.source.dataset_contract_version,
+        semantic_contract_version=candidate.source.semantic_contract_version,
         schema_snapshot_version=candidate.source.schema_snapshot_version,
         execution_policy_version=candidate.source.execution_policy_version,
         connector_profile_version=candidate.source.connector_profile_version,
@@ -176,6 +178,13 @@ def _require_aware_datetime(value: datetime, *, field_name: str) -> datetime:
             message=f"Candidate {field_name} must be timezone-aware.",
         )
     return value
+
+
+def _normalized_optional_version(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
 def _raise_revalidation_error(
@@ -316,6 +325,18 @@ def revalidate_candidate_lifecycle(
             candidate=candidate,
             audit_context=audit_context,
         )
+    if _normalized_optional_version(
+        dataset_contract.semantic_contract_version
+    ) != _normalized_optional_version(candidate.source.semantic_contract_version):
+        _raise_revalidation_error(
+            deny_code=DENY_POLICY_VERSION_STALE,
+            message=(
+                "Candidate semantic contract version is stale against the "
+                "authoritative source-scoped governance record."
+            ),
+            candidate=candidate,
+            audit_context=audit_context,
+        )
     if schema_snapshot.snapshot_version != candidate.source.schema_snapshot_version:
         _raise_revalidation_error(
             deny_code=DENY_POLICY_VERSION_STALE,
@@ -419,6 +440,7 @@ def _raise_authoritative_approval_error(
             dataset_contract_version=(
                 approval.dataset_contract_version if approval is not None else 0
             ),
+            semantic_contract_version=None,
             schema_snapshot_version=(
                 approval.schema_snapshot_version if approval is not None else 0
             ),
@@ -454,6 +476,7 @@ def _candidate_lifecycle_from_preview_candidate(
             source_family=preview_candidate.source_family,
             source_flavor=preview_candidate.source_flavor,
             dataset_contract_version=preview_candidate.dataset_contract_version,
+            semantic_contract_version=preview_candidate.semantic_contract_version,
             schema_snapshot_version=preview_candidate.schema_snapshot_version,
             execution_policy_version=(
                 CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
@@ -471,6 +494,8 @@ def _candidate_lifecycle_from_preview_candidate(
 
 def _candidate_lifecycle_from_approval(
     approval: PreviewCandidateApproval,
+    *,
+    preview_candidate: PreviewCandidate | None,
 ) -> CandidateLifecycleRecord:
     return CandidateLifecycleRecord(
         owner_subject_id=approval.owner_subject_id,
@@ -486,6 +511,11 @@ def _candidate_lifecycle_from_approval(
             source_family=approval.source_family,
             source_flavor=approval.source_flavor,
             dataset_contract_version=approval.dataset_contract_version,
+            semantic_contract_version=(
+                preview_candidate.semantic_contract_version
+                if preview_candidate is not None
+                else None
+            ),
             schema_snapshot_version=approval.schema_snapshot_version,
             execution_policy_version=approval.execution_policy_version,
             connector_profile_version=(
@@ -631,7 +661,10 @@ def revalidate_authoritative_candidate_approval(
     )
 
     result = revalidate_candidate_lifecycle(
-        candidate=_candidate_lifecycle_from_approval(approval),
+        candidate=_candidate_lifecycle_from_approval(
+            approval,
+            preview_candidate=preview_candidate,
+        ),
         authenticated_subject=authenticated_subject,
         session=session,
         as_of=as_of,

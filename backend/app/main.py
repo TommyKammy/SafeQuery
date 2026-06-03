@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from time import perf_counter
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -56,6 +57,7 @@ from app.features.execution import (
     preflight_execution_runtime_controls,
     select_execution_connector,
 )
+from app.features.result_validation import ResultValidationContract
 from app.features.review_llm import resolve_review_llm_adapter
 from app.services.candidate_lifecycle import (
     CandidateLifecycleAuditContext,
@@ -134,11 +136,14 @@ _EXECUTION_DENIAL_AUDIT_FIELDS = frozenset(
         "source_family",
         "source_flavor",
         "dataset_contract_version",
+        "semantic_contract_version",
         "schema_snapshot_version",
         "execution_policy_version",
         "connector_profile_version",
+        "release_gate_scenario",
         "primary_deny_code",
         "denial_cause",
+        "denial_reason",
         "candidate_state",
         "execution_row_count",
         "result_truncated",
@@ -181,6 +186,108 @@ def _operator_runtime_safety_state(request: Request) -> ExecutionRuntimeSafetySt
             "Candidate execution is unavailable.",
         )
     return state
+
+
+ResultValidationContractConfig = Union[
+    ResultValidationContract, dict[str, ResultValidationContract]
+]
+
+
+def _operator_result_validation_contract_config(
+    request: Request,
+) -> ResultValidationContractConfig | None:
+    contracts = getattr(request.app.state, "result_validation_contracts", None)
+    contract = getattr(request.app.state, "result_validation_contract", None)
+    if contracts is not None and contract is not None:
+        raise api_error(
+            503,
+            "execution_unavailable",
+            "Candidate execution is unavailable.",
+        )
+    if contracts is not None:
+        if not isinstance(contracts, Mapping):
+            raise api_error(
+                503,
+                "execution_unavailable",
+                "Candidate execution is unavailable.",
+            )
+        normalized_contracts: dict[str, ResultValidationContract] = {}
+        for version, configured_contract in contracts.items():
+            if (
+                not isinstance(version, str)
+                or not version.strip()
+                or not isinstance(configured_contract, ResultValidationContract)
+            ):
+                raise api_error(
+                    503,
+                    "execution_unavailable",
+                    "Candidate execution is unavailable.",
+                )
+            normalized_version = version.strip()
+            configured_version = configured_contract.semantic_contract_version
+            if (
+                configured_version is not None
+                and configured_version != normalized_version
+            ):
+                raise api_error(
+                    503,
+                    "execution_unavailable",
+                    "Candidate execution is unavailable.",
+                )
+            normalized_contracts[normalized_version] = configured_contract.model_copy(
+                update={"semantic_contract_version": normalized_version}
+            )
+        if not normalized_contracts:
+            raise api_error(
+                503,
+                "execution_unavailable",
+                "Candidate execution is unavailable.",
+            )
+        return normalized_contracts
+    if contract is None:
+        return None
+    if (
+        not isinstance(contract, ResultValidationContract)
+        or contract.semantic_contract_version is None
+    ):
+        raise api_error(
+            503,
+            "execution_unavailable",
+            "Candidate execution is unavailable.",
+        )
+    return contract
+
+
+def _select_operator_result_validation_contract(
+    *,
+    config: ResultValidationContractConfig | None,
+    semantic_contract_version: str | None,
+) -> ResultValidationContract | None:
+    if config is None:
+        return None
+    if semantic_contract_version is None or not semantic_contract_version.strip():
+        raise api_error(
+            503,
+            "execution_unavailable",
+            "Candidate execution is unavailable.",
+        )
+    normalized_version = semantic_contract_version.strip()
+    if isinstance(config, ResultValidationContract):
+        if config.semantic_contract_version != normalized_version:
+            raise api_error(
+                503,
+                "execution_unavailable",
+                "Candidate execution is unavailable.",
+            )
+        return config
+    contract = config.get(normalized_version)
+    if contract is None:
+        raise api_error(
+            503,
+            "execution_unavailable",
+            "Candidate execution is unavailable.",
+        )
+    return contract
 
 
 def _operator_control_values(values: object) -> frozenset[str]:
@@ -763,11 +870,18 @@ def create_app() -> FastAPI:
             selection: ExecutionConnectorSelection | None = None
             cancellation_probe = None
             runtime_safety_state = _operator_runtime_safety_state(http_request)
+            result_validation_contract_config = _operator_result_validation_contract_config(
+                http_request
+            )
+            result_validation_contract: ResultValidationContract | None = None
 
             def prepare_execution(
                 revalidation_result: CandidateLifecycleRevalidationResult,
             ) -> None:
-                nonlocal candidate, selection, cancellation_probe
+                nonlocal candidate
+                nonlocal selection
+                nonlocal cancellation_probe
+                nonlocal result_validation_contract
                 approved_sql = revalidation_result.approved_sql
                 if approved_sql is None:
                     raise api_error(
@@ -777,7 +891,26 @@ def create_app() -> FastAPI:
                     )
                 prepared_candidate = ExecutableCandidateRecord(
                     canonical_sql=approved_sql,
-                    source=revalidation_result.source,
+                    source=(
+                        revalidation_result.source.model_copy(
+                            update={
+                                "semantic_contract_version": (
+                                    preview_candidate.semantic_contract_version
+                                )
+                            }
+                        )
+                        if preview_candidate is not None
+                        and preview_candidate.semantic_contract_version is not None
+                        else revalidation_result.source
+                    ),
+                )
+                prepared_result_validation_contract = (
+                    _select_operator_result_validation_contract(
+                        config=result_validation_contract_config,
+                        semantic_contract_version=(
+                            prepared_candidate.source.semantic_contract_version
+                        ),
+                    )
                 )
                 prepared_selection = select_execution_connector(
                     candidate_source=prepared_candidate.source
@@ -827,6 +960,7 @@ def create_app() -> FastAPI:
                 candidate = prepared_candidate
                 selection = prepared_selection
                 cancellation_probe = prepared_cancellation_probe
+                result_validation_contract = prepared_result_validation_contract
 
             revalidate_authoritative_candidate_approval(
                 session=session,
@@ -877,6 +1011,7 @@ def create_app() -> FastAPI:
                 cancellation_probe=cancellation_probe,
                 runtime_safety_state=runtime_safety_state,
                 audit_context=execution_audit_context,
+                result_validation_contract=result_validation_contract,
             )
         except CandidateLifecycleRevalidationError as exc:
             if exc.audit_event is not None:

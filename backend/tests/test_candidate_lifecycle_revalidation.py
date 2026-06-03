@@ -48,6 +48,7 @@ def _seed_source(
     source_flavor: str = "warehouse",
     owner_binding: str = "group:finance-analysts",
     contract_version: int = 3,
+    semantic_contract_version: str | None = None,
     snapshot_version: int = 7,
     activation_posture: SourceActivationPosture = SourceActivationPosture.ACTIVE,
 ) -> RegisteredSource:
@@ -83,6 +84,7 @@ def _seed_source(
         registered_source_id=source.id,
         schema_snapshot_id=snapshot.id,
         contract_version=contract_version,
+        semantic_contract_version=semantic_contract_version,
         display_name=f"{source_id} contract",
         owner_binding=owner_binding,
         security_review_binding=None,
@@ -103,6 +105,7 @@ def _candidate(
     source_family: str = "postgresql",
     source_flavor: str = "warehouse",
     contract_version: int = 3,
+    semantic_contract_version: str | None = None,
     snapshot_version: int = 7,
     execution_policy_version: int | None = None,
     connector_profile_version: int | None = None,
@@ -125,6 +128,7 @@ def _candidate(
             source_family=source_family,
             source_flavor=source_flavor,
             dataset_contract_version=contract_version,
+            semantic_contract_version=semantic_contract_version,
             schema_snapshot_version=snapshot_version,
             execution_policy_version=effective_execution_policy_version,
             connector_profile_version=connector_profile_version,
@@ -154,6 +158,7 @@ def _seed_preview_candidate_approval(
     owner_subject_id: str = "user:alice",
     approval_expires_at: datetime | None = None,
     execution_policy_version: int | None = None,
+    semantic_contract_version: str | None = None,
 ) -> PreviewCandidateApproval:
     dataset_contract = session.get(DatasetContract, source.dataset_contract_id)
     schema_snapshot = session.get(SchemaSnapshot, source.schema_snapshot_id)
@@ -169,6 +174,7 @@ def _seed_preview_candidate_approval(
         source_flavor=source.source_flavor,
         dataset_contract_id=dataset_contract.id,
         dataset_contract_version=dataset_contract.contract_version,
+        semantic_contract_version=semantic_contract_version,
         schema_snapshot_id=schema_snapshot.id,
         schema_snapshot_version=schema_snapshot.snapshot_version,
         authenticated_subject_id=owner_subject_id,
@@ -193,6 +199,7 @@ def _seed_preview_candidate_approval(
         source_flavor=source.source_flavor,
         dataset_contract_id=dataset_contract.id,
         dataset_contract_version=dataset_contract.contract_version,
+        semantic_contract_version=semantic_contract_version,
         schema_snapshot_id=schema_snapshot.id,
         schema_snapshot_version=schema_snapshot.snapshot_version,
         authenticated_subject_id=owner_subject_id,
@@ -290,6 +297,73 @@ def test_authoritative_candidate_approval_is_consumed_once_for_execution() -> No
             )
 
     assert exc_info.value.deny_code == "DENY_CANDIDATE_REPLAYED"
+
+
+def test_authoritative_candidate_approval_preserves_preview_semantic_contract_version() -> None:
+    with _session_scope() as session:
+        source = _seed_source(
+            session,
+            source_id="sap-approved-spend",
+            semantic_contract_version="approved_vendor_spend.v1",
+        )
+        _seed_preview_candidate_approval(
+            session,
+            source=source,
+            semantic_contract_version="approved_vendor_spend.v1",
+        )
+
+        result = revalidate_authoritative_candidate_approval(
+            session=session,
+            candidate_id="candidate-123",
+            authenticated_subject=AuthenticatedSubject(
+                subject_id="user:alice",
+                governance_bindings=frozenset({"group:finance-analysts"}),
+            ),
+            as_of=datetime.now(timezone.utc),
+            selected_source_id="sap-approved-spend",
+            audit_context=_audit_context(),
+        )
+
+    assert result.source.semantic_contract_version == "approved_vendor_spend.v1"
+
+
+def test_authoritative_candidate_approval_rejects_stale_semantic_contract_version() -> None:
+    with _session_scope() as session:
+        source = _seed_source(
+            session,
+            source_id="sap-approved-spend",
+            semantic_contract_version="approved_vendor_spend.v2",
+        )
+        approval = _seed_preview_candidate_approval(
+            session,
+            source=source,
+            semantic_contract_version="approved_vendor_spend.v1",
+        )
+
+        with pytest.raises(
+            CandidateLifecycleRevalidationError,
+            match="Candidate semantic contract version is stale",
+        ) as exc_info:
+            revalidate_authoritative_candidate_approval(
+                session=session,
+                candidate_id="candidate-123",
+                authenticated_subject=AuthenticatedSubject(
+                    subject_id="user:alice",
+                    governance_bindings=frozenset({"group:finance-analysts"}),
+                ),
+                as_of=datetime.now(timezone.utc),
+                selected_source_id="sap-approved-spend",
+                audit_context=_audit_context(),
+            )
+
+        session.refresh(approval)
+
+    assert exc_info.value.deny_code == "DENY_POLICY_VERSION_STALE"
+    assert approval.approval_state == "approved"
+    assert approval.executed_at is None
+    audit_event = exc_info.value.audit_event
+    assert audit_event is not None
+    assert audit_event.semantic_contract_version == "approved_vendor_spend.v1"
 
 
 def test_authoritative_candidate_approval_rejects_stale_persisted_execution_policy() -> None:

@@ -176,6 +176,69 @@ class ApiErrorHandlingTestCase(unittest.TestCase):
         self.assertNotIn(raw_cookie, response.text)
         self.assertNotIn("csrf-token-should-not-render", response.text)
 
+    def test_execution_denial_audit_events_preserve_validation_context(self) -> None:
+        raw_token = "raw-token-should-not-render"  # noqa: S105 - test sentinel
+
+        @self.app.get("/_test/execution-denied-audit")
+        def raise_execution_denial_with_validation_context() -> None:
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "execution_denied",
+                    "message": "Candidate execution was denied.",
+                    "audit": {
+                        "events": [
+                            {
+                                "event_id": "event-123",
+                                "event_type": "execution_denied",
+                                "occurred_at": "2026-04-25T12:00:00Z",
+                                "request_id": "request-123",
+                                "correlation_id": "correlation-123",
+                                "query_candidate_id": "candidate-123",
+                                "source_id": "finance_postgres",
+                                "source_family": "postgresql",
+                                "dataset_contract_version": 3,
+                                "semantic_contract_version": "approved_vendor_spend.v1",
+                                "schema_snapshot_version": 7,
+                                "execution_policy_version": 3,
+                                "connector_profile_version": 1,
+                                "release_gate_scenario": {
+                                    "scenario_id": "postgresql-positive-approved-vendor-spend-top-vendors",
+                                    "guard_decision": "allow",
+                                },
+                                "primary_deny_code": "DENY_RESULT_VALIDATION_FAILED",
+                                "denial_cause": "result_validation_failed",
+                                "denial_reason": "row_count_mismatch",
+                                "execution_row_count": 200,
+                                "result_truncated": True,
+                                "raw_token": raw_token,
+                            }
+                        ]
+                    },
+                },
+            )
+
+        response = self.client.get("/_test/execution-denied-audit")
+
+        self.assertEqual(response.status_code, 403)
+        event = response.json()["audit"]["events"][0]
+        self.assertEqual(
+            event["semantic_contract_version"],
+            "approved_vendor_spend.v1",
+        )
+        self.assertEqual(
+            event["release_gate_scenario"],
+            {
+                "scenario_id": "postgresql-positive-approved-vendor-spend-top-vendors",
+                "guard_decision": "allow",
+            },
+        )
+        self.assertEqual(event["execution_row_count"], 200)
+        self.assertIs(event["result_truncated"], True)
+        self.assertNotIn(raw_token, response.text)
+
     def test_preview_missing_request_id_uses_controlled_fail_closed_error(
         self,
     ) -> None:

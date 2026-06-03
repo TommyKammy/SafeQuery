@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.features.execution.connector_selection import ExecutionConnectorSelection
 from app.features.guard.deny_taxonomy import (
+    DENY_RESULT_VALIDATION_FAILED,
     DENY_RUNTIME_RATE_LIMIT,
     DENY_SOURCE_BINDING_MISMATCH,
     DENY_UNSUPPORTED_SOURCE_BINDING,
@@ -19,6 +20,8 @@ from app.features.execution.runtime import (
     ExecutionResult,
     ExecutionRuntimeSafetyState,
 )
+from app.features.evaluation.harness import list_postgresql_evaluation_scenarios
+from app.features.result_validation import ResultValidationContract
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
@@ -34,6 +37,7 @@ def _candidate_source() -> SourceBoundCandidateMetadata:
         source_family="postgresql",
         source_flavor="warehouse",
         dataset_contract_version=3,
+        semantic_contract_version="approved_vendor_spend.v1",
         schema_snapshot_version=7,
     )
 
@@ -326,6 +330,138 @@ def test_execute_candidate_sql_derives_source_labeled_executed_evidence(
         exclude_none=True
     )
     assert "rows" not in result.executed_evidence.model_dump(exclude_none=True)
+
+
+def test_execute_candidate_sql_attaches_result_validation_to_execution_metadata() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    result = execute_candidate_sql(
+        candidate=_candidate(),
+        selection=_selection(),
+        query_runner=lambda **_: [{"vendor_name": "Acme", "approved_spend": 1200}],
+        audit_context=_audit_context(),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
+        result_validation_contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+            aggregate_columns=("approved_spend",),
+        ),
+    )
+
+    validation = result.metadata.result_validation
+
+    assert validation is not None
+    assert validation.status == "pass"
+    assert validation.semantic_contract_version == "approved_vendor_spend.v1"
+    assert validation.candidate_id == "candidate-123"
+    assert validation.execution_run_id == result.metadata.execution_run_id
+    assert validation.evidence.expected_columns == ("vendor_name", "approved_spend")
+    assert validation.evidence.row_count == 1
+
+
+def test_execute_candidate_sql_blocks_failed_result_validation_before_success() -> None:
+    from app.features.execution import (
+        ExecutionConnectorExecutionError,
+        execute_candidate_sql,
+    )
+
+    calls: list[str] = []
+
+    def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+        calls.append(canonical_sql)
+        return [{"vendor_name": "Acme"}]
+
+    with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+        execute_candidate_sql(
+            candidate=_candidate(),
+            selection=_selection(),
+            query_runner=query_runner,
+            audit_context=_audit_context(),
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            result_validation_contract=ResultValidationContract(
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("approved_spend",),
+            ),
+        )
+
+    assert calls == ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"]
+    assert exc_info.value.deny_code == DENY_RESULT_VALIDATION_FAILED
+    assert [event.event_type for event in exc_info.value.audit_events] == [
+        "execution_requested",
+        "execution_started",
+        "execution_denied",
+    ]
+    assert {
+        "primary_deny_code": DENY_RESULT_VALIDATION_FAILED,
+        "denial_cause": "result_validation_failed",
+        "denial_reason": "missing_expected_columns,missing_required_columns",
+    }.items() <= exc_info.value.audit_event.model_dump(exclude_none=True).items()
+
+
+def test_result_validation_denial_preserves_release_gate_metadata() -> None:
+    from app.features.execution import (
+        ExecutionConnectorExecutionError,
+        execute_candidate_sql,
+    )
+
+    scenario = next(
+        scenario
+        for scenario in list_postgresql_evaluation_scenarios()
+        if scenario.scenario_id == "postgresql-positive-approved-vendor-spend-top-vendors"
+    )
+    candidate = ExecutableCandidateRecord(
+        canonical_sql=scenario.canonical_sql,
+        source=SourceBoundCandidateMetadata(
+            source_id=scenario.source.source_id,
+            source_family=scenario.source.source_family,
+            source_flavor=scenario.source.source_flavor,
+            dataset_contract_version=scenario.source.dataset_contract_version,
+            semantic_contract_version="approved_vendor_spend.v1",
+            schema_snapshot_version=scenario.source.schema_snapshot_version,
+            execution_policy_version=scenario.source.execution_policy_version,
+            connector_profile_version=scenario.source.connector_profile_version,
+        ),
+    )
+    selection = ExecutionConnectorSelection(
+        source_id=scenario.source.source_id,
+        source_family=scenario.source.source_family,
+        source_flavor=scenario.source.source_flavor,
+        connector_id="postgresql_readonly",
+        ownership="backend",
+    )
+    audit_context = _audit_context().model_copy(
+        update={
+            "guard_audit_event_id": uuid4(),
+            "execution_policy_version": scenario.source.execution_policy_version,
+            "connector_profile_version": scenario.source.connector_profile_version,
+        }
+    )
+
+    with pytest.raises(ExecutionConnectorExecutionError) as exc_info:
+        execute_candidate_sql(
+            candidate=candidate,
+            selection=selection,
+            query_runner=lambda **_: [{"vendor_name": "Acme"}],
+            audit_context=audit_context,
+            business_postgres_url=BUSINESS_POSTGRES_URL,
+            application_postgres_url=APPLICATION_POSTGRES_URL,
+            result_validation_contract=ResultValidationContract(
+                semantic_contract_version="approved_vendor_spend.v1",
+                expected_columns=("vendor_name", "approved_spend"),
+                required_columns=("approved_spend",),
+            ),
+        )
+
+    release_gate_scenario = exc_info.value.audit_event.release_gate_scenario
+    assert release_gate_scenario is not None
+    assert release_gate_scenario.scenario_id == scenario.scenario_id
+    assert release_gate_scenario.guard_decision == "allow"
+    assert (
+        release_gate_scenario.execution_audit_event_id
+        == exc_info.value.audit_event.event_id
+    )
 
 
 def test_execution_result_omits_executed_evidence_for_negative_audit_row_count() -> None:
