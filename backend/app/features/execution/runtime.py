@@ -1148,7 +1148,7 @@ def execute_candidate_sql(
             redaction_source_rows=redaction_source_rows,
         )
         metadata = metadata.model_copy(update={"result_validation": result_validation})
-        if not result_validation.answer_generation_allowed:
+        if "column_sensitivity_metadata_missing" in result_validation.reason_codes:
             _raise_result_validation_denial(
                 validation=result_validation,
                 candidate_source=candidate.source,

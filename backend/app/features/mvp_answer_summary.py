@@ -36,6 +36,19 @@ _QUARTER_COLUMN = "fiscal_quarter"
 _SPEND_COLUMNS = ("approved_spend", "approved_amount")
 
 MVPAnswerTruncationStatus = Literal["not_truncated", "truncated"]
+MVPAnswerState = Literal["answered", "insufficient_evidence"]
+MVPInsufficientEvidenceReason = Literal[
+    "no_rows",
+    "missing_columns",
+    "unsafe_truncation",
+    "blocking_validation_warnings",
+]
+MVPInsufficientEvidenceNextAction = Literal[
+    "revise_query_filters_or_source",
+    "revise_query_or_semantic_contract_columns",
+    "rerun_with_trusted_top_n_or_higher_limit",
+    "inspect_blocking_validation_warnings",
+]
 
 
 class MVPAnswerSource(BaseModel):
@@ -53,6 +66,7 @@ class MVPAnswerSummary(BaseModel):
     contract_version: Literal[MVP_ANSWER_SUMMARY_CONTRACT_VERSION] = (
         MVP_ANSWER_SUMMARY_CONTRACT_VERSION
     )
+    answer_state: MVPAnswerState = "answered"
     answer_text: NonEmptyTrimmedString
     source: MVPAnswerSource
     assumptions: tuple[NonEmptyTrimmedString, ...] = Field(default_factory=tuple)
@@ -60,12 +74,14 @@ class MVPAnswerSummary(BaseModel):
     validation_reason_codes: tuple[ResultValidationReason, ...] = Field(
         default_factory=tuple
     )
+    insufficient_evidence_reason: Optional[MVPInsufficientEvidenceReason] = None
+    next_action: Optional[MVPInsufficientEvidenceNextAction] = None
     truncation_status: MVPAnswerTruncationStatus
     redaction_status: ResultRedactionStatus
     rows_used: NonNegativeInt
 
     def to_wire_payload(self) -> dict[str, object]:
-        return self.model_dump(mode="json", by_alias=True)
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 def generate_mvp_answer_summary(
@@ -93,26 +109,82 @@ def generate_mvp_answer_summary(
         "truncated" if validation.evidence.result_truncated else "not_truncated"
     )
     redaction_status = validation.evidence.redaction_status
+    insufficient_evidence = _insufficient_evidence_decision(validation)
 
-    answer_text = _answer_text(
-        rows=display_rows,
-        total_row_count=validation.evidence.row_count,
-        source=source,
-        assumptions=safe_assumptions,
-        validation=validation,
-        truncation_status=truncation_status,
-        truncation_reason=truncation_reason,
-        redaction_status=redaction_status,
+    answer_text = (
+        _insufficient_evidence_answer_text(insufficient_evidence)
+        if insufficient_evidence is not None
+        else _answer_text(
+            rows=display_rows,
+            total_row_count=validation.evidence.row_count,
+            source=source,
+            assumptions=safe_assumptions,
+            validation=validation,
+            truncation_status=truncation_status,
+            truncation_reason=truncation_reason,
+            redaction_status=redaction_status,
+        )
     )
     return MVPAnswerSummary(
+        answer_state=(
+            "insufficient_evidence"
+            if insufficient_evidence is not None
+            else "answered"
+        ),
         answer_text=answer_text,
         source=source,
         assumptions=safe_assumptions,
         validation_status=validation.status,
         validation_reason_codes=validation.reason_codes,
+        insufficient_evidence_reason=(
+            insufficient_evidence[0] if insufficient_evidence is not None else None
+        ),
+        next_action=(
+            insufficient_evidence[1] if insufficient_evidence is not None else None
+        ),
         truncation_status=truncation_status,
         redaction_status=redaction_status,
         rows_used=rows_used,
+    )
+
+
+def _insufficient_evidence_decision(
+    validation: ResultValidationOutcome,
+) -> tuple[MVPInsufficientEvidenceReason, MVPInsufficientEvidenceNextAction] | None:
+    reasons = set(validation.reason_codes)
+    if "no_rows" in reasons:
+        return ("no_rows", "revise_query_filters_or_source")
+    if "missing_expected_columns" in reasons or "missing_required_columns" in reasons:
+        return ("missing_columns", "revise_query_or_semantic_contract_columns")
+    if "result_truncated" in reasons:
+        return ("unsafe_truncation", "rerun_with_trusted_top_n_or_higher_limit")
+    if validation.status != "pass":
+        return ("blocking_validation_warnings", "inspect_blocking_validation_warnings")
+    return None
+
+
+def _insufficient_evidence_answer_text(
+    decision: tuple[MVPInsufficientEvidenceReason, MVPInsufficientEvidenceNextAction],
+) -> str:
+    reason, _next_action = decision
+    if reason == "no_rows":
+        return (
+            "Insufficient evidence: no rows were returned. "
+            "Next action: revise the query filters or source selection before requesting an answer."
+        )
+    if reason == "missing_columns":
+        return (
+            "Insufficient evidence: expected result columns were missing. "
+            "Next action: revise the SQL projection or semantic contract columns before requesting an answer."
+        )
+    if reason == "unsafe_truncation":
+        return (
+            "Insufficient evidence: result was truncated before the top set could be trusted. "
+            "Next action: rerun with an authoritative ORDER BY, tighter filters, or a higher trusted limit."
+        )
+    return (
+        "Insufficient evidence: validation warnings block answer generation. "
+        "Next action: inspect the validation warnings before requesting an answer."
     )
 
 

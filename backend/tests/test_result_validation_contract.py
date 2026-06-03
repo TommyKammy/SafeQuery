@@ -400,6 +400,7 @@ def test_result_validation_does_not_assume_expected_columns_for_empty_results() 
     assert validation.reason_codes == (
         "missing_expected_columns",
         "missing_required_columns",
+        "no_rows",
     )
     assert validation.evidence.observed_columns == ()
 

@@ -1464,6 +1464,115 @@ describe("HomePage", () => {
     expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent("Result truncated");
   });
 
+  it("renders insufficient-evidence execute responses without speculative rows", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Selected candidate",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-selected",
+                    requestId: "request-selected",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        if (url.endsWith("/candidates/candidate-selected/execute")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                audit: {
+                  events: [
+                    {
+                      candidate_state: "executed",
+                      event_id: "00000000-0000-4000-8000-000000000301",
+                      event_type: "execution_completed",
+                      execution_row_count: 1,
+                      occurred_at: "2026-04-21T14:45:17+09:00",
+                      query_candidate_id: "candidate-selected",
+                      request_id: "request-selected",
+                      result_truncated: false,
+                      source_id: "sap-approved-spend"
+                    }
+                  ]
+                },
+                candidate_id: "candidate-selected",
+                connector_id: "postgresql_readonly",
+                metadata: {
+                  answer_summary: {
+                    answer_state: "insufficient_evidence",
+                    answer_text:
+                      "Insufficient evidence: expected result columns were missing. Next action: revise the SQL projection or semantic contract columns before requesting an answer.",
+                    insufficient_evidence_reason: "missing_columns",
+                    next_action: "revise_query_or_semantic_contract_columns"
+                  },
+                  candidate_id: "candidate-selected",
+                  execution_run_id: "00000000-0000-4000-8000-000000000301",
+                  result_truncated: false,
+                  row_count: 1,
+                  source_family: "postgresql",
+                  source_flavor: "warehouse",
+                  source_id: "sap-approved-spend"
+                },
+                rows: [{ vendor_name: "Acme Supplies" }],
+                source_id: "sap-approved-spend"
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-selected",
+          question: "Selected candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /execute reviewed candidate/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/insufficient evidence state reached/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/expected result columns were missing/i)).toBeInTheDocument();
+    expect(screen.getByText(/Reason: missing columns/i)).toBeInTheDocument();
+    expect(screen.getByText(/Next action: revise query or semantic contract columns/i)).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: /execute response result rows/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Acme Supplies")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent("execution_completed");
+  });
+
   it("renders zero-row execute response audit context on the empty state", async () => {
     const csrfToken = document.createElement("meta");
     csrfToken.name = "safequery-csrf-token";

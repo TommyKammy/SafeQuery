@@ -601,9 +601,20 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         payload = response.json()
         self.assertIs(payload["metadata"]["result_truncated"], True)
         self.assertEqual(payload["metadata"]["truncation_reason"], "payload_limit")
-        answer_text = payload["metadata"]["answer_summary"]["answer_text"]
-        self.assertIn("Truncation: truncated by payload limits.", answer_text)
-        self.assertNotIn("truncated by returned-row limits", answer_text)
+        answer_summary = payload["metadata"]["answer_summary"]
+        self.assertEqual(answer_summary["answer_state"], "insufficient_evidence")
+        self.assertEqual(
+            answer_summary["insufficient_evidence_reason"],
+            "unsafe_truncation",
+        )
+        self.assertEqual(
+            answer_summary["next_action"],
+            "rerun_with_trusted_top_n_or_higher_limit",
+        )
+        self.assertIn(
+            "result was truncated before the top set could be trusted",
+            answer_summary["answer_text"],
+        )
 
     def test_execute_candidate_api_validates_returned_rows_after_redaction_and_capping(
         self,
@@ -707,7 +718,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             "column_sensitivity_metadata_missing",
         )
 
-    def test_execute_candidate_api_blocks_when_required_column_is_redacted(
+    def test_execute_candidate_api_returns_insufficient_evidence_when_required_column_is_redacted(
         self,
     ) -> None:
         def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
@@ -740,17 +751,25 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             json={"selected_source_id": "demo-business-postgres"},
         )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["error"]["code"], "execution_denied")
         self.assertNotIn("buyer@example.test", response.text)
+        answer_summary = payload["metadata"]["answer_summary"]
         self.assertEqual(
-            payload["audit"]["events"][-1]["primary_deny_code"],
-            "DENY_RESULT_VALIDATION_FAILED",
+            answer_summary["answer_state"],
+            "insufficient_evidence",
         )
         self.assertEqual(
-            payload["audit"]["events"][-1]["denial_reason"],
-            "missing_expected_columns,missing_required_columns",
+            answer_summary["insufficient_evidence_reason"],
+            "missing_columns",
+        )
+        self.assertEqual(
+            answer_summary["next_action"],
+            "revise_query_or_semantic_contract_columns",
+        )
+        self.assertEqual(
+            payload["metadata"]["result_validation"]["reason_codes"],
+            ["missing_expected_columns", "missing_required_columns"],
         )
         self.assertEqual(payload["audit"]["events"][-1]["execution_row_count"], 1)
         self.assertIs(payload["audit"]["events"][-1]["result_truncated"], False)
@@ -834,7 +853,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         self.assertEqual(approval.approval_state, "approved")
         self.assertIsNone(approval.executed_at)
 
-    def test_execute_candidate_api_blocks_failed_result_validation_before_success(
+    def test_execute_candidate_api_returns_insufficient_evidence_for_missing_columns(
         self,
     ) -> None:
         calls: list[str] = []
@@ -858,25 +877,29 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             json={"selected_source_id": "demo-business-postgres"},
         )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["error"]["code"], "execution_denied")
         self.assertEqual(
             [event["event_type"] for event in payload["audit"]["events"]],
-            ["execution_requested", "execution_started", "execution_denied"],
+            ["execution_requested", "execution_started", "execution_completed"],
+        )
+        validation = payload["metadata"]["result_validation"]
+        self.assertEqual(validation["status"], "fail")
+        self.assertEqual(
+            validation["reason_codes"],
+            ["missing_expected_columns", "missing_required_columns"],
+        )
+        answer_summary = payload["metadata"]["answer_summary"]
+        self.assertEqual(answer_summary["answer_state"], "insufficient_evidence")
+        self.assertEqual(
+            answer_summary["insufficient_evidence_reason"],
+            "missing_columns",
         )
         self.assertEqual(
-            payload["audit"]["events"][-1]["primary_deny_code"],
-            "DENY_RESULT_VALIDATION_FAILED",
+            answer_summary["next_action"],
+            "revise_query_or_semantic_contract_columns",
         )
-        self.assertEqual(
-            payload["audit"]["events"][-1]["denial_cause"],
-            "result_validation_failed",
-        )
-        self.assertEqual(
-            payload["audit"]["events"][-1]["denial_reason"],
-            "missing_expected_columns,missing_required_columns",
-        )
+        self.assertNotIn("Acme", answer_summary["answer_text"])
         self.assertEqual(payload["audit"]["events"][-1]["execution_row_count"], 1)
         self.assertIs(payload["audit"]["events"][-1]["result_truncated"], False)
         self.assertEqual(
@@ -890,7 +913,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
         )
         self.assertEqual(
             [event.event_type for event in persisted_events],
-            ["execution_requested", "execution_started", "execution_denied"],
+            ["execution_requested", "execution_started", "execution_completed"],
         )
         self.assertEqual(
             persisted_events[-1].audit_payload["execution_row_count"],

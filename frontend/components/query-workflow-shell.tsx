@@ -24,6 +24,7 @@ type WorkflowState =
   | "review_denied"
   | "completed"
   | "empty"
+  | "insufficient_evidence"
   | "execution_denied"
   | "failed"
   | "canceled"
@@ -37,6 +38,7 @@ type CanonicalWorkflowState =
   | "review_denied"
   | "completed"
   | "empty"
+  | "insufficient_evidence"
   | "execution_denied"
   | "failed"
   | "canceled";
@@ -175,6 +177,7 @@ type AuthoritativeRunContext = {
   analystResponse: AnalystResponsePayload | null;
   auditEvents: OperatorWorkflowAuditEvent[];
   executedEvidence: OperatorWorkflowExecutedEvidence[];
+  insufficientEvidence?: InsufficientEvidenceState | null;
   lifecycleState: string;
   lifecycleTimestamp: string;
   primaryDenyCode?: string | null;
@@ -198,10 +201,23 @@ type ExecuteSubmissionResult = {
   candidateId: string;
   executedEvidence: OperatorWorkflowExecutedEvidence[];
   executionRunId?: string;
+  insufficientEvidence?: InsufficientEvidenceState | null;
   resultTruncated: boolean;
   rows: ResultRow[];
   rowCount: number;
   sourceId: string;
+};
+
+type InsufficientEvidenceReason =
+  | "no_rows"
+  | "missing_columns"
+  | "unsafe_truncation"
+  | "blocking_validation_warnings";
+
+type InsufficientEvidenceState = {
+  answerText: string;
+  nextAction: string;
+  reason: InsufficientEvidenceReason;
 };
 
 type ResultCell = string | number | boolean | null;
@@ -226,6 +242,10 @@ const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
   empty: {
     description: "Execution completed, but the reviewed run record returned no rows.",
     label: "Empty state"
+  },
+  insufficient_evidence: {
+    description: "Execution completed, but validation could not support an answer.",
+    label: "Insufficient evidence"
   },
   execution_denied: {
     description: "The reviewed candidate was blocked at execute time and no execution payload was produced.",
@@ -265,6 +285,7 @@ const workflowStateOrder: CanonicalWorkflowState[] = [
   "review_denied",
   "completed",
   "empty",
+  "insufficient_evidence",
   "execution_denied",
   "failed",
   "canceled"
@@ -643,6 +664,34 @@ function parseExecuteAuditEvents(value: unknown): OperatorWorkflowAuditEvent[] {
     .filter((event): event is OperatorWorkflowAuditEvent => event !== null);
 }
 
+function isInsufficientEvidenceReason(value: unknown): value is InsufficientEvidenceReason {
+  return (
+    value === "no_rows" ||
+    value === "missing_columns" ||
+    value === "unsafe_truncation" ||
+    value === "blocking_validation_warnings"
+  );
+}
+
+function parseInsufficientEvidenceState(value: unknown): InsufficientEvidenceState | null {
+  if (!isObject(value) || value.answer_state !== "insufficient_evidence") {
+    return null;
+  }
+
+  const answerText = readRequiredString(value.answer_text);
+  const nextAction = readRequiredString(value.next_action);
+  const reason = value.insufficient_evidence_reason;
+  if (!answerText || !nextAction || !isInsufficientEvidenceReason(reason)) {
+    return null;
+  }
+
+  return {
+    answerText,
+    nextAction,
+    reason
+  };
+}
+
 function isResultCell(value: unknown): value is ResultCell {
   return (
     value === null ||
@@ -862,6 +911,9 @@ function parseExecuteSubmissionResult(
   const rowCount = value.metadata.row_count;
   const resultTruncated = value.metadata.result_truncated;
   const rows = parseExecuteRows(value.rows);
+  const insufficientEvidence = parseInsufficientEvidenceState(
+    value.metadata.answer_summary
+  );
 
   if (
     candidateId !== expectedCandidateId ||
@@ -891,6 +943,7 @@ function parseExecuteSubmissionResult(
     candidateId,
     executedEvidence: buildExecutedEvidenceFromExecuteResponse(partialResult, value.metadata),
     executionRunId,
+    insufficientEvidence,
     resultTruncated,
     rows,
     rowCount,
@@ -1452,6 +1505,7 @@ function getWorkflowContext(
     runContext &&
     (state === "completed" ||
       state === "empty" ||
+      state === "insufficient_evidence" ||
       state === "execution_denied" ||
       state === "failed" ||
       state === "canceled")
@@ -1484,6 +1538,10 @@ function getGuardTone(state: CanonicalWorkflowState): string {
     return "success";
   }
 
+  if (state === "insufficient_evidence") {
+    return "warning";
+  }
+
   if (state === "canceled") {
     return "muted";
   }
@@ -1502,6 +1560,10 @@ function getGuardHeadline(state: CanonicalWorkflowState): string {
 
   if (state === "empty") {
     return "Execution completed with no approved rows";
+  }
+
+  if (state === "insufficient_evidence") {
+    return "Execution completed with insufficient evidence";
   }
 
   if (state === "execution_denied") {
@@ -1532,6 +1594,10 @@ function getGuardCopy(state: CanonicalWorkflowState): string {
     return "The result surface can represent a clean no-data outcome without restyling the rest of the page or hiding guard context.";
   }
 
+  if (state === "insufficient_evidence") {
+    return "Execution completed, but SafeQuery withheld the answer because validation could not support it. Follow the stated next action before trying again.";
+  }
+
   if (state === "execution_denied") {
     return "Execute-time checks revalidated ownership, approval freshness, and replay posture. The run stays denied instead of inferring success from an earlier preview.";
   }
@@ -1554,6 +1620,10 @@ function getResultTitle(state: CanonicalWorkflowState): string {
 
   if (state === "empty") {
     return "No rows returned";
+  }
+
+  if (state === "insufficient_evidence") {
+    return "Insufficient evidence";
   }
 
   if (state === "review_denied") {
@@ -1726,6 +1796,23 @@ function renderResultContent(
           </div>
         ) : null}
       </>
+    );
+  }
+
+  if (state === "insufficient_evidence") {
+    const reasonLabel = runContext?.insufficientEvidence?.reason.replaceAll("_", " ");
+    return (
+      <div className="state-callout state-callout-warning">
+        <p className="state-callout-title">Insufficient evidence state reached</p>
+        <p>
+          {runContext?.insufficientEvidence?.answerText ??
+            "SafeQuery completed execution, but validation could not support an answer."}
+        </p>
+        {reasonLabel ? <p>Reason: {reasonLabel}.</p> : null}
+        {runContext?.insufficientEvidence?.nextAction ? (
+          <p>Next action: {runContext.insufficientEvidence.nextAction.replaceAll("_", " ")}.</p>
+        ) : null}
+      </div>
     );
   }
 
@@ -2671,12 +2758,17 @@ export function QueryWorkflowShell({
         return;
       }
 
-      const nextState = result.rowCount === 0 ? "empty" : "completed";
+      const nextState = result.insufficientEvidence
+        ? "insufficient_evidence"
+        : result.rowCount === 0
+          ? "empty"
+          : "completed";
       setSubmittedState(nextState);
       setSubmittedRunContext({
         analystResponse: null,
         auditEvents: result.auditEvents,
         executedEvidence: result.executedEvidence,
+        insufficientEvidence: result.insufficientEvidence ?? null,
         lifecycleState: nextState,
         lifecycleTimestamp: new Date().toISOString(),
         reviewEvidence: candidatePreview.reviewEvidence,
