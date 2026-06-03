@@ -483,8 +483,11 @@ def _assurance_failures_for_observed_answers(
                     scenario_id=fixture.metadata.scenario_id,
                     scenario_category=fixture.case_type,
                     detail=(
-                        "Governed answer made unsupported claims: "
-                        f"{', '.join(score.unsupported_claims)}."
+                        "Governed answer made unsupported claims "
+                        f"({', '.join(score.unsupported_claim_categories)}): "
+                        f"{', '.join(score.unsupported_claims)}. "
+                        "This reviewer-readable consistency review is diagnostic "
+                        "only and grants no execution authority."
                     ),
                 )
             )

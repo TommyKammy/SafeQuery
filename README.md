@@ -380,6 +380,15 @@ boundaries, and Level 3 unsupported-answer boundaries. Fixture levels with no
 observed artifacts are reported as `not_covered` with explicit coverage counts
 instead of being treated as passed.
 
+Future LLM-written summaries must pass result-to-answer consistency review
+before they become user-facing. Observed future-summary artifacts should mark
+their result metadata with `answer_surface: future_llm_summary` or
+`enforce_citations: true` so fixture-declared row-reference citation
+requirements are enforced. The review checks unsupported result values, missing
+row citations, and row-reference mismatches against returned rows and emits
+reviewer-readable diagnostics only; it is not execution authority and does not
+replace the deterministic MVP answer template path.
+
 Startup-guard verification:
 
 ```bash

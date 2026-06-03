@@ -160,8 +160,8 @@ def test_release_gate_assurance_report_fails_on_unsupported_answer_claims() -> N
             {
                 "scenario_id": "gavsf-002-vendor-spend-by-quarter",
                 "answer_text": (
-                    "FY2025-Q1 approved spend is 125000.00. "
-                    "FY2025-Q2 approved spend is 98000.00. "
+                    "FY2025-Q1 approved spend is 125000.00 [row:1]. "
+                    "FY2025-Q2 approved spend is 98000.00 [row:2]. "
                     "FY2025-Q3 approved spend is 42000.00."
                 ),
                 "result_rows": [
@@ -196,7 +196,9 @@ def test_release_gate_assurance_report_fails_on_unsupported_answer_claims() -> N
     assert report.levels[3].status == "not_covered"
     assert report.failures[0].deny_code == "DENY_UNSUPPORTED_ANSWER_CLAIM"
     assert report.failures[0].scenario_id == "gavsf-002-vendor-spend-by-quarter"
+    assert "unsupported_result_value" in report.failures[0].detail
     assert "FY2025-Q3" in report.failures[0].detail
+    assert "grants no execution authority" in report.failures[0].detail
 
 
 def test_release_gate_assurance_report_fails_closed_on_zero_observed_coverage() -> None:
