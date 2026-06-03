@@ -25,6 +25,12 @@ from app.features.execution.connector_selection import (
     ExecutionConnectorSelectionError,
     select_execution_connector,
 )
+from app.features.result_validation import (
+    ResultValidationContract,
+    ResultValidationMetadata,
+    ResultValidationOutcome,
+    validate_execution_result,
+)
 from app.features.guard.deny_taxonomy import (
     DENY_APPLICATION_POSTGRES_REUSE,
     DENY_RUNTIME_CONCURRENCY_LIMIT,
@@ -104,6 +110,7 @@ class ExecutionResultMetadata(BaseModel):
     payload_limit_bytes: int
     result_truncated: bool
     truncation_reason: Optional[NonEmptyTrimmedString] = None
+    result_validation: Optional[ResultValidationOutcome] = None
 
 
 class ExecutionResult(BaseModel):
@@ -348,6 +355,7 @@ def _build_execution_audit_event(
         source_family=candidate_source.source_family,
         source_flavor=candidate_source.source_flavor,
         dataset_contract_version=candidate_source.dataset_contract_version,
+        semantic_contract_version=candidate_source.semantic_contract_version,
         schema_snapshot_version=candidate_source.schema_snapshot_version,
         execution_policy_version=(
             audit_context.execution_policy_version
@@ -925,6 +933,7 @@ def execute_candidate_sql(
     cancellation_probe: CancellationProbe | None = None,
     runtime_safety_state: ExecutionRuntimeSafetyState | None = None,
     audit_context: ExecutionAuditContext | None = None,
+    result_validation_contract: ResultValidationContract | None = None,
 ) -> ExecutionResult:
     try:
         _require_matching_selection(
@@ -1023,6 +1032,29 @@ def execute_candidate_sql(
         candidate_source=candidate.source,
         audit_context=audit_context,
     )
+    if result_validation_contract is not None:
+        if (
+            candidate.source.semantic_contract_version is None
+            or metadata.candidate_id is None
+            or metadata.execution_run_id is None
+        ):
+            raise RuntimeError(
+                "Result validation requires semantic contract version, candidate id, "
+                "and execution run id."
+            )
+        result_validation = validate_execution_result(
+            rows=capped_rows,
+            metadata=ResultValidationMetadata(
+                semantic_contract_version=candidate.source.semantic_contract_version,
+                candidate_id=metadata.candidate_id,
+                execution_run_id=metadata.execution_run_id,
+                row_count=metadata.row_count,
+                row_limit=metadata.row_limit,
+                result_truncated=metadata.result_truncated,
+            ),
+            contract=result_validation_contract,
+        )
+        metadata = metadata.model_copy(update={"result_validation": result_validation})
 
     result = ExecutionResult(
         source_id=selection.source_id,

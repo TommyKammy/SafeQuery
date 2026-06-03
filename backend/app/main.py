@@ -56,6 +56,7 @@ from app.features.execution import (
     preflight_execution_runtime_controls,
     select_execution_connector,
 )
+from app.features.result_validation import ResultValidationContract
 from app.features.review_llm import resolve_review_llm_adapter
 from app.services.candidate_lifecycle import (
     CandidateLifecycleAuditContext,
@@ -181,6 +182,21 @@ def _operator_runtime_safety_state(request: Request) -> ExecutionRuntimeSafetySt
             "Candidate execution is unavailable.",
         )
     return state
+
+
+def _operator_result_validation_contract(
+    request: Request,
+) -> ResultValidationContract | None:
+    contract = getattr(request.app.state, "result_validation_contract", None)
+    if contract is None:
+        return None
+    if not isinstance(contract, ResultValidationContract):
+        raise api_error(
+            503,
+            "execution_unavailable",
+            "Candidate execution is unavailable.",
+        )
+    return contract
 
 
 def _operator_control_values(values: object) -> frozenset[str]:
@@ -777,7 +793,18 @@ def create_app() -> FastAPI:
                     )
                 prepared_candidate = ExecutableCandidateRecord(
                     canonical_sql=approved_sql,
-                    source=revalidation_result.source,
+                    source=(
+                        revalidation_result.source.model_copy(
+                            update={
+                                "semantic_contract_version": (
+                                    preview_candidate.semantic_contract_version
+                                )
+                            }
+                        )
+                        if preview_candidate is not None
+                        and preview_candidate.semantic_contract_version is not None
+                        else revalidation_result.source
+                    ),
                 )
                 prepared_selection = select_execution_connector(
                     candidate_source=prepared_candidate.source
@@ -861,6 +888,9 @@ def create_app() -> FastAPI:
                 "execution_query_runner",
                 None,
             )
+            result_validation_contract = _operator_result_validation_contract(
+                http_request
+            )
             result = execute_candidate_sql(
                 candidate=candidate,
                 selection=selection,
@@ -877,6 +907,7 @@ def create_app() -> FastAPI:
                 cancellation_probe=cancellation_probe,
                 runtime_safety_state=runtime_safety_state,
                 audit_context=execution_audit_context,
+                result_validation_contract=result_validation_contract,
             )
         except CandidateLifecycleRevalidationError as exc:
             if exc.audit_event is not None:

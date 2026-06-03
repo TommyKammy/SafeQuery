@@ -61,6 +61,7 @@ class SourceBoundCandidateMetadata(BaseModel):
     source_family: str
     source_flavor: Optional[str] = None
     dataset_contract_version: int
+    semantic_contract_version: Optional[str] = None
     schema_snapshot_version: int
     execution_policy_version: Optional[int] = None
     connector_profile_version: Optional[int] = None
@@ -419,6 +420,7 @@ def _raise_authoritative_approval_error(
             dataset_contract_version=(
                 approval.dataset_contract_version if approval is not None else 0
             ),
+            semantic_contract_version=None,
             schema_snapshot_version=(
                 approval.schema_snapshot_version if approval is not None else 0
             ),
@@ -454,6 +456,7 @@ def _candidate_lifecycle_from_preview_candidate(
             source_family=preview_candidate.source_family,
             source_flavor=preview_candidate.source_flavor,
             dataset_contract_version=preview_candidate.dataset_contract_version,
+            semantic_contract_version=preview_candidate.semantic_contract_version,
             schema_snapshot_version=preview_candidate.schema_snapshot_version,
             execution_policy_version=(
                 CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY.get(
@@ -486,6 +489,7 @@ def _candidate_lifecycle_from_approval(
             source_family=approval.source_family,
             source_flavor=approval.source_flavor,
             dataset_contract_version=approval.dataset_contract_version,
+            semantic_contract_version=None,
             schema_snapshot_version=approval.schema_snapshot_version,
             execution_policy_version=approval.execution_policy_version,
             connector_profile_version=(

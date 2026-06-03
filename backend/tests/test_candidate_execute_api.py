@@ -27,6 +27,7 @@ from app.db.models.source_registry import RegisteredSource, SourceActivationPost
 from app.db.session import require_preview_submission_session
 from app.features.auth.dev import build_dev_authenticated_subject
 from app.features.auth.session import create_test_application_session
+from app.features.result_validation import ResultValidationContract
 from app.services.candidate_lifecycle import (
     CURRENT_EXECUTION_POLICY_VERSION_BY_SOURCE_FAMILY,
 )
@@ -81,13 +82,20 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
                 os.environ[name] = value
         get_settings.cache_clear()
 
-    def _client(self, query_runner) -> TestClient:
+    def _client(
+        self,
+        query_runner,
+        *,
+        result_validation_contract: ResultValidationContract | None = None,
+    ) -> TestClient:
         main_module = importlib.import_module("app.main")
         app = main_module.create_app()
         app.dependency_overrides[require_preview_submission_session] = (
             lambda: self.session
         )
         app.state.execution_query_runner = query_runner
+        if result_validation_contract is not None:
+            app.state.result_validation_contract = result_validation_contract
         return TestClient(app)
 
     def _seed_approved_candidate(self) -> None:
@@ -123,6 +131,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             registered_source_id=source.id,
             schema_snapshot_id=snapshot.id,
             contract_version=3,
+            semantic_contract_version="approved_vendor_spend.v1",
             display_name="Demo business contract",
             owner_binding="group:safequery-demo-local-operators",
             security_review_binding=None,
@@ -143,6 +152,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             source_flavor=source.source_flavor,
             dataset_contract_id=contract.id,
             dataset_contract_version=contract.contract_version,
+            semantic_contract_version=contract.semantic_contract_version,
             schema_snapshot_id=snapshot.id,
             schema_snapshot_version=snapshot.snapshot_version,
             authenticated_subject_id="user:demo-local-operator",
@@ -167,6 +177,7 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             source_flavor=source.source_flavor,
             dataset_contract_id=contract.id,
             dataset_contract_version=contract.contract_version,
+            semantic_contract_version=contract.semantic_contract_version,
             schema_snapshot_id=snapshot.id,
             schema_snapshot_version=snapshot.snapshot_version,
             authenticated_subject_id="user:demo-local-operator",
@@ -334,6 +345,40 @@ class CandidateExecuteApiTestCase(unittest.TestCase):
             calls,
             ["SELECT vendor_name FROM finance.approved_vendor_spend LIMIT 1"],
         )
+
+    def test_execute_candidate_api_attaches_result_validation_metadata(self) -> None:
+        def query_runner(*, canonical_sql: str, **_: object) -> list[dict[str, object]]:
+            return [{"vendor_name": "Acme"}]
+
+        app_session = create_test_application_session(build_dev_authenticated_subject())
+        response = self._client(
+            query_runner,
+            result_validation_contract=ResultValidationContract(
+                expected_columns=("vendor_name",),
+                required_columns=("vendor_name",),
+            ),
+        ).post(
+            "/candidates/candidate-123/execute",
+            headers=app_session.headers,
+            cookies=app_session.cookies,
+            json={"selected_source_id": "demo-business-postgres"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        validation = response.json()["metadata"]["result_validation"]
+
+        self.assertEqual(validation["status"], "pass")
+        self.assertEqual(
+            validation["semantic_contract_version"],
+            "approved_vendor_spend.v1",
+        )
+        self.assertEqual(validation["candidate_id"], "candidate-123")
+        self.assertEqual(
+            validation["execution_run_id"],
+            response.json()["metadata"]["execution_run_id"],
+        )
+        self.assertEqual(validation["evidence"]["expected_columns"], ["vendor_name"])
+        self.assertEqual(validation["evidence"]["row_count"], 1)
 
     def test_execute_candidate_api_persists_source_aware_execution_audit_events(
         self,

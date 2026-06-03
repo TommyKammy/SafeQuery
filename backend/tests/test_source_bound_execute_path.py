@@ -19,6 +19,7 @@ from app.features.execution.runtime import (
     ExecutionResult,
     ExecutionRuntimeSafetyState,
 )
+from app.features.result_validation import ResultValidationContract
 from app.services.candidate_lifecycle import SourceBoundCandidateMetadata
 
 
@@ -34,6 +35,7 @@ def _candidate_source() -> SourceBoundCandidateMetadata:
         source_family="postgresql",
         source_flavor="warehouse",
         dataset_contract_version=3,
+        semantic_contract_version="approved_vendor_spend.v1",
         schema_snapshot_version=7,
     )
 
@@ -326,6 +328,34 @@ def test_execute_candidate_sql_derives_source_labeled_executed_evidence(
         exclude_none=True
     )
     assert "rows" not in result.executed_evidence.model_dump(exclude_none=True)
+
+
+def test_execute_candidate_sql_attaches_result_validation_to_execution_metadata() -> None:
+    from app.features.execution import execute_candidate_sql
+
+    result = execute_candidate_sql(
+        candidate=_candidate(),
+        selection=_selection(),
+        query_runner=lambda **_: [{"vendor_name": "Acme", "approved_spend": 1200}],
+        audit_context=_audit_context(),
+        business_postgres_url=BUSINESS_POSTGRES_URL,
+        application_postgres_url=APPLICATION_POSTGRES_URL,
+        result_validation_contract=ResultValidationContract(
+            expected_columns=("vendor_name", "approved_spend"),
+            required_columns=("vendor_name", "approved_spend"),
+            aggregate_columns=("approved_spend",),
+        ),
+    )
+
+    validation = result.metadata.result_validation
+
+    assert validation is not None
+    assert validation.status == "pass"
+    assert validation.semantic_contract_version == "approved_vendor_spend.v1"
+    assert validation.candidate_id == "candidate-123"
+    assert validation.execution_run_id == result.metadata.execution_run_id
+    assert validation.evidence.expected_columns == ("vendor_name", "approved_spend")
+    assert validation.evidence.row_count == 1
 
 
 def test_execution_result_omits_executed_evidence_for_negative_audit_row_count() -> None:
