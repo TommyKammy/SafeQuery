@@ -305,6 +305,7 @@ const workflowStateOrder: CanonicalWorkflowState[] = [
 
 const FIRST_RUN_SETUP_GUIDE_HREF =
   "https://github.com/TommyKammy/SafeQuery/blob/main/docs/local-development.md#first-run-ui-empty-states";
+const LOCAL_DEMO_SOURCE_ID = "demo-business-postgres";
 
 export function resolveWorkflowState(value?: string): CanonicalWorkflowState {
   if (!value) {
@@ -1761,8 +1762,8 @@ function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null
       <div className="placeholder-block">
         <p className="placeholder-title">No authoritative candidate selected</p>
         <p>
-          Submit the question for preview or reopen a candidate history row before technical SQL
-          details can be shown.
+          SQL generation is disabled or still pending. Submit the question for preview or reopen a
+          candidate history row before technical SQL details can be shown.
         </p>
       </div>
     );
@@ -1772,7 +1773,10 @@ function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null
     return (
       <div className="placeholder-block">
         <p className="placeholder-title">Canonical SQL pending</p>
-        <p>Canonical SQL has not been generated for this candidate.</p>
+        <p>
+          Canonical SQL has not been generated for this candidate. SQL generation is disabled or
+          still pending, so continue from the business-readable answer plan.
+        </p>
       </div>
     );
   }
@@ -3320,8 +3324,9 @@ export function QueryWorkflowShell({
                 <div className="placeholder-block">
                   <h3 className="placeholder-title">No workflow history yet</h3>
                   <p>
-                    Submit a preview request against an active source. SafeQuery will show request,
-                    candidate, and run summaries here only after the backend returns them.
+                    Recent previews will appear here. Submit a preview request against an active
+                    source. SafeQuery will show request, candidate, and run summaries here only
+                    after the backend returns them.
                   </p>
                 </div>
               ) : (
@@ -3406,8 +3411,9 @@ export function QueryWorkflowShell({
                     ))}
                   </select>
                   <p className="section-copy">
-                    Choose one explicit source before preview submission. SafeQuery does not infer or
-                    auto-route the initial source binding.
+                    {boundSourceId === LOCAL_DEMO_SOURCE_ID
+                      ? "The local demo source is selected for this development run. Preview does not execute a query; it stages a business-readable answer plan for review."
+                      : "Choose one explicit source before preview submission. Preview does not execute a query, and SafeQuery does not infer or auto-route the initial source binding."}
                   </p>
                   {renderGovernanceBindingStatuses(sourceBinding.source)}
                   {sourceBinding.blockedReason ? (
