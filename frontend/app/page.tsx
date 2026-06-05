@@ -30,13 +30,14 @@ function hasEntitlementAffectingGovernanceDrift(source: SourceOption): boolean {
 function resolveLocalDemoSourceId(
   operatorWorkflow: OperatorWorkflowSnapshot,
   requestedSourceId?: string,
+  allowLocalDemoDefault = false,
   localDemoDefaultSourceId?: string
 ): string | undefined {
   if (requestedSourceId) {
     return requestedSourceId;
   }
 
-  if (!localDemoDefaultSourceId || operatorWorkflow.status !== "live") {
+  if (!allowLocalDemoDefault || !localDemoDefaultSourceId || operatorWorkflow.status !== "live") {
     return undefined;
   }
 
@@ -62,9 +63,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const historyRecordId = readParam(params.history_record_id)?.trim();
   const state = readParam(params.state)?.trim();
   const operatorWorkflow = await getOperatorWorkflowSnapshot(config.apiInternalBaseUrl);
+  const allowLocalDemoDefault = state === undefined && historyRecordId === undefined;
   const resolvedSourceId = resolveLocalDemoSourceId(
     operatorWorkflow,
     sourceId,
+    allowLocalDemoDefault,
     config.localDemoDefaultSourceId
   );
 

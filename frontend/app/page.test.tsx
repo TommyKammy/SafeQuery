@@ -179,6 +179,36 @@ describe("HomePage", () => {
     expect(screen.getByText(/SQL generation is disabled or still pending/i)).toBeInTheDocument();
   });
 
+  it("does not default the local demo source for direct workflow state URLs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(localDemoWorkflowPayload())
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          state: "query"
+        }
+      })
+    );
+
+    expect(screen.getByRole("combobox", { name: /source/i })).toHaveValue("");
+    expect(screen.queryByText(/local demo source is selected/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/choose one explicit source before preview submission/i)).toBeInTheDocument();
+  });
+
   it("does not default a demo source in production-like environments", async () => {
     process.env.SAFEQUERY_ENVIRONMENT = "production";
     vi.stubGlobal(
