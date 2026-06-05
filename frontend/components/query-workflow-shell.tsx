@@ -152,6 +152,7 @@ type PreviewSubmissionResult = {
   candidateId: string;
   candidateSql: string | null;
   candidateState: string;
+  clarifyingQuestions: string[];
   datasetContractVersion: number | null;
   guardStatus: string;
   requestId: string;
@@ -171,6 +172,7 @@ type AuthoritativeCandidatePreview = {
   candidateId: string;
   candidateSql: string | null;
   candidateState: string;
+  clarifyingQuestions?: string[];
   datasetContractVersion?: number | null;
   executedEvidence: OperatorWorkflowExecutedEvidence[];
   guardStatus: string;
@@ -770,10 +772,15 @@ function parsePreviewRetrievedCitationsFromValue(
     return null;
   }
 
-  const parsed = value
-    .map((item) => parsePreviewRetrievedCitation(item, expectedSourceId))
-    .filter((item): item is OperatorWorkflowRetrievedCitation => item !== null);
-  return parsed;
+  const citations: OperatorWorkflowRetrievedCitation[] = [];
+  for (const item of value) {
+    const citation = parsePreviewRetrievedCitation(item, expectedSourceId);
+    if (citation === null) {
+      return null;
+    }
+    citations.push(citation);
+  }
+  return citations;
 }
 
 function parsePreviewRetrievedCitationsFromEvents(
@@ -818,6 +825,29 @@ function dedupeRetrievedCitations(
     seen.add(key);
     return true;
   });
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function parseBackendClarifyingQuestions(candidate: Record<string, unknown>): string[] {
+  const intentMapping = isObject(candidate.intent_mapping)
+    ? candidate.intent_mapping
+    : isObject(candidate.intentMapping)
+      ? candidate.intentMapping
+      : null;
+
+  return dedupeStrings(
+    [
+      readOptionalString(candidate.denial_reason) ?? readOptionalString(candidate.denialReason),
+      intentMapping
+        ? readOptionalString(intentMapping.clarification) ??
+          readOptionalString(intentMapping.clarifying_question) ??
+          readOptionalString(intentMapping.clarifyingQuestion)
+        : null
+    ].filter((item): item is string => item !== null)
+  );
 }
 
 function parseExecuteAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
@@ -1079,6 +1109,7 @@ function parsePreviewSubmissionResult(
     ...directRetrievedCitations,
     ...auditRetrievedCitations
   ]);
+  const clarifyingQuestions = parseBackendClarifyingQuestions(value.candidate);
 
   if (
     !requestId ||
@@ -1097,6 +1128,7 @@ function parsePreviewSubmissionResult(
     candidateId,
     candidateSql,
     candidateState,
+    clarifyingQuestions,
     datasetContractVersion,
     guardStatus,
     requestId,
@@ -1123,6 +1155,7 @@ function buildSubmittedCandidatePreview(
     candidateId: result.candidateId,
     candidateSql: result.candidateSql,
     candidateState: result.candidateState,
+    clarifyingQuestions: result.clarifyingQuestions,
     datasetContractVersion: result.datasetContractVersion,
     executedEvidence: [],
     guardStatus: result.guardStatus,
@@ -1802,7 +1835,15 @@ function renderBusinessAnswerPlan(
     )
   ].filter((item): item is string => item !== null);
   const assumptions = latestReview?.assumptions ?? [];
-  const clarifyingQuestions = latestReview?.clarifyingQuestions ?? [];
+  const reviewClarifyingQuestions = latestReview?.clarifyingQuestions ?? [];
+  const clarifyingQuestions =
+    reviewClarifyingQuestions.length > 0
+      ? reviewClarifyingQuestions
+      : (preview?.clarifyingQuestions ?? []);
+  const clarificationRequired =
+    clarifyingQuestions.length > 0 ||
+    preview?.candidateState.toLowerCase() === "clarification_required" ||
+    preview?.candidateState.toLowerCase() === "needs_clarification";
   const reviewStatus = latestReview
     ? `Review ${latestReview.reviewStatus.replace(/_/g, " ")}`
     : "Review evidence not provided";
@@ -1812,7 +1853,7 @@ function renderBusinessAnswerPlan(
   const nextAction =
     preview === null
       ? "Submit the question for preview, then review the answer plan returned by SafeQuery."
-      : clarifyingQuestions.length > 0
+      : clarificationRequired
         ? "Answer the clarifying questions, then submit a revised preview before execution."
       : executeEnabled
         ? "Review the answer plan, then execute the reviewed candidate when the business intent and safety status match the request."
@@ -2823,7 +2864,7 @@ export function QueryWorkflowShell({
         }
       : undefined;
   const selectedEvidenceContext =
-    submittedCandidatePreview ?? historyRunContext ?? candidatePreview;
+    submittedRunContext ?? submittedCandidatePreview ?? selectedHistoryRunContext ?? candidatePreview;
   const selectedAuditEvents = selectedEvidenceContext?.auditEvents ?? [];
   const selectedExecutedEvidence = selectedEvidenceContext?.executedEvidence ?? [];
   const selectedRetrievedCitations = selectedEvidenceContext?.retrievedCitations ?? [];
