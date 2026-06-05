@@ -432,9 +432,9 @@ describe("HomePage", () => {
   });
 
   it("populates clarification details for request history rows from the linked candidate", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
+    appendCsrfToken();
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
         const url = input.toString();
 
         if (url.endsWith("/operator/workflow")) {
@@ -505,9 +505,42 @@ describe("HomePage", () => {
           });
         }
 
+        if (url.endsWith("/requests/preview")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                audit: {
+                  events: [],
+                  source_id: "sap-approved-spend",
+                  state: "recorded"
+                },
+                candidate: {
+                  candidate_id: "candidate-clarified-from-request",
+                  candidate_sql: "select vendor_name from approved_vendor_spend;",
+                  dataset_contract_version: 1,
+                  guard_status: "passed",
+                  review_evidence: [],
+                  schema_snapshot_version: 1,
+                  semantic_contract_version: "approved_vendor_spend.v1",
+                  source_family: "postgresql",
+                  source_flavor: "warehouse",
+                  source_id: "sap-approved-spend",
+                  state: "preview_ready"
+                },
+                request: {
+                  question: "Use the fiscal quarter definition for approved vendor spend",
+                  request_id: "request-clarified-from-request",
+                  source_id: "sap-approved-spend",
+                  state: "submitted"
+                }
+              })
+          });
+        }
+
         return new Promise(() => {});
-      })
-    );
+      });
+    vi.stubGlobal("fetch", fetchMock);
 
     render(
       await HomePage({
@@ -530,6 +563,28 @@ describe("HomePage", () => {
     expect(
       screen.queryByRole("button", { name: /execute reviewed candidate/i })
     ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /choose meaning/i }));
+    fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+      target: { value: "Use the fiscal quarter definition for approved vendor spend" }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8000/requests/preview",
+        expect.objectContaining({
+          body: JSON.stringify({
+            question: "Use the fiscal quarter definition for approved vendor spend",
+            source_id: "sap-approved-spend",
+            revise_from: {
+              item_type: "request",
+              request_id: "request-clarification-details"
+            }
+          })
+        })
+      );
+    });
   });
 
   it("reopens denied candidates and terminal runs into their lifecycle states", async () => {

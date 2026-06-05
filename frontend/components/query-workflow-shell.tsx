@@ -1712,6 +1712,19 @@ function revisionDraftFromSelectedContext(
   selectedHistoryItem?: OperatorHistoryItem,
   sourceId?: string
 ): RevisionDraftContext | null {
+  if (
+    (state === "review_denied" || state === "clarification_required") &&
+    selectedHistoryItem?.itemType === "request" &&
+    selectedHistoryItem.sourceId === sourceId &&
+    isRevisableRequestLifecycleState(selectedHistoryItem.lifecycleState)
+  ) {
+    return {
+      itemType: "request",
+      requestId: selectedHistoryItem.recordId,
+      sourceId: selectedHistoryItem.sourceId
+    };
+  }
+
   if ((state === "review_denied" || state === "clarification_required") && candidatePreview) {
     return {
       candidateId: candidatePreview.candidateId,
@@ -1739,19 +1752,6 @@ function revisionDraftFromSelectedContext(
       requestId: auditEvent?.requestId,
       runId: runContext.runIdentity,
       sourceId
-    };
-  }
-
-  if (
-    (state === "review_denied" || state === "clarification_required") &&
-    selectedHistoryItem?.itemType === "request" &&
-    selectedHistoryItem.sourceId === sourceId &&
-    isRevisableRequestLifecycleState(selectedHistoryItem.lifecycleState)
-  ) {
-    return {
-      itemType: "request",
-      requestId: selectedHistoryItem.recordId,
-      sourceId: selectedHistoryItem.sourceId
     };
   }
 
