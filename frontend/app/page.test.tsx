@@ -2796,6 +2796,71 @@ describe("HomePage", () => {
     expect(screen.getByText(/no executable candidate/i)).toBeInTheDocument();
   });
 
+  it("hides execute for clarification candidates opened through a generic preview URL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: null,
+                    guardStatus: "pending",
+                    itemType: "candidate",
+                    label: "Ambiguous candidate",
+                    lifecycleState: "clarification_required",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-preview-clarification",
+                    requestId: "request-preview-clarification",
+                    reviewEvidence: [
+                      {
+                        auditEventId: "audit-preview-clarification",
+                        assumptions: ["Spend could mean committed or invoiced spend."],
+                        clarifyingQuestions: ["Should SafeQuery use committed or invoiced spend?"],
+                        reviewContractVersion: "review_llm_adapter_output.v1",
+                        reviewDecisionId: "review-preview-clarification",
+                        reviewStatus: "needs_clarification",
+                        riskFlags: []
+                      }
+                    ],
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-preview-clarification",
+          question: "Ambiguous spend",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+    expect(answerPlan).toHaveTextContent("Should SafeQuery use committed or invoiced spend?");
+    expect(answerPlan).toHaveTextContent(/answer the clarifying questions/i);
+    expect(
+      screen.queryByRole("button", { name: /execute reviewed candidate/i })
+    ).not.toBeInTheDocument();
+  });
+
   it("maps malformed and unavailable preview submission failures distinctly", async () => {
     const failureCases = [
       {

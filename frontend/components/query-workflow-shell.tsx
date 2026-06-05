@@ -1330,6 +1330,13 @@ function canExecuteCandidate(
   );
 }
 
+function candidateRequiresClarification(
+  candidatePreview: AuthoritativeCandidatePreview | null
+): boolean {
+  const candidateState = candidatePreview?.candidateState.toLowerCase();
+  return candidateState === "clarification_required" || candidateState === "needs_clarification";
+}
+
 function resolveSourceBinding(
   sourceOptions: SourceOption[],
   state: CanonicalWorkflowState,
@@ -2970,6 +2977,10 @@ export function QueryWorkflowShell({
     candidatePreview,
     historySourceMismatch
   );
+  const executeControlVisible =
+    candidatePreview !== null &&
+    normalizedState !== "clarification_required" &&
+    !candidateRequiresClarification(candidatePreview);
   const historyHrefContext =
     (normalizedState === "preview" ||
       normalizedState === "clarification_required") &&
@@ -3680,7 +3691,7 @@ export function QueryWorkflowShell({
                     ? "Submitting preview"
                     : "Submit for preview"}
                 </button>
-                {candidatePreview && normalizedState !== "clarification_required" ? (
+                {executeControlVisible ? (
                   <button
                     disabled={!executeEnabled || executeSubmission.status === "executing"}
                     onClick={executeCandidate}
