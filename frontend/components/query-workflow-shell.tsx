@@ -1083,8 +1083,10 @@ function parsePreviewSubmissionResult(
     return null;
   }
   const reviewEvidence = parsedReviewEvidence as OperatorWorkflowReviewEvidence[];
-  const auditEventsValue =
-    isObject(value.audit) && Array.isArray(value.audit.events) ? value.audit.events : [];
+  if (!isObject(value.audit) || !Array.isArray(value.audit.events)) {
+    return null;
+  }
+  const auditEventsValue = value.audit.events;
   const parsedAuditEvents = auditEventsValue.map((event) =>
     parsePreviewAuditEvent(event, expectedSourceId)
   );
@@ -2864,7 +2866,9 @@ export function QueryWorkflowShell({
         }
       : undefined;
   const selectedEvidenceContext =
-    submittedRunContext ?? submittedCandidatePreview ?? selectedHistoryRunContext ?? candidatePreview;
+    normalizedState === "preview" || normalizedState === "review_denied"
+      ? candidatePreview
+      : submittedRunContext ?? selectedHistoryRunContext ?? candidatePreview;
   const selectedAuditEvents = selectedEvidenceContext?.auditEvents ?? [];
   const selectedExecutedEvidence = selectedEvidenceContext?.executedEvidence ?? [];
   const selectedRetrievedCitations = selectedEvidenceContext?.retrievedCitations ?? [];
@@ -3022,6 +3026,7 @@ export function QueryWorkflowShell({
         });
         return;
       }
+      setSubmittedRunContext(null);
 
       if (isClarificationRequiredPreviewState(result)) {
         setSubmittedQuestion(submittedQuestionText);

@@ -1119,6 +1119,7 @@ describe("HomePage", () => {
   it("uses authoritative run evidence after executing a submitted preview candidate", async () => {
     appendCsrfToken();
 
+    let previewRequestCount = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = input.toString();
 
@@ -1130,6 +1131,74 @@ describe("HomePage", () => {
       }
 
       if (url.endsWith("/requests/preview")) {
+        previewRequestCount += 1;
+        if (previewRequestCount === 2) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                audit: {
+                  events: [
+                    {
+                      candidate_state: "preview_ready",
+                      event_id: "revised-preview-audit-event",
+                      event_type: "candidate_previewed",
+                      occurred_at: "2026-04-21T14:50:00Z",
+                      query_candidate_id: "candidate-revised-preview",
+                      request_id: "request-revised-preview",
+                      source_id: "sap-approved-spend"
+                    }
+                  ],
+                  source_id: "sap-approved-spend",
+                  state: "recorded"
+                },
+                candidate: {
+                  candidate_id: "candidate-revised-preview",
+                  candidate_sql: "select vendor_name from approved_vendor_spend where fiscal_year = 2026;",
+                  dataset_contract_version: 9,
+                  guard_status: "passed",
+                  retrieved_citations: [
+                    {
+                      asset_id: "revised-metric-definition",
+                      asset_kind: "metric_definition",
+                      authority: "advisory_context",
+                      can_authorize_execution: false,
+                      citation_label: "Revised preview citation",
+                      dataset_contract_version: 9,
+                      schema_snapshot_version: 10,
+                      source_family: "postgresql",
+                      source_flavor: "warehouse",
+                      source_id: "sap-approved-spend"
+                    }
+                  ],
+                  review_evidence: [
+                    {
+                      audit_event_id: "review-revised-preview",
+                      assumptions: ["Revised preview assumption."],
+                      clarifying_questions: [],
+                      review_contract_version: "review_llm_adapter_output.v1",
+                      review_decision_id: "review-revised-preview",
+                      review_status: "ready",
+                      risk_flags: ["Revised preview risk."]
+                    }
+                  ],
+                  schema_snapshot_version: 10,
+                  semantic_contract_version: "approved_vendor_spend.v3",
+                  source_family: "postgresql",
+                  source_flavor: "warehouse",
+                  source_id: "sap-approved-spend",
+                  state: "preview_ready"
+                },
+                request: {
+                  question: "Revise the completed answer for 2026",
+                  request_id: "request-revised-preview",
+                  source_id: "sap-approved-spend",
+                  state: "submitted"
+                }
+              })
+          });
+        }
+
         return Promise.resolve({
           ok: true,
           json: () =>
@@ -1266,6 +1335,33 @@ describe("HomePage", () => {
     expect(screen.getByLabelText(/executed evidence/i)).toHaveTextContent("1 row");
     expect(screen.getByLabelText(/audit lifecycle events/i)).not.toHaveTextContent(
       "candidate_previewed"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /revise attempt/i }));
+    fireEvent.change(screen.getByRole("combobox", { name: /source/i }), {
+      target: { value: "sap-approved-spend" }
+    });
+    fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+      target: { value: "Revise the completed answer for 2026" }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+    await waitFor(() => {
+      expect(previewRequestCount).toBe(2);
+    });
+
+    const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+    expect(answerPlan).toHaveTextContent("Revised preview citation");
+    expect(answerPlan).toHaveTextContent("Revised preview assumption.");
+    expect(answerPlan).toHaveTextContent("Revised preview risk.");
+    expect(answerPlan).toHaveTextContent(/dataset contract v9/i);
+    expect(answerPlan).toHaveTextContent(/schema snapshot v10/i);
+    expect(answerPlan).not.toHaveTextContent("Submitted preview citation");
+    expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent(
+      "revised-preview-audit-event"
+    );
+    expect(screen.getByLabelText(/audit lifecycle events/i)).not.toHaveTextContent(
+      "execution-audit-event"
     );
   });
 
@@ -2492,6 +2588,38 @@ describe("HomePage", () => {
               request: {
                 question: "Show approved vendors by quarterly spend",
                 request_id: "request-citation-malformed",
+                source_id: "sap-approved-spend",
+                state: "submitted"
+              }
+            })
+        }
+      },
+      {
+        expectedCopy: /malformed_preview_response/i,
+        response: {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                source_id: "sap-approved-spend",
+                state: "recorded"
+              },
+              candidate: {
+                candidate_id: "candidate-audit-malformed",
+                candidate_sql: "select vendor_name from approved_vendor_spend;",
+                dataset_contract_version: 1,
+                guard_status: "allow",
+                retrieved_citations: [],
+                review_evidence: [],
+                schema_snapshot_version: 1,
+                source_family: "postgresql",
+                source_flavor: "warehouse",
+                source_id: "sap-approved-spend",
+                state: "preview_ready"
+              },
+              request: {
+                question: "Show approved vendors by quarterly spend",
+                request_id: "request-audit-malformed",
                 source_id: "sap-approved-spend",
                 state: "submitted"
               }
