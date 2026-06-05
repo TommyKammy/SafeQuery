@@ -11,18 +11,22 @@ dockerfile="frontend/Dockerfile"
 required_frontend_build_args=(
   "API_INTERNAL_BASE_URL: \${API_INTERNAL_BASE_URL:?Missing API_INTERNAL_BASE_URL. Copy .env.example to .env.}"
   "NEXT_PUBLIC_API_BASE_URL: \${NEXT_PUBLIC_API_BASE_URL:?Missing NEXT_PUBLIC_API_BASE_URL. Copy .env.example to .env.}"
+  "SAFEQUERY_ENVIRONMENT: \${SAFEQUERY_ENVIRONMENT:-development}"
 )
 
 required_frontend_environment=(
   "API_INTERNAL_BASE_URL: \${API_INTERNAL_BASE_URL:?Missing API_INTERNAL_BASE_URL. Copy .env.example to .env.}"
   "NEXT_PUBLIC_API_BASE_URL: \${NEXT_PUBLIC_API_BASE_URL:?Missing NEXT_PUBLIC_API_BASE_URL. Copy .env.example to .env.}"
+  "SAFEQUERY_ENVIRONMENT: \${SAFEQUERY_ENVIRONMENT:-development}"
 )
 
 required_dockerfile_patterns=(
   "ARG API_INTERNAL_BASE_URL"
   "ARG NEXT_PUBLIC_API_BASE_URL"
+  "ARG SAFEQUERY_ENVIRONMENT"
   'ENV API_INTERNAL_BASE_URL=${API_INTERNAL_BASE_URL}'
   'ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}'
+  'ENV SAFEQUERY_ENVIRONMENT=${SAFEQUERY_ENVIRONMENT}'
   "RUN npm run build"
 )
 

@@ -35,6 +35,28 @@ function workflowPayload(sourceLabel = "SAP spend cube / approved_vendor_spend")
   };
 }
 
+function localDemoWorkflowPayload() {
+  return {
+    history: [],
+    sources: [
+      {
+        activationPosture: "active",
+        description: "Local demo source returned by the backend contract.",
+        displayLabel: "Demo business PostgreSQL / approved_vendor_spend",
+        governanceBindings: [],
+        sourceId: "demo-business-postgres"
+      },
+      {
+        activationPosture: "paused",
+        description: "Paused source must not become the local default.",
+        displayLabel: "Paused finance source",
+        governanceBindings: [],
+        sourceId: "paused-finance-source"
+      }
+    ]
+  };
+}
+
 function stubWorkflowFetch() {
   return vi.fn((input: RequestInfo | URL) => {
     const url = input.toString();
@@ -61,6 +83,7 @@ describe("HomePage", () => {
   beforeEach(() => {
     process.env.API_INTERNAL_BASE_URL = "http://127.0.0.1:8000";
     process.env.NEXT_PUBLIC_API_BASE_URL = "http://127.0.0.1:8000";
+    process.env.SAFEQUERY_ENVIRONMENT = "development";
 
     vi.stubGlobal("fetch", stubWorkflowFetch());
   });
@@ -126,6 +149,92 @@ describe("HomePage", () => {
       screen.getByRole("option", { name: "ERP approved spend / live contract" })
     ).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /SAP spend cube/i })).not.toBeInTheDocument();
+  });
+
+  it("defaults the local demo source only when explicitly running in development", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(localDemoWorkflowPayload())
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByRole("combobox", { name: /source/i })).toHaveValue(
+      "demo-business-postgres"
+    );
+    expect(screen.getByText(/local demo source is selected for this development run/i)).toBeInTheDocument();
+    expect(screen.getByText(/preview does not execute a query/i)).toBeInTheDocument();
+    expect(screen.getByText(/recent previews will appear here/i)).toBeInTheDocument();
+    expect(screen.getByText(/SQL generation is disabled or still pending/i)).toBeInTheDocument();
+  });
+
+  it.each(["preview", "completed"] as const)(
+    "does not default the local demo source for direct workflow state URL state=%s",
+    async (state) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) => {
+          const url = input.toString();
+
+          if (url.endsWith("/operator/workflow")) {
+            return Promise.resolve({
+              ok: true,
+              json: () => Promise.resolve(localDemoWorkflowPayload())
+            });
+          }
+
+          return new Promise(() => {});
+        })
+      );
+
+      render(
+        await HomePage({
+          searchParams: {
+            state
+          }
+        })
+      );
+
+      expect(screen.getByRole("combobox", { name: /source/i })).toHaveValue("");
+      expect(screen.queryByText(/local demo source is selected/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/choose one explicit source before preview submission/i)).toBeInTheDocument();
+    }
+  );
+
+  it("does not default a demo source in production-like environments", async () => {
+    process.env.SAFEQUERY_ENVIRONMENT = "production";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(localDemoWorkflowPayload())
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(await HomePage({}));
+
+    expect(screen.getByRole("combobox", { name: /source/i })).toHaveValue("");
+    expect(screen.queryByText(/local demo source is selected/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/choose one explicit source before preview submission/i)).toBeInTheDocument();
   });
 
   it("renders stale and drifted governance binding status without raw identity payloads", async () => {
