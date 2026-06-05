@@ -81,6 +81,8 @@ export type OperatorWorkflowRetrievedCitation = {
   authority: "advisory_context";
   canAuthorizeExecution: false;
   citationLabel: string;
+  datasetContractVersion?: number | null;
+  schemaSnapshotVersion?: number | null;
   sourceId: string;
   sourceFamily: string;
   sourceFlavor: string | null;
@@ -189,6 +191,10 @@ function readOptionalString(value: unknown): string | undefined {
 
 function readOptionalNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function readOptionalPositiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function parseArray<T>(value: unknown, parser: (item: unknown) => T | null): T[] | null {
@@ -359,6 +365,8 @@ function parseRetrievedCitation(value: unknown): OperatorWorkflowRetrievedCitati
     authority: "advisory_context",
     canAuthorizeExecution: false,
     citationLabel,
+    datasetContractVersion: readOptionalPositiveInteger(value.datasetContractVersion) ?? null,
+    schemaSnapshotVersion: readOptionalPositiveInteger(value.schemaSnapshotVersion) ?? null,
     sourceId,
     sourceFamily,
     sourceFlavor: readOptionalString(value.sourceFlavor) ?? null

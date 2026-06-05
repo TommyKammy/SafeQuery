@@ -875,6 +875,8 @@ describe("HomePage", () => {
                         authority: "advisory_context",
                         canAuthorizeExecution: false,
                         citationLabel: "Approved spend metric definition",
+                        datasetContractVersion: 3,
+                        schemaSnapshotVersion: 5,
                         sourceFamily: "postgresql",
                         sourceFlavor: "warehouse",
                         sourceId: "sap-approved-spend"
@@ -924,6 +926,8 @@ describe("HomePage", () => {
     expect(answerPlan).toHaveTextContent("Top approved vendors by quarterly spend");
     expect(answerPlan).toHaveTextContent("SAP spend cube / approved_vendor_spend");
     expect(answerPlan).toHaveTextContent("Approved spend metric definition");
+    expect(answerPlan).toHaveTextContent(/dataset contract v3/i);
+    expect(answerPlan).toHaveTextContent(/schema snapshot v5/i);
     expect(answerPlan).toHaveTextContent("Vendor means normalized vendor_id.");
     expect(answerPlan).toHaveTextContent(/review ready/i);
     expect(answerPlan).toHaveTextContent(/review the answer plan, then execute the reviewed candidate/i);
@@ -933,6 +937,183 @@ describe("HomePage", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /sql preview state/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /authoritative sql preview/i })).not.toBeInTheDocument();
+  });
+
+  it("uses submitted preview evidence instead of stale selected run context after revision submit", async () => {
+    appendCsrfToken();
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              history: [
+                {
+                  auditEvents: [
+                    {
+                      candidateId: "candidate-old-run",
+                      eventId: "run-stale-context",
+                      eventType: "execution_completed",
+                      occurredAt: "2026-04-21T14:24:00Z",
+                      requestId: "request-old-run",
+                      sourceId: "sap-approved-spend"
+                    }
+                  ],
+                  executedEvidence: [],
+                  itemType: "run",
+                  label: "Prior completed run",
+                  lifecycleState: "completed",
+                  occurredAt: "2026-04-21T14:25:00Z",
+                  recordId: "run-stale-context",
+                  retrievedCitations: [
+                    {
+                      assetId: "old-metric-definition",
+                      assetKind: "metric_definition",
+                      authority: "advisory_context",
+                      canAuthorizeExecution: false,
+                      citationLabel: "Old run citation should not be primary",
+                      datasetContractVersion: 1,
+                      schemaSnapshotVersion: 1,
+                      sourceFamily: "postgresql",
+                      sourceFlavor: "warehouse",
+                      sourceId: "sap-approved-spend"
+                    }
+                  ],
+                  reviewEvidence: [
+                    {
+                      auditEventId: "run-stale-context",
+                      assumptions: ["Old run assumption should not be primary."],
+                      clarifyingQuestions: ["Old run question should not be primary?"],
+                      reviewContractVersion: "review_llm_adapter_output.v1",
+                      reviewDecisionId: "review-old-run",
+                      reviewStatus: "needs_clarification",
+                      riskFlags: ["Old run risk should not be primary."]
+                    }
+                  ],
+                  rowCount: 2,
+                  runState: "completed",
+                  sourceId: "sap-approved-spend",
+                  sourceLabel: "SAP spend cube / approved_vendor_spend"
+                }
+              ],
+              sources: workflowPayload().sources
+            })
+        });
+      }
+
+      if (url.endsWith("/requests/preview")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [],
+                source_id: "sap-approved-spend",
+                state: "recorded"
+              },
+              candidate: {
+                candidate_id: "candidate-new-preview",
+                candidate_sql: "select vendor_name from approved_vendor_spend;",
+                dataset_contract_version: 7,
+                guard_status: "passed",
+                retrieved_citations: [
+                  {
+                    asset_id: "new-metric-definition",
+                    asset_kind: "metric_definition",
+                    authority: "advisory_context",
+                    can_authorize_execution: false,
+                    citation_label: "New submitted preview citation",
+                    dataset_contract_version: 7,
+                    schema_snapshot_version: 8,
+                    source_family: "postgresql",
+                    source_flavor: "warehouse",
+                    source_id: "sap-approved-spend"
+                  }
+                ],
+                review_evidence: [
+                  {
+                    audit_event_id: "review-new-preview",
+                    assumptions: ["New submitted assumption."],
+                    clarifying_questions: [],
+                    review_contract_version: "review_llm_adapter_output.v1",
+                    review_decision_id: "review-new-preview",
+                    review_status: "ready",
+                    risk_flags: ["New submitted risk."]
+                  }
+                ],
+                schema_snapshot_version: 8,
+                semantic_contract_version: "approved_vendor_spend.v2",
+                source_family: "postgresql",
+                source_flavor: "warehouse",
+                source_id: "sap-approved-spend",
+                state: "preview_ready"
+              },
+              request: {
+                question: "Revise the completed run answer",
+                request_id: "request-new-preview",
+                source_id: "sap-approved-spend",
+                state: "submitted"
+              }
+            })
+        });
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "run",
+          history_record_id: "run-stale-context",
+          question: "Prior completed run",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /revise attempt/i }));
+    fireEvent.change(screen.getByRole("combobox", { name: /source/i }), {
+      target: { value: "sap-approved-spend" }
+    });
+    fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+      target: { value: "Revise the completed run answer" }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8000/requests/preview",
+        expect.objectContaining({
+          body: JSON.stringify({
+            question: "Revise the completed run answer",
+            source_id: "sap-approved-spend",
+            revise_from: {
+              item_type: "run",
+              request_id: "request-old-run",
+              candidate_id: "candidate-old-run",
+              run_id: "run-stale-context"
+            }
+          })
+        })
+      );
+    });
+
+    const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+    expect(answerPlan).toHaveTextContent("New submitted preview citation");
+    expect(answerPlan).toHaveTextContent("New submitted assumption.");
+    expect(answerPlan).toHaveTextContent("New submitted risk.");
+    expect(answerPlan).toHaveTextContent(/dataset contract v7/i);
+    expect(answerPlan).toHaveTextContent(/schema snapshot v8/i);
+    expect(answerPlan).not.toHaveTextContent("Old run citation should not be primary");
+    expect(answerPlan).not.toHaveTextContent("Old run assumption should not be primary.");
+    expect(answerPlan).not.toHaveTextContent("Old run question should not be primary?");
+    expect(answerPlan).not.toHaveTextContent("Old run risk should not be primary.");
   });
 
   it("renders candidate attempt guard comparisons as read-only history evidence", async () => {

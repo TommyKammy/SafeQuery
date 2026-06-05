@@ -732,10 +732,31 @@ function parsePreviewRetrievedCitation(
     authority: "advisory_context",
     canAuthorizeExecution: false,
     citationLabel,
+    datasetContractVersion:
+      readRequiredPositiveInteger(value.dataset_contract_version) ??
+      readRequiredPositiveInteger(value.datasetContractVersion),
+    schemaSnapshotVersion:
+      readRequiredPositiveInteger(value.schema_snapshot_version) ??
+      readRequiredPositiveInteger(value.schemaSnapshotVersion),
     sourceId,
     sourceFamily,
     sourceFlavor: sourceFlavor ?? null
   };
+}
+
+function singleCitationContractVersion(
+  citations: OperatorWorkflowRetrievedCitation[],
+  key: "datasetContractVersion" | "schemaSnapshotVersion"
+): number | null {
+  const versions = new Set<number>();
+  for (const citation of citations) {
+    const version = citation[key];
+    if (typeof version === "number" && Number.isInteger(version) && version > 0) {
+      versions.add(version);
+    }
+  }
+
+  return versions.size === 1 ? [...versions][0] : null;
 }
 
 function parsePreviewRetrievedCitationsFromValue(
@@ -1764,9 +1785,13 @@ function renderBusinessAnswerPlan(
   const semanticContractVersion =
     preview?.semanticContractVersion ?? latestAttempt?.semanticContractVersion ?? null;
   const datasetContractVersion =
-    preview?.datasetContractVersion ?? latestAttempt?.datasetContractVersion ?? null;
+    preview?.datasetContractVersion ??
+    latestAttempt?.datasetContractVersion ??
+    singleCitationContractVersion(retrievedCitations, "datasetContractVersion");
   const schemaSnapshotVersion =
-    preview?.schemaSnapshotVersion ?? latestAttempt?.schemaSnapshotVersion ?? null;
+    preview?.schemaSnapshotVersion ??
+    latestAttempt?.schemaSnapshotVersion ??
+    singleCitationContractVersion(retrievedCitations, "schemaSnapshotVersion");
   const sourceEvidence = retrievedCitations.map((citation) => citation.citationLabel);
   const semanticEvidence = [
     semanticContractVersion ? `Semantic contract ${semanticContractVersion}` : null,
@@ -2797,14 +2822,12 @@ export function QueryWorkflowShell({
           historyRecordId
         }
       : undefined;
-  const selectedAuditEvents =
-    historyRunContext?.auditEvents ?? candidatePreview?.auditEvents ?? [];
-  const selectedExecutedEvidence =
-    historyRunContext?.executedEvidence ?? candidatePreview?.executedEvidence ?? [];
-  const selectedRetrievedCitations =
-    historyRunContext?.retrievedCitations ?? candidatePreview?.retrievedCitations ?? [];
-  const selectedReviewEvidence =
-    historyRunContext?.reviewEvidence ?? candidatePreview?.reviewEvidence ?? [];
+  const selectedEvidenceContext =
+    submittedCandidatePreview ?? historyRunContext ?? candidatePreview;
+  const selectedAuditEvents = selectedEvidenceContext?.auditEvents ?? [];
+  const selectedExecutedEvidence = selectedEvidenceContext?.executedEvidence ?? [];
+  const selectedRetrievedCitations = selectedEvidenceContext?.retrievedCitations ?? [];
+  const selectedReviewEvidence = selectedEvidenceContext?.reviewEvidence ?? [];
   const firstRunGuidance = getFirstRunGuidance(operatorWorkflow);
   const operatorRecoveryGuidance = getOperatorRecoveryGuidance(
     normalizedState,
@@ -2819,6 +2842,9 @@ export function QueryWorkflowShell({
       ? operatorWorkflow.history.find((item) => item.recordId === candidatePreview.candidateId)
       : undefined);
   const selectedCandidateAttempts = selectedCandidateAttemptHistory?.candidateAttempts ?? [];
+  const selectedAnswerPlanCandidateAttempts = submittedCandidatePreview
+    ? []
+    : selectedCandidateAttempts;
   const selectedRevisionDraft = revisionDraftFromSelectedContext(
     normalizedState,
     candidatePreview,
@@ -3283,7 +3309,7 @@ export function QueryWorkflowShell({
                 workflowContext.sourceIdentity,
                 selectedRetrievedCitations,
                 selectedReviewEvidence,
-                selectedCandidateAttempts,
+                selectedAnswerPlanCandidateAttempts,
                 executeEnabled
               )
             : null}
