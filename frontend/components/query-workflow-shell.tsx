@@ -148,15 +148,22 @@ type ExecuteSubmissionStatus =
     };
 
 type PreviewSubmissionResult = {
+  auditEvents: OperatorWorkflowAuditEvent[];
   candidateId: string;
   candidateSql: string | null;
   candidateState: string;
+  datasetContractVersion: number | null;
   guardStatus: string;
   requestId: string;
   requestState: string;
   reviewEvidence: OperatorWorkflowReviewEvidence[];
+  retrievedCitations: OperatorWorkflowRetrievedCitation[];
   revisionContext: RevisionDraftContext | null;
+  schemaSnapshotVersion: number | null;
+  semanticContractVersion: string | null;
   sourceId: string;
+  sourceFamily: string | null;
+  sourceFlavor: string | null;
 };
 
 type AuthoritativeCandidatePreview = {
@@ -164,11 +171,13 @@ type AuthoritativeCandidatePreview = {
   candidateId: string;
   candidateSql: string | null;
   candidateState: string;
+  datasetContractVersion?: number | null;
   executedEvidence: OperatorWorkflowExecutedEvidence[];
   guardStatus: string;
   requestId?: string;
   reviewEvidence: OperatorWorkflowReviewEvidence[];
   retrievedCitations: OperatorWorkflowRetrievedCitation[];
+  schemaSnapshotVersion?: number | null;
   semanticContractVersion?: string | null;
   sourceId: string;
   sourceLabel?: string;
@@ -566,6 +575,10 @@ function readOptionalNonNegativeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
+function readRequiredPositiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 function readStringArray(value: unknown): string[] | null {
   if (value === undefined) {
     return [];
@@ -625,6 +638,165 @@ function parsePreviewReviewEvidence(value: unknown): OperatorWorkflowReviewEvide
     reviewStatus,
     riskFlags
   };
+}
+
+function parsePreviewAuditEvent(
+  value: unknown,
+  expectedSourceId: string
+): OperatorWorkflowAuditEvent | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const eventId = readOptionalString(value.event_id) ?? readOptionalString(value.eventId);
+  const eventType = readOptionalString(value.event_type) ?? readOptionalString(value.eventType);
+  const occurredAt = readOptionalString(value.occurred_at) ?? readOptionalString(value.occurredAt);
+  const requestId = readOptionalString(value.request_id) ?? readOptionalString(value.requestId);
+  const sourceId = readOptionalString(value.source_id) ?? readOptionalString(value.sourceId);
+
+  if (!eventId || !eventType || !occurredAt || !requestId || sourceId !== expectedSourceId) {
+    return null;
+  }
+
+  return {
+    candidateId:
+      readOptionalString(value.query_candidate_id) ??
+      readOptionalString(value.queryCandidateId) ??
+      readOptionalString(value.candidate_id) ??
+      readOptionalString(value.candidateId),
+    candidateState:
+      readOptionalString(value.candidate_state) ?? readOptionalString(value.candidateState),
+    denialReason: readOptionalString(value.denial_reason) ?? readOptionalString(value.denialReason),
+    eventId,
+    eventType,
+    executionRunId:
+      readOptionalString(value.execution_run_id) ?? readOptionalString(value.executionRunId),
+    guardDecision: readOptionalString(value.guard_decision) ?? readOptionalString(value.guardDecision),
+    occurredAt,
+    primaryDenyCode:
+      readOptionalString(value.primary_deny_code) ?? readOptionalString(value.primaryDenyCode),
+    requestId,
+    resultTruncated:
+      typeof value.result_truncated === "boolean"
+        ? value.result_truncated
+        : typeof value.resultTruncated === "boolean"
+          ? value.resultTruncated
+          : null,
+    rowCount:
+      readOptionalNonNegativeInteger(value.execution_row_count) ??
+      readOptionalNonNegativeInteger(value.rowCount),
+    semanticContractVersion:
+      readOptionalString(value.semantic_contract_version) ??
+      readOptionalString(value.semanticContractVersion),
+    sourceId
+  };
+}
+
+function parsePreviewRetrievedCitation(
+  value: unknown,
+  expectedSourceId: string
+): OperatorWorkflowRetrievedCitation | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const assetId = readOptionalString(value.asset_id) ?? readOptionalString(value.assetId);
+  const assetKind = readOptionalString(value.asset_kind) ?? readOptionalString(value.assetKind);
+  const citationLabel =
+    readOptionalString(value.citation_label) ?? readOptionalString(value.citationLabel);
+  const sourceId = readOptionalString(value.source_id) ?? readOptionalString(value.sourceId);
+  const sourceFamily =
+    readOptionalString(value.source_family) ?? readOptionalString(value.sourceFamily);
+  const sourceFlavor =
+    readOptionalString(value.source_flavor) ?? readOptionalString(value.sourceFlavor);
+  const canAuthorizeExecution =
+    typeof value.can_authorize_execution === "boolean"
+      ? value.can_authorize_execution
+      : value.canAuthorizeExecution;
+
+  if (
+    value.authority !== "advisory_context" ||
+    canAuthorizeExecution !== false ||
+    !assetId ||
+    !assetKind ||
+    !citationLabel ||
+    sourceId !== expectedSourceId ||
+    !sourceFamily
+  ) {
+    return null;
+  }
+
+  return {
+    assetId,
+    assetKind,
+    authority: "advisory_context",
+    canAuthorizeExecution: false,
+    citationLabel,
+    sourceId,
+    sourceFamily,
+    sourceFlavor: sourceFlavor ?? null
+  };
+}
+
+function parsePreviewRetrievedCitationsFromValue(
+  value: unknown,
+  expectedSourceId: string
+): OperatorWorkflowRetrievedCitation[] | null {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const parsed = value
+    .map((item) => parsePreviewRetrievedCitation(item, expectedSourceId))
+    .filter((item): item is OperatorWorkflowRetrievedCitation => item !== null);
+  return parsed;
+}
+
+function parsePreviewRetrievedCitationsFromEvents(
+  events: unknown,
+  expectedSourceId: string
+): OperatorWorkflowRetrievedCitation[] | null {
+  if (events === undefined) {
+    return [];
+  }
+  if (!Array.isArray(events)) {
+    return null;
+  }
+
+  const citations: OperatorWorkflowRetrievedCitation[] = [];
+  for (const event of events) {
+    if (!isObject(event)) {
+      return null;
+    }
+    const eventCitations = parsePreviewRetrievedCitationsFromValue(
+      event.retrieved_citations === undefined
+        ? event.retrievedCitations
+        : event.retrieved_citations,
+      expectedSourceId
+    );
+    if (eventCitations === null) {
+      return null;
+    }
+    citations.push(...eventCitations);
+  }
+  return citations;
+}
+
+function dedupeRetrievedCitations(
+  citations: OperatorWorkflowRetrievedCitation[]
+): OperatorWorkflowRetrievedCitation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = `${citation.sourceId}:${citation.assetKind}:${citation.assetId}:${citation.citationLabel}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function parseExecuteAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
@@ -819,9 +991,26 @@ function parsePreviewSubmissionResult(
     value.candidate.candidate_sql.trim().length > 0
       ? value.candidate.candidate_sql
       : null;
+  const datasetContractVersion =
+    readRequiredPositiveInteger(value.candidate.dataset_contract_version) ??
+    readRequiredPositiveInteger(value.candidate.datasetContractVersion);
   const guardStatus = readRequiredString(value.candidate.guard_status);
   const requestState = readRequiredString(value.request.state);
+  const schemaSnapshotVersion =
+    readRequiredPositiveInteger(value.candidate.schema_snapshot_version) ??
+    readRequiredPositiveInteger(value.candidate.schemaSnapshotVersion);
+  const semanticContractVersion =
+    readOptionalString(value.candidate.semantic_contract_version) ??
+    readOptionalString(value.candidate.semanticContractVersion) ??
+    readOptionalString(value.request.semantic_contract_version) ??
+    readOptionalString(value.request.semanticContractVersion);
   const candidateState = readRequiredString(value.candidate.state);
+  const sourceFamily =
+    readOptionalString(value.candidate.source_family) ??
+    readOptionalString(value.candidate.sourceFamily);
+  const sourceFlavor =
+    readOptionalString(value.candidate.source_flavor) ??
+    readOptionalString(value.candidate.sourceFlavor);
   const hasSnakeReviewEvidence = Object.prototype.hasOwnProperty.call(
     value.candidate,
     "review_evidence"
@@ -843,6 +1032,32 @@ function parsePreviewSubmissionResult(
     return null;
   }
   const reviewEvidence = parsedReviewEvidence as OperatorWorkflowReviewEvidence[];
+  const auditEventsValue =
+    isObject(value.audit) && Array.isArray(value.audit.events) ? value.audit.events : [];
+  const parsedAuditEvents = auditEventsValue.map((event) =>
+    parsePreviewAuditEvent(event, expectedSourceId)
+  );
+  if (parsedAuditEvents.some((item) => item === null)) {
+    return null;
+  }
+  const auditEvents = parsedAuditEvents as OperatorWorkflowAuditEvent[];
+  const directRetrievedCitations = parsePreviewRetrievedCitationsFromValue(
+    value.candidate.retrieved_citations === undefined
+      ? value.candidate.retrievedCitations
+      : value.candidate.retrieved_citations,
+    expectedSourceId
+  );
+  const auditRetrievedCitations = parsePreviewRetrievedCitationsFromEvents(
+    auditEventsValue,
+    expectedSourceId
+  );
+  if (directRetrievedCitations === null || auditRetrievedCitations === null) {
+    return null;
+  }
+  const retrievedCitations = dedupeRetrievedCitations([
+    ...directRetrievedCitations,
+    ...auditRetrievedCitations
+  ]);
 
   if (
     !requestId ||
@@ -857,17 +1072,46 @@ function parsePreviewSubmissionResult(
   }
 
   return {
+    auditEvents,
     candidateId,
     candidateSql,
     candidateState,
+    datasetContractVersion,
     guardStatus,
     requestId,
     requestState,
     reviewEvidence,
+    retrievedCitations,
     revisionContext:
       parsePreviewRevisionContext(value.request.revision_context, expectedSourceId) ??
       parsePreviewRevisionContext(value.candidate.revision_context, expectedSourceId),
-    sourceId: expectedSourceId
+    schemaSnapshotVersion,
+    semanticContractVersion,
+    sourceId: expectedSourceId,
+    sourceFamily,
+    sourceFlavor: sourceFlavor ?? null
+  };
+}
+
+function buildSubmittedCandidatePreview(
+  result: PreviewSubmissionResult,
+  sourceLabel: string
+): AuthoritativeCandidatePreview {
+  return {
+    auditEvents: result.auditEvents,
+    candidateId: result.candidateId,
+    candidateSql: result.candidateSql,
+    candidateState: result.candidateState,
+    datasetContractVersion: result.datasetContractVersion,
+    executedEvidence: [],
+    guardStatus: result.guardStatus,
+    requestId: result.requestId,
+    reviewEvidence: result.reviewEvidence,
+    retrievedCitations: result.retrievedCitations,
+    schemaSnapshotVersion: result.schemaSnapshotVersion,
+    semanticContractVersion: result.semanticContractVersion,
+    sourceId: result.sourceId,
+    sourceLabel
   };
 }
 
@@ -1519,16 +1763,21 @@ function renderBusinessAnswerPlan(
     candidateAttempts[0];
   const semanticContractVersion =
     preview?.semanticContractVersion ?? latestAttempt?.semanticContractVersion ?? null;
+  const datasetContractVersion =
+    preview?.datasetContractVersion ?? latestAttempt?.datasetContractVersion ?? null;
+  const schemaSnapshotVersion =
+    preview?.schemaSnapshotVersion ?? latestAttempt?.schemaSnapshotVersion ?? null;
   const sourceEvidence = retrievedCitations.map((citation) => citation.citationLabel);
   const semanticEvidence = [
     semanticContractVersion ? `Semantic contract ${semanticContractVersion}` : null,
-    latestAttempt ? `Dataset contract v${latestAttempt.datasetContractVersion}` : null,
-    latestAttempt ? `Schema snapshot v${latestAttempt.schemaSnapshotVersion}` : null,
+    datasetContractVersion !== null ? `Dataset contract v${datasetContractVersion}` : null,
+    schemaSnapshotVersion !== null ? `Schema snapshot v${schemaSnapshotVersion}` : null,
     ...retrievedCitations.map(
       (citation) => `${formatStatusLabel(citation.assetKind)}: ${citation.citationLabel}`
     )
   ].filter((item): item is string => item !== null);
   const assumptions = latestReview?.assumptions ?? [];
+  const clarifyingQuestions = latestReview?.clarifyingQuestions ?? [];
   const reviewStatus = latestReview
     ? `Review ${latestReview.reviewStatus.replace(/_/g, " ")}`
     : "Review evidence not provided";
@@ -1538,6 +1787,8 @@ function renderBusinessAnswerPlan(
   const nextAction =
     preview === null
       ? "Submit the question for preview, then review the answer plan returned by SafeQuery."
+      : clarifyingQuestions.length > 0
+        ? "Answer the clarifying questions, then submit a revised preview before execution."
       : executeEnabled
         ? "Review the answer plan, then execute the reviewed candidate when the business intent and safety status match the request."
         : "Review the answer plan and resolve the guard or candidate status before execution.";
@@ -1585,6 +1836,18 @@ function renderBusinessAnswerPlan(
           <span className="meta-label">Assumptions</span>
           <strong>{assumptions.length > 0 ? "Review evidence supplied" : "No assumptions supplied"}</strong>
           {renderListOrPlaceholder(assumptions, "No review assumptions were supplied.")}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Clarifying questions</span>
+          <strong>
+            {clarifyingQuestions.length > 0
+              ? "Business clarification required"
+              : "No clarification requested"}
+          </strong>
+          {renderListOrPlaceholder(
+            clarifyingQuestions,
+            "No clarifying questions were supplied."
+          )}
         </div>
         <div className="answer-plan-item">
           <span className="meta-label">Safety and review status</span>
@@ -2698,19 +2961,9 @@ export function QueryWorkflowShell({
         setSubmittedSourceId(result.sourceId);
         setSubmittedState("review_denied");
         setRevisionDraft(result.revisionContext ?? revisionDraft);
-        setSubmittedCandidatePreview({
-          auditEvents: [],
-          candidateId: result.candidateId,
-          candidateSql: result.candidateSql,
-          candidateState: result.candidateState,
-          executedEvidence: [],
-          guardStatus: result.guardStatus,
-          requestId: result.requestId,
-          reviewEvidence: result.reviewEvidence,
-          retrievedCitations: [],
-          sourceId: result.sourceId,
-          sourceLabel: selectedSource.displayLabel
-        });
+        setSubmittedCandidatePreview(
+          buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
+        );
         setPreviewSubmission({
           candidateState: result.candidateState,
           requestState: result.requestState,
@@ -2725,19 +2978,9 @@ export function QueryWorkflowShell({
         setSubmittedSourceId(result.sourceId);
         setSubmittedState("review_denied");
         setRevisionDraft(result.revisionContext ?? revisionDraft);
-        setSubmittedCandidatePreview({
-          auditEvents: [],
-          candidateId: result.candidateId,
-          candidateSql: result.candidateSql,
-          candidateState: result.candidateState,
-          executedEvidence: [],
-          guardStatus: result.guardStatus,
-          requestId: result.requestId,
-          reviewEvidence: result.reviewEvidence,
-          retrievedCitations: [],
-          sourceId: result.sourceId,
-          sourceLabel: selectedSource.displayLabel
-        });
+        setSubmittedCandidatePreview(
+          buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
+        );
         setPreviewSubmission({
           candidateState: result.candidateState,
           requestState: result.requestState,
@@ -2751,19 +2994,9 @@ export function QueryWorkflowShell({
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
         setRevisionDraft(result.revisionContext ?? revisionDraft);
-        setSubmittedCandidatePreview({
-          auditEvents: [],
-          candidateId: result.candidateId,
-          candidateSql: result.candidateSql,
-          candidateState: result.candidateState,
-          executedEvidence: [],
-          guardStatus: result.guardStatus,
-          requestId: result.requestId,
-          reviewEvidence: result.reviewEvidence,
-          retrievedCitations: [],
-          sourceId: result.sourceId,
-          sourceLabel: selectedSource.displayLabel
-        });
+        setSubmittedCandidatePreview(
+          buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
+        );
         setPreviewSubmission({
           candidateState: result.candidateState,
           requestState: result.requestState,
@@ -2786,19 +3019,9 @@ export function QueryWorkflowShell({
       setSubmittedSourceId(result.sourceId);
       setSubmittedState("preview");
       setRevisionDraft(result.revisionContext ?? revisionDraft);
-      setSubmittedCandidatePreview({
-        auditEvents: [],
-        candidateId: result.candidateId,
-        candidateSql: result.candidateSql,
-        candidateState: result.candidateState,
-        executedEvidence: [],
-        guardStatus: result.guardStatus,
-        requestId: result.requestId,
-        reviewEvidence: result.reviewEvidence,
-        retrievedCitations: [],
-        sourceId: result.sourceId,
-        sourceLabel: selectedSource.displayLabel
-      });
+      setSubmittedCandidatePreview(
+        buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
+      );
       setPreviewSubmission({
         candidateState: result.candidateState,
         requestState: result.requestState,

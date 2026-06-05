@@ -1119,7 +1119,30 @@ describe("HomePage", () => {
           json: () =>
             Promise.resolve({
               audit: {
-                events: [],
+                events: [
+                  {
+                    event_id: "00000000-0000-4000-8000-000000000490",
+                    event_type: "retrieval_completed",
+                    occurred_at: "2026-04-21T14:24:00Z",
+                    request_id: "request-accepted-123",
+                    source_id: "sap-approved-spend",
+                    retrieved_citations: [
+                      {
+                        asset_id: "spend-metric-definition",
+                        asset_kind: "metric_definition",
+                        authority: "advisory_context",
+                        can_authorize_execution: false,
+                        citation_label: "Approved spend metric definition",
+                        dataset_contract_version: 1,
+                        schema_snapshot_version: 1,
+                        source_family: "postgresql",
+                        source_flavor: "warehouse",
+                        source_id: "sap-approved-spend"
+                      }
+                    ],
+                    semantic_contract_version: "approved_vendor_spend.v1"
+                  }
+                ],
                 source_id: "sap-approved-spend",
                 state: "recorded"
               },
@@ -1129,6 +1152,7 @@ describe("HomePage", () => {
                 dataset_contract_version: 1,
                 guard_status: "pending",
                 schema_snapshot_version: 1,
+                semantic_contract_version: "approved_vendor_spend.v1",
                 source_family: "postgresql",
                 source_flavor: "warehouse",
                 source_id: "sap-approved-spend",
@@ -1181,6 +1205,11 @@ describe("HomePage", () => {
     });
     expect(screen.getByText(/preview request accepted/i)).toBeInTheDocument();
     expect(screen.getByText("candidate-accepted-123")).toBeInTheDocument();
+    const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+    expect(answerPlan).toHaveTextContent("approved_vendor_spend.v1");
+    expect(answerPlan).toHaveTextContent(/dataset contract v1/i);
+    expect(answerPlan).toHaveTextContent(/schema snapshot v1/i);
+    expect(answerPlan).toHaveTextContent("Approved spend metric definition");
     expect(screen.getByText(/canonical sql has not been generated for this candidate/i)).toBeInTheDocument();
     expect(screen.queryByText(/placeholder sql generated from the question review surface/i)).not.toBeInTheDocument();
   });
@@ -1280,10 +1309,13 @@ describe("HomePage", () => {
       });
       fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
 
-      expect(await screen.findByText(stateCase.expectedCopy)).toBeInTheDocument();
+      expect((await screen.findAllByText(stateCase.expectedCopy)).length).toBeGreaterThan(0);
       expect(screen.queryByText(/preview request accepted/i)).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: /sql preview state/i })).not.toBeInTheDocument();
       if (stateCase.candidateState === "clarification_required") {
+        const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+        expect(answerPlan).toHaveTextContent("Should inactive vendors be included?");
+        expect(answerPlan).toHaveTextContent(/answer the clarifying questions/i);
         expect(screen.getByLabelText(/review evidence/i)).toHaveTextContent(
           "Should inactive vendors be included?"
         );
