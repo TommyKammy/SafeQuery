@@ -80,13 +80,13 @@ describe("HomePage", () => {
     expect(screen.getByRole("link", { name: /sign in/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /submit for preview/i })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /source/i })).toBeInTheDocument();
-    expect(screen.getByText("Generated SQL")).toBeInTheDocument();
+    expect(screen.getByText("Technical SQL review")).toBeInTheDocument();
     expect(screen.getByText("Guard status")).toBeInTheDocument();
     expect(screen.getByText("Results")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /review denied/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /empty state/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /compose the operator request/i })).toBeInTheDocument();
-    expect(screen.getByText(/operator shell for governed question review, sql preview, and execution posture/i)).toBeInTheDocument();
+    expect(screen.getByText(/operator shell for governed question review, answer planning, and execution posture/i)).toBeInTheDocument();
     expect(screen.queryByText(/compose the analyst question/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/awaiting analyst review/i)).not.toBeInTheDocument();
   });
@@ -749,9 +749,10 @@ describe("HomePage", () => {
       })
     );
 
-    expect(screen.getByRole("heading", { name: /sql preview state/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /answer plan preview/i })).toBeInTheDocument();
     expect(screen.getByDisplayValue("Show approved vendors by quarterly spend")).toBeInTheDocument();
-    expect(screen.getByText(/authoritative sql preview/i)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /business-readable answer plan/i })).toBeInTheDocument();
+    expect(screen.getByText(/technical sql review/i)).toBeInTheDocument();
     expect(screen.getByText(/no authoritative candidate selected/i)).toBeInTheDocument();
     expect(screen.queryByText(/placeholder sql generated from the question review surface/i)).not.toBeInTheDocument();
   });
@@ -832,6 +833,106 @@ describe("HomePage", () => {
       "href",
       expect.stringContaining("history_record_id=candidate-selected")
     );
+  });
+
+  it("presents reopened candidate previews as a business-readable answer plan before SQL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    auditEvents: [
+                      {
+                        candidateId: "candidate-selected",
+                        candidateState: "preview_ready",
+                        eventId: "audit-candidate-selected",
+                        eventType: "guard_evaluated",
+                        guardDecision: "allow",
+                        occurredAt: "2026-04-21T14:24:00Z",
+                        requestId: "request-selected",
+                        sourceId: "sap-approved-spend"
+                      }
+                    ],
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Top approved vendors by quarterly spend",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-selected",
+                    requestId: "request-selected",
+                    retrievedCitations: [
+                      {
+                        assetId: "spend-metric-definition",
+                        assetKind: "metric_definition",
+                        authority: "advisory_context",
+                        canAuthorizeExecution: false,
+                        citationLabel: "Approved spend metric definition",
+                        sourceFamily: "postgresql",
+                        sourceFlavor: "warehouse",
+                        sourceId: "sap-approved-spend"
+                      }
+                    ],
+                    reviewEvidence: [
+                      {
+                        auditEventId: "audit-candidate-selected",
+                        assumptions: [
+                          "Vendor means normalized vendor_id.",
+                          "Quarter means fiscal quarter."
+                        ],
+                        clarifyingQuestions: [],
+                        reviewContractVersion: "review_llm_adapter_output.v1",
+                        reviewDecisionId: "review-candidate-selected",
+                        reviewStatus: "ready",
+                        riskFlags: ["Uses advisory semantic mapping evidence."]
+                      }
+                    ],
+                    semanticContractVersion: "approved_vendor_spend.v1",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-selected",
+          question: "Top approved vendors by quarterly spend",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+    expect(answerPlan).toHaveTextContent("Top approved vendors by quarterly spend");
+    expect(answerPlan).toHaveTextContent("SAP spend cube / approved_vendor_spend");
+    expect(answerPlan).toHaveTextContent("Approved spend metric definition");
+    expect(answerPlan).toHaveTextContent("Vendor means normalized vendor_id.");
+    expect(answerPlan).toHaveTextContent(/review ready/i);
+    expect(answerPlan).toHaveTextContent(/review the answer plan, then execute the reviewed candidate/i);
+
+    expect(
+      screen.getByRole("heading", { name: /technical sql review/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /sql preview state/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /authoritative sql preview/i })).not.toBeInTheDocument();
   });
 
   it("renders candidate attempt guard comparisons as read-only history evidence", async () => {

@@ -294,6 +294,7 @@ button:focus-visible {
 .signin-actions,
 .action-row,
 .guard-list,
+.answer-plan-grid,
 .evidence-list,
 .attempt-list,
 .history-list,
@@ -450,6 +451,10 @@ button:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.answer-plan-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .guard-item {
   display: grid;
   gap: 6px;
@@ -457,6 +462,32 @@ button:disabled {
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   background: rgba(7, 11, 20, 0.38);
+}
+
+.answer-plan-item {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: rgba(7, 11, 20, 0.34);
+}
+
+.answer-plan-item-wide {
+  grid-column: 1 / -1;
+}
+
+.answer-plan-item p,
+.answer-plan-list {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.answer-plan-list {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
 }
 
 .attempt-list {
@@ -610,6 +641,7 @@ button:disabled {
   }
 
   .frame-meta,
+  .answer-plan-grid,
   .guard-list {
     grid-template-columns: 1fr;
   }

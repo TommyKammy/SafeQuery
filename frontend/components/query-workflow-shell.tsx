@@ -169,6 +169,7 @@ type AuthoritativeCandidatePreview = {
   requestId?: string;
   reviewEvidence: OperatorWorkflowReviewEvidence[];
   retrievedCitations: OperatorWorkflowRetrievedCitation[];
+  semanticContractVersion?: string | null;
   sourceId: string;
   sourceLabel?: string;
 };
@@ -256,8 +257,8 @@ const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
     label: "Failed"
   },
   preview: {
-    description: "The operator request has been staged for governed candidate review.",
-    label: "SQL preview"
+    description: "The operator request has been staged as a business-readable answer plan.",
+    label: "Answer plan"
   },
   query: {
     description: "Compose a governed question and move into review without leaving the product shell.",
@@ -1241,6 +1242,7 @@ function findAuthoritativeCandidatePreview(
     requestId: candidate.requestId ?? undefined,
     reviewEvidence: candidate.reviewEvidence,
     retrievedCitations: candidate.retrievedCitations,
+    semanticContractVersion: candidate.semanticContractVersion,
     sourceId: candidate.sourceId,
     sourceLabel: candidate.sourceLabel
   };
@@ -1459,8 +1461,8 @@ function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null
       <div className="placeholder-block">
         <p className="placeholder-title">No authoritative candidate selected</p>
         <p>
-          Submit the question for preview or reopen a candidate history row before SQL preview can
-          be shown.
+          Submit the question for preview or reopen a candidate history row before technical SQL
+          details can be shown.
         </p>
       </div>
     );
@@ -1479,6 +1481,125 @@ function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null
     <pre className="sql-preview">
       <code>{preview.candidateSql}</code>
     </pre>
+  );
+}
+
+function formatStatusLabel(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function renderListOrPlaceholder(items: string[], placeholder: string) {
+  if (items.length === 0) {
+    return <p className="section-copy">{placeholder}</p>;
+  }
+
+  return (
+    <ul className="answer-plan-list">
+      {items.map((item, index) => (
+        <li key={`${item}:${index}`}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function renderBusinessAnswerPlan(
+  preview: AuthoritativeCandidatePreview | null,
+  question: string,
+  sourceIdentity: string,
+  retrievedCitations: OperatorWorkflowRetrievedCitation[],
+  reviewEvidence: OperatorWorkflowReviewEvidence[],
+  candidateAttempts: OperatorWorkflowCandidateAttempt[],
+  executeEnabled: boolean
+) {
+  const latestReview = reviewEvidence[0];
+  const latestAttempt =
+    candidateAttempts.find((attempt) => attempt.candidateId === preview?.candidateId) ??
+    candidateAttempts[0];
+  const semanticContractVersion =
+    preview?.semanticContractVersion ?? latestAttempt?.semanticContractVersion ?? null;
+  const sourceEvidence = retrievedCitations.map((citation) => citation.citationLabel);
+  const semanticEvidence = [
+    semanticContractVersion ? `Semantic contract ${semanticContractVersion}` : null,
+    latestAttempt ? `Dataset contract v${latestAttempt.datasetContractVersion}` : null,
+    latestAttempt ? `Schema snapshot v${latestAttempt.schemaSnapshotVersion}` : null,
+    ...retrievedCitations.map(
+      (citation) => `${formatStatusLabel(citation.assetKind)}: ${citation.citationLabel}`
+    )
+  ].filter((item): item is string => item !== null);
+  const assumptions = latestReview?.assumptions ?? [];
+  const reviewStatus = latestReview
+    ? `Review ${latestReview.reviewStatus.replace(/_/g, " ")}`
+    : "Review evidence not provided";
+  const safetyStatus = preview
+    ? `Candidate ${preview.candidateState}; guard ${preview.guardStatus}`
+    : "No candidate selected";
+  const nextAction =
+    preview === null
+      ? "Submit the question for preview, then review the answer plan returned by SafeQuery."
+      : executeEnabled
+        ? "Review the answer plan, then execute the reviewed candidate when the business intent and safety status match the request."
+        : "Review the answer plan and resolve the guard or candidate status before execution.";
+
+  return (
+    <section
+      aria-label="Business-readable answer plan"
+      className="surface surface-primary answer-plan-panel"
+    >
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Answer plan</p>
+          <h2 className="panel-title">Business-readable answer plan</h2>
+        </div>
+        <span className={`surface-badge surface-badge-${executeEnabled ? "success" : "warning"}`}>
+          {executeEnabled ? "Ready" : "Review"}
+        </span>
+      </div>
+      <div className="answer-plan-grid">
+        <div className="answer-plan-item answer-plan-item-wide">
+          <span className="meta-label">What SafeQuery understood</span>
+          <strong>{question}</strong>
+          <p>
+            SafeQuery will answer this as a governed business request, not as a raw SQL approval
+            task.
+          </p>
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Source and data used</span>
+          <strong>{sourceIdentity}</strong>
+          {renderListOrPlaceholder(
+            sourceEvidence,
+            "No retrieved source evidence was supplied with this candidate."
+          )}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Semantic mapping evidence</span>
+          <strong>{semanticContractVersion ?? "No semantic contract version supplied"}</strong>
+          {renderListOrPlaceholder(
+            semanticEvidence,
+            "Metric, dimension, and filter details were not supplied in the workflow payload."
+          )}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Assumptions</span>
+          <strong>{assumptions.length > 0 ? "Review evidence supplied" : "No assumptions supplied"}</strong>
+          {renderListOrPlaceholder(assumptions, "No review assumptions were supplied.")}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Safety and review status</span>
+          <strong>{formatStatusLabel(reviewStatus)}</strong>
+          <p>{safetyStatus}</p>
+          {latestReview?.riskFlags.length
+            ? renderListOrPlaceholder(latestReview.riskFlags, "")
+            : null}
+        </div>
+        <div className="answer-plan-item answer-plan-item-wide">
+          <span className="meta-label">Next action</span>
+          <strong>{nextAction}</strong>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1619,7 +1740,7 @@ function getGuardCopy(state: CanonicalWorkflowState): string {
     return "Cancellation is distinct from denial and failure. The shell preserves run lineage and lifecycle context so the operator can see that execution started but did not finish.";
   }
 
-  return "The shell stops at review boundaries unless an authoritative candidate record supplies guard posture and SQL preview data.";
+  return "The shell stops at review boundaries unless an authoritative candidate record supplies guard posture and candidate context.";
 }
 
 function getResultTitle(state: CanonicalWorkflowState): string {
@@ -1866,8 +1987,8 @@ function renderResultContent(
     <div className="placeholder-block">
       <p className="placeholder-title">Result preview pending</p>
       <p>
-        Submit the question to move into SQL review. Results remain unavailable until execution
-        returns authoritative rows.
+        Submit the question to move into answer plan review. Results remain unavailable until
+        execution returns authoritative rows.
       </p>
     </div>
   );
@@ -2129,10 +2250,10 @@ function renderStatePanel(
     return (
       <div className="state-hero">
         <p className="eyebrow">Review mode</p>
-        <h2>SQL preview state</h2>
+        <h2>Answer plan preview</h2>
         <p className="section-copy">
-          Query submission lands here first so generated SQL and guard posture can be reviewed
-          before any future execution path is introduced.
+          Query submission lands here first so business intent, source evidence, assumptions,
+          review status, and next action can be reviewed before execution.
         </p>
         {canOpenCompleted ? (
           <div className="action-row">
@@ -2190,7 +2311,7 @@ function renderStatePanel(
             </button>
           ) : null}
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2213,7 +2334,7 @@ function renderStatePanel(
             </button>
           ) : null}
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2236,7 +2357,7 @@ function renderStatePanel(
             </button>
           ) : null}
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2259,7 +2380,7 @@ function renderStatePanel(
             </button>
           ) : null}
           <a className="action-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2303,7 +2424,7 @@ function renderStatePanel(
             Start a new draft
           </a>
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2315,8 +2436,9 @@ function renderStatePanel(
       <p className="eyebrow">Compose</p>
       <h2>Query input state</h2>
       <p className="section-copy">
-        The custom shell is now SafeQuery-owned. Question input, SQL preview, guard status, and
-        results are separated into stable surfaces before real execution wiring is added.
+        The custom shell is now SafeQuery-owned. Question input, answer planning, guard status,
+        technical review, and results are separated into stable surfaces before real execution
+        wiring is added.
       </p>
     </div>
   );
@@ -2837,7 +2959,7 @@ export function QueryWorkflowShell({
             <h1>Query workflow</h1>
           </div>
           <p className="frame-copy">
-            Operator shell for governed question review, SQL preview, and execution posture.
+            Operator shell for governed question review, answer planning, and execution posture.
             Analyst-style extensions stay optional and outside the core shell.
           </p>
         </div>
@@ -2930,6 +3052,18 @@ export function QueryWorkflowShell({
               selectedRevisionDraft ? startRevision : undefined
             )}
           </section>
+
+          {normalizedState === "preview" || normalizedState === "review_denied"
+            ? renderBusinessAnswerPlan(
+                candidatePreview,
+                submittedQuestion,
+                workflowContext.sourceIdentity,
+                selectedRetrievedCitations,
+                selectedReviewEvidence,
+                selectedCandidateAttempts,
+                executeEnabled
+              )
+            : null}
 
           <section className="surface surface-primary">
             <div className="section-header">
@@ -3066,7 +3200,7 @@ export function QueryWorkflowShell({
                   <p className="state-callout-title">Preview denied</p>
                   <p>
                     Request state {previewSubmission.requestState}; candidate state{" "}
-                    {previewSubmission.candidateState}. No successful SQL preview is displayed.
+                    {previewSubmission.candidateState}. No successful answer plan is displayed.
                   </p>
                 </div>
               ) : null}
@@ -3171,7 +3305,7 @@ export function QueryWorkflowShell({
             <div className="section-header">
               <div>
                 <p className="eyebrow">Generated SQL</p>
-                <h2 className="panel-title">Authoritative SQL preview</h2>
+                <h2 className="panel-title">Technical SQL review</h2>
               </div>
               <span className="surface-badge surface-badge-code">Preview</span>
             </div>
