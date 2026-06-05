@@ -203,7 +203,8 @@ describe("pilot safety UI smoke", () => {
       })
     );
 
-    expect(screen.getByRole("heading", { name: /sql preview state/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /answer plan preview/i })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /business-readable answer plan/i })).toBeInTheDocument();
     expect(
       screen.getByText("select vendor_name from finance.approved_vendor_spend limit 10;")
     ).toBeInTheDocument();
@@ -465,6 +466,11 @@ describe("pilot safety UI smoke", () => {
   });
 
   it("submits a revised preview attempt from execution-denied run context", async () => {
+    const csrfToken = document.createElement("meta");
+    csrfToken.name = "safequery-csrf-token";
+    csrfToken.content = "csrf-from-session-bootstrap";
+    document.head.appendChild(csrfToken);
+
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
 
@@ -561,6 +567,11 @@ describe("pilot safety UI smoke", () => {
   ])(
     "submits a revised preview attempt from %s request-backed failure history",
     async (lifecycleState, failureLabel) => {
+      const csrfToken = document.createElement("meta");
+      csrfToken.name = "safequery-csrf-token";
+      csrfToken.content = "csrf-from-session-bootstrap";
+      document.head.appendChild(csrfToken);
+
       const requestId = `request-pilot-${failureLabel}-001`;
       const question = `Pilot ${failureLabel} preview`;
       const revisedQuestion = `Pilot ${failureLabel} preview with revised source context`;

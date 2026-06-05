@@ -148,15 +148,23 @@ type ExecuteSubmissionStatus =
     };
 
 type PreviewSubmissionResult = {
+  auditEvents: OperatorWorkflowAuditEvent[];
   candidateId: string;
   candidateSql: string | null;
   candidateState: string;
+  clarifyingQuestions: string[];
+  datasetContractVersion: number | null;
   guardStatus: string;
   requestId: string;
   requestState: string;
   reviewEvidence: OperatorWorkflowReviewEvidence[];
+  retrievedCitations: OperatorWorkflowRetrievedCitation[];
   revisionContext: RevisionDraftContext | null;
+  schemaSnapshotVersion: number | null;
+  semanticContractVersion: string | null;
   sourceId: string;
+  sourceFamily: string | null;
+  sourceFlavor: string | null;
 };
 
 type AuthoritativeCandidatePreview = {
@@ -164,11 +172,15 @@ type AuthoritativeCandidatePreview = {
   candidateId: string;
   candidateSql: string | null;
   candidateState: string;
+  clarifyingQuestions?: string[];
+  datasetContractVersion?: number | null;
   executedEvidence: OperatorWorkflowExecutedEvidence[];
   guardStatus: string;
   requestId?: string;
   reviewEvidence: OperatorWorkflowReviewEvidence[];
   retrievedCitations: OperatorWorkflowRetrievedCitation[];
+  schemaSnapshotVersion?: number | null;
+  semanticContractVersion?: string | null;
   sourceId: string;
   sourceLabel?: string;
 };
@@ -256,8 +268,8 @@ const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
     label: "Failed"
   },
   preview: {
-    description: "The operator request has been staged for governed candidate review.",
-    label: "SQL preview"
+    description: "The operator request has been staged as a business-readable answer plan.",
+    label: "Answer plan"
   },
   query: {
     description: "Compose a governed question and move into review without leaving the product shell.",
@@ -565,6 +577,10 @@ function readOptionalNonNegativeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
+function readRequiredPositiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 function readStringArray(value: unknown): string[] | null {
   if (value === undefined) {
     return [];
@@ -624,6 +640,214 @@ function parsePreviewReviewEvidence(value: unknown): OperatorWorkflowReviewEvide
     reviewStatus,
     riskFlags
   };
+}
+
+function parsePreviewAuditEvent(
+  value: unknown,
+  expectedSourceId: string
+): OperatorWorkflowAuditEvent | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const eventId = readOptionalString(value.event_id) ?? readOptionalString(value.eventId);
+  const eventType = readOptionalString(value.event_type) ?? readOptionalString(value.eventType);
+  const occurredAt = readOptionalString(value.occurred_at) ?? readOptionalString(value.occurredAt);
+  const requestId = readOptionalString(value.request_id) ?? readOptionalString(value.requestId);
+  const sourceId = readOptionalString(value.source_id) ?? readOptionalString(value.sourceId);
+
+  if (!eventId || !eventType || !occurredAt || !requestId || sourceId !== expectedSourceId) {
+    return null;
+  }
+
+  return {
+    candidateId:
+      readOptionalString(value.query_candidate_id) ??
+      readOptionalString(value.queryCandidateId) ??
+      readOptionalString(value.candidate_id) ??
+      readOptionalString(value.candidateId),
+    candidateState:
+      readOptionalString(value.candidate_state) ?? readOptionalString(value.candidateState),
+    denialReason: readOptionalString(value.denial_reason) ?? readOptionalString(value.denialReason),
+    eventId,
+    eventType,
+    executionRunId:
+      readOptionalString(value.execution_run_id) ?? readOptionalString(value.executionRunId),
+    guardDecision: readOptionalString(value.guard_decision) ?? readOptionalString(value.guardDecision),
+    occurredAt,
+    primaryDenyCode:
+      readOptionalString(value.primary_deny_code) ?? readOptionalString(value.primaryDenyCode),
+    requestId,
+    resultTruncated:
+      typeof value.result_truncated === "boolean"
+        ? value.result_truncated
+        : typeof value.resultTruncated === "boolean"
+          ? value.resultTruncated
+          : null,
+    rowCount:
+      readOptionalNonNegativeInteger(value.execution_row_count) ??
+      readOptionalNonNegativeInteger(value.rowCount),
+    semanticContractVersion:
+      readOptionalString(value.semantic_contract_version) ??
+      readOptionalString(value.semanticContractVersion),
+    sourceId
+  };
+}
+
+function parsePreviewRetrievedCitation(
+  value: unknown,
+  expectedSourceId: string
+): OperatorWorkflowRetrievedCitation | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const assetId = readOptionalString(value.asset_id) ?? readOptionalString(value.assetId);
+  const assetKind = readOptionalString(value.asset_kind) ?? readOptionalString(value.assetKind);
+  const citationLabel =
+    readOptionalString(value.citation_label) ?? readOptionalString(value.citationLabel);
+  const sourceId = readOptionalString(value.source_id) ?? readOptionalString(value.sourceId);
+  const sourceFamily =
+    readOptionalString(value.source_family) ?? readOptionalString(value.sourceFamily);
+  const sourceFlavor =
+    readOptionalString(value.source_flavor) ?? readOptionalString(value.sourceFlavor);
+  const canAuthorizeExecution =
+    typeof value.can_authorize_execution === "boolean"
+      ? value.can_authorize_execution
+      : value.canAuthorizeExecution;
+
+  if (
+    value.authority !== "advisory_context" ||
+    canAuthorizeExecution !== false ||
+    !assetId ||
+    !assetKind ||
+    !citationLabel ||
+    sourceId !== expectedSourceId ||
+    !sourceFamily
+  ) {
+    return null;
+  }
+
+  return {
+    assetId,
+    assetKind,
+    authority: "advisory_context",
+    canAuthorizeExecution: false,
+    citationLabel,
+    datasetContractVersion:
+      readRequiredPositiveInteger(value.dataset_contract_version) ??
+      readRequiredPositiveInteger(value.datasetContractVersion),
+    schemaSnapshotVersion:
+      readRequiredPositiveInteger(value.schema_snapshot_version) ??
+      readRequiredPositiveInteger(value.schemaSnapshotVersion),
+    sourceId,
+    sourceFamily,
+    sourceFlavor: sourceFlavor ?? null
+  };
+}
+
+function singleCitationContractVersion(
+  citations: OperatorWorkflowRetrievedCitation[],
+  key: "datasetContractVersion" | "schemaSnapshotVersion"
+): number | null {
+  const versions = new Set<number>();
+  for (const citation of citations) {
+    const version = citation[key];
+    if (typeof version === "number" && Number.isInteger(version) && version > 0) {
+      versions.add(version);
+    }
+  }
+
+  return versions.size === 1 ? [...versions][0] : null;
+}
+
+function parsePreviewRetrievedCitationsFromValue(
+  value: unknown,
+  expectedSourceId: string
+): OperatorWorkflowRetrievedCitation[] | null {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const citations: OperatorWorkflowRetrievedCitation[] = [];
+  for (const item of value) {
+    const citation = parsePreviewRetrievedCitation(item, expectedSourceId);
+    if (citation === null) {
+      return null;
+    }
+    citations.push(citation);
+  }
+  return citations;
+}
+
+function parsePreviewRetrievedCitationsFromEvents(
+  events: unknown,
+  expectedSourceId: string
+): OperatorWorkflowRetrievedCitation[] | null {
+  if (events === undefined) {
+    return [];
+  }
+  if (!Array.isArray(events)) {
+    return null;
+  }
+
+  const citations: OperatorWorkflowRetrievedCitation[] = [];
+  for (const event of events) {
+    if (!isObject(event)) {
+      return null;
+    }
+    const eventCitations = parsePreviewRetrievedCitationsFromValue(
+      event.retrieved_citations === undefined
+        ? event.retrievedCitations
+        : event.retrieved_citations,
+      expectedSourceId
+    );
+    if (eventCitations === null) {
+      return null;
+    }
+    citations.push(...eventCitations);
+  }
+  return citations;
+}
+
+function dedupeRetrievedCitations(
+  citations: OperatorWorkflowRetrievedCitation[]
+): OperatorWorkflowRetrievedCitation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = `${citation.sourceId}:${citation.assetKind}:${citation.assetId}:${citation.citationLabel}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function parseBackendClarifyingQuestions(candidate: Record<string, unknown>): string[] {
+  const intentMapping = isObject(candidate.intent_mapping)
+    ? candidate.intent_mapping
+    : isObject(candidate.intentMapping)
+      ? candidate.intentMapping
+      : null;
+
+  return dedupeStrings(
+    [
+      readOptionalString(candidate.denial_reason) ?? readOptionalString(candidate.denialReason),
+      intentMapping
+        ? readOptionalString(intentMapping.clarification) ??
+          readOptionalString(intentMapping.clarifying_question) ??
+          readOptionalString(intentMapping.clarifyingQuestion)
+        : null
+    ].filter((item): item is string => item !== null)
+  );
 }
 
 function parseExecuteAuditEvent(value: unknown): OperatorWorkflowAuditEvent | null {
@@ -818,9 +1042,26 @@ function parsePreviewSubmissionResult(
     value.candidate.candidate_sql.trim().length > 0
       ? value.candidate.candidate_sql
       : null;
+  const datasetContractVersion =
+    readRequiredPositiveInteger(value.candidate.dataset_contract_version) ??
+    readRequiredPositiveInteger(value.candidate.datasetContractVersion);
   const guardStatus = readRequiredString(value.candidate.guard_status);
   const requestState = readRequiredString(value.request.state);
+  const schemaSnapshotVersion =
+    readRequiredPositiveInteger(value.candidate.schema_snapshot_version) ??
+    readRequiredPositiveInteger(value.candidate.schemaSnapshotVersion);
+  const semanticContractVersion =
+    readOptionalString(value.candidate.semantic_contract_version) ??
+    readOptionalString(value.candidate.semanticContractVersion) ??
+    readOptionalString(value.request.semantic_contract_version) ??
+    readOptionalString(value.request.semanticContractVersion);
   const candidateState = readRequiredString(value.candidate.state);
+  const sourceFamily =
+    readOptionalString(value.candidate.source_family) ??
+    readOptionalString(value.candidate.sourceFamily);
+  const sourceFlavor =
+    readOptionalString(value.candidate.source_flavor) ??
+    readOptionalString(value.candidate.sourceFlavor);
   const hasSnakeReviewEvidence = Object.prototype.hasOwnProperty.call(
     value.candidate,
     "review_evidence"
@@ -842,6 +1083,35 @@ function parsePreviewSubmissionResult(
     return null;
   }
   const reviewEvidence = parsedReviewEvidence as OperatorWorkflowReviewEvidence[];
+  if (!isObject(value.audit) || !Array.isArray(value.audit.events)) {
+    return null;
+  }
+  const auditEventsValue = value.audit.events;
+  const parsedAuditEvents = auditEventsValue.map((event) =>
+    parsePreviewAuditEvent(event, expectedSourceId)
+  );
+  if (parsedAuditEvents.some((item) => item === null)) {
+    return null;
+  }
+  const auditEvents = parsedAuditEvents as OperatorWorkflowAuditEvent[];
+  const directRetrievedCitations = parsePreviewRetrievedCitationsFromValue(
+    value.candidate.retrieved_citations === undefined
+      ? value.candidate.retrievedCitations
+      : value.candidate.retrieved_citations,
+    expectedSourceId
+  );
+  const auditRetrievedCitations = parsePreviewRetrievedCitationsFromEvents(
+    auditEventsValue,
+    expectedSourceId
+  );
+  if (directRetrievedCitations === null || auditRetrievedCitations === null) {
+    return null;
+  }
+  const retrievedCitations = dedupeRetrievedCitations([
+    ...directRetrievedCitations,
+    ...auditRetrievedCitations
+  ]);
+  const clarifyingQuestions = parseBackendClarifyingQuestions(value.candidate);
 
   if (
     !requestId ||
@@ -856,17 +1126,48 @@ function parsePreviewSubmissionResult(
   }
 
   return {
+    auditEvents,
     candidateId,
     candidateSql,
     candidateState,
+    clarifyingQuestions,
+    datasetContractVersion,
     guardStatus,
     requestId,
     requestState,
     reviewEvidence,
+    retrievedCitations,
     revisionContext:
       parsePreviewRevisionContext(value.request.revision_context, expectedSourceId) ??
       parsePreviewRevisionContext(value.candidate.revision_context, expectedSourceId),
-    sourceId: expectedSourceId
+    schemaSnapshotVersion,
+    semanticContractVersion,
+    sourceId: expectedSourceId,
+    sourceFamily,
+    sourceFlavor: sourceFlavor ?? null
+  };
+}
+
+function buildSubmittedCandidatePreview(
+  result: PreviewSubmissionResult,
+  sourceLabel: string
+): AuthoritativeCandidatePreview {
+  return {
+    auditEvents: result.auditEvents,
+    candidateId: result.candidateId,
+    candidateSql: result.candidateSql,
+    candidateState: result.candidateState,
+    clarifyingQuestions: result.clarifyingQuestions,
+    datasetContractVersion: result.datasetContractVersion,
+    executedEvidence: [],
+    guardStatus: result.guardStatus,
+    requestId: result.requestId,
+    reviewEvidence: result.reviewEvidence,
+    retrievedCitations: result.retrievedCitations,
+    schemaSnapshotVersion: result.schemaSnapshotVersion,
+    semanticContractVersion: result.semanticContractVersion,
+    sourceId: result.sourceId,
+    sourceLabel
   };
 }
 
@@ -1241,6 +1542,7 @@ function findAuthoritativeCandidatePreview(
     requestId: candidate.requestId ?? undefined,
     reviewEvidence: candidate.reviewEvidence,
     retrievedCitations: candidate.retrievedCitations,
+    semanticContractVersion: candidate.semanticContractVersion,
     sourceId: candidate.sourceId,
     sourceLabel: candidate.sourceLabel
   };
@@ -1459,8 +1761,8 @@ function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null
       <div className="placeholder-block">
         <p className="placeholder-title">No authoritative candidate selected</p>
         <p>
-          Submit the question for preview or reopen a candidate history row before SQL preview can
-          be shown.
+          Submit the question for preview or reopen a candidate history row before technical SQL
+          details can be shown.
         </p>
       </div>
     );
@@ -1479,6 +1781,156 @@ function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null
     <pre className="sql-preview">
       <code>{preview.candidateSql}</code>
     </pre>
+  );
+}
+
+function formatStatusLabel(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function renderListOrPlaceholder(items: string[], placeholder: string) {
+  if (items.length === 0) {
+    return <p className="section-copy">{placeholder}</p>;
+  }
+
+  return (
+    <ul className="answer-plan-list">
+      {items.map((item, index) => (
+        <li key={`${item}:${index}`}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function renderBusinessAnswerPlan(
+  preview: AuthoritativeCandidatePreview | null,
+  question: string,
+  sourceIdentity: string,
+  retrievedCitations: OperatorWorkflowRetrievedCitation[],
+  reviewEvidence: OperatorWorkflowReviewEvidence[],
+  candidateAttempts: OperatorWorkflowCandidateAttempt[],
+  executeEnabled: boolean
+) {
+  const latestReview = reviewEvidence[0];
+  const latestAttempt =
+    candidateAttempts.find((attempt) => attempt.candidateId === preview?.candidateId) ??
+    candidateAttempts[0];
+  const semanticContractVersion =
+    preview?.semanticContractVersion ?? latestAttempt?.semanticContractVersion ?? null;
+  const datasetContractVersion =
+    preview?.datasetContractVersion ??
+    latestAttempt?.datasetContractVersion ??
+    singleCitationContractVersion(retrievedCitations, "datasetContractVersion");
+  const schemaSnapshotVersion =
+    preview?.schemaSnapshotVersion ??
+    latestAttempt?.schemaSnapshotVersion ??
+    singleCitationContractVersion(retrievedCitations, "schemaSnapshotVersion");
+  const sourceEvidence = retrievedCitations.map((citation) => citation.citationLabel);
+  const semanticEvidence = [
+    semanticContractVersion ? `Semantic contract ${semanticContractVersion}` : null,
+    datasetContractVersion !== null ? `Dataset contract v${datasetContractVersion}` : null,
+    schemaSnapshotVersion !== null ? `Schema snapshot v${schemaSnapshotVersion}` : null,
+    ...retrievedCitations.map(
+      (citation) => `${formatStatusLabel(citation.assetKind)}: ${citation.citationLabel}`
+    )
+  ].filter((item): item is string => item !== null);
+  const assumptions = latestReview?.assumptions ?? [];
+  const reviewClarifyingQuestions = latestReview?.clarifyingQuestions ?? [];
+  const clarifyingQuestions =
+    reviewClarifyingQuestions.length > 0
+      ? reviewClarifyingQuestions
+      : (preview?.clarifyingQuestions ?? []);
+  const clarificationRequired =
+    clarifyingQuestions.length > 0 ||
+    preview?.candidateState.toLowerCase() === "clarification_required" ||
+    preview?.candidateState.toLowerCase() === "needs_clarification";
+  const reviewStatus = latestReview
+    ? `Review ${latestReview.reviewStatus.replace(/_/g, " ")}`
+    : "Review evidence not provided";
+  const safetyStatus = preview
+    ? `Candidate ${preview.candidateState}; guard ${preview.guardStatus}`
+    : "No candidate selected";
+  const nextAction =
+    preview === null
+      ? "Submit the question for preview, then review the answer plan returned by SafeQuery."
+      : clarificationRequired
+        ? "Answer the clarifying questions, then submit a revised preview before execution."
+      : executeEnabled
+        ? "Review the answer plan, then execute the reviewed candidate when the business intent and safety status match the request."
+        : "Review the answer plan and resolve the guard or candidate status before execution.";
+
+  return (
+    <section
+      aria-label="Business-readable answer plan"
+      className="surface surface-primary answer-plan-panel"
+    >
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Answer plan</p>
+          <h2 className="panel-title">Business-readable answer plan</h2>
+        </div>
+        <span className={`surface-badge surface-badge-${executeEnabled ? "success" : "warning"}`}>
+          {executeEnabled ? "Ready" : "Review"}
+        </span>
+      </div>
+      <div className="answer-plan-grid">
+        <div className="answer-plan-item answer-plan-item-wide">
+          <span className="meta-label">What SafeQuery understood</span>
+          <strong>{question}</strong>
+          <p>
+            SafeQuery will answer this as a governed business request, not as a raw SQL approval
+            task.
+          </p>
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Source and data used</span>
+          <strong>{sourceIdentity}</strong>
+          {renderListOrPlaceholder(
+            sourceEvidence,
+            "No retrieved source evidence was supplied with this candidate."
+          )}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Semantic mapping evidence</span>
+          <strong>{semanticContractVersion ?? "No semantic contract version supplied"}</strong>
+          {renderListOrPlaceholder(
+            semanticEvidence,
+            "Metric, dimension, and filter details were not supplied in the workflow payload."
+          )}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Assumptions</span>
+          <strong>{assumptions.length > 0 ? "Review evidence supplied" : "No assumptions supplied"}</strong>
+          {renderListOrPlaceholder(assumptions, "No review assumptions were supplied.")}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Clarifying questions</span>
+          <strong>
+            {clarifyingQuestions.length > 0
+              ? "Business clarification required"
+              : "No clarification requested"}
+          </strong>
+          {renderListOrPlaceholder(
+            clarifyingQuestions,
+            "No clarifying questions were supplied."
+          )}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Safety and review status</span>
+          <strong>{formatStatusLabel(reviewStatus)}</strong>
+          <p>{safetyStatus}</p>
+          {latestReview?.riskFlags.length
+            ? renderListOrPlaceholder(latestReview.riskFlags, "")
+            : null}
+        </div>
+        <div className="answer-plan-item answer-plan-item-wide">
+          <span className="meta-label">Next action</span>
+          <strong>{nextAction}</strong>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1619,7 +2071,7 @@ function getGuardCopy(state: CanonicalWorkflowState): string {
     return "Cancellation is distinct from denial and failure. The shell preserves run lineage and lifecycle context so the operator can see that execution started but did not finish.";
   }
 
-  return "The shell stops at review boundaries unless an authoritative candidate record supplies guard posture and SQL preview data.";
+  return "The shell stops at review boundaries unless an authoritative candidate record supplies guard posture and candidate context.";
 }
 
 function getResultTitle(state: CanonicalWorkflowState): string {
@@ -1866,8 +2318,8 @@ function renderResultContent(
     <div className="placeholder-block">
       <p className="placeholder-title">Result preview pending</p>
       <p>
-        Submit the question to move into SQL review. Results remain unavailable until execution
-        returns authoritative rows.
+        Submit the question to move into answer plan review. Results remain unavailable until
+        execution returns authoritative rows.
       </p>
     </div>
   );
@@ -2129,10 +2581,10 @@ function renderStatePanel(
     return (
       <div className="state-hero">
         <p className="eyebrow">Review mode</p>
-        <h2>SQL preview state</h2>
+        <h2>Answer plan preview</h2>
         <p className="section-copy">
-          Query submission lands here first so generated SQL and guard posture can be reviewed
-          before any future execution path is introduced.
+          Query submission lands here first so business intent, source evidence, assumptions,
+          review status, and next action can be reviewed before execution.
         </p>
         {canOpenCompleted ? (
           <div className="action-row">
@@ -2190,7 +2642,7 @@ function renderStatePanel(
             </button>
           ) : null}
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2213,7 +2665,7 @@ function renderStatePanel(
             </button>
           ) : null}
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2236,7 +2688,7 @@ function renderStatePanel(
             </button>
           ) : null}
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2259,7 +2711,7 @@ function renderStatePanel(
             </button>
           ) : null}
           <a className="action-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2303,7 +2755,7 @@ function renderStatePanel(
             Start a new draft
           </a>
           <a className="ghost-link" href={buildStateHref("preview", question, sourceId)}>
-            Back to SQL preview
+            Back to answer plan
           </a>
         </div>
       </div>
@@ -2315,8 +2767,9 @@ function renderStatePanel(
       <p className="eyebrow">Compose</p>
       <h2>Query input state</h2>
       <p className="section-copy">
-        The custom shell is now SafeQuery-owned. Question input, SQL preview, guard status, and
-        results are separated into stable surfaces before real execution wiring is added.
+        The custom shell is now SafeQuery-owned. Question input, answer planning, guard status,
+        technical review, and results are separated into stable surfaces before real execution
+        wiring is added.
       </p>
     </div>
   );
@@ -2412,14 +2865,14 @@ export function QueryWorkflowShell({
           historyRecordId
         }
       : undefined;
-  const selectedAuditEvents =
-    historyRunContext?.auditEvents ?? candidatePreview?.auditEvents ?? [];
-  const selectedExecutedEvidence =
-    historyRunContext?.executedEvidence ?? candidatePreview?.executedEvidence ?? [];
-  const selectedRetrievedCitations =
-    historyRunContext?.retrievedCitations ?? candidatePreview?.retrievedCitations ?? [];
-  const selectedReviewEvidence =
-    historyRunContext?.reviewEvidence ?? candidatePreview?.reviewEvidence ?? [];
+  const selectedEvidenceContext =
+    normalizedState === "preview" || normalizedState === "review_denied"
+      ? candidatePreview
+      : submittedRunContext ?? selectedHistoryRunContext ?? candidatePreview;
+  const selectedAuditEvents = selectedEvidenceContext?.auditEvents ?? [];
+  const selectedExecutedEvidence = selectedEvidenceContext?.executedEvidence ?? [];
+  const selectedRetrievedCitations = selectedEvidenceContext?.retrievedCitations ?? [];
+  const selectedReviewEvidence = selectedEvidenceContext?.reviewEvidence ?? [];
   const firstRunGuidance = getFirstRunGuidance(operatorWorkflow);
   const operatorRecoveryGuidance = getOperatorRecoveryGuidance(
     normalizedState,
@@ -2434,6 +2887,9 @@ export function QueryWorkflowShell({
       ? operatorWorkflow.history.find((item) => item.recordId === candidatePreview.candidateId)
       : undefined);
   const selectedCandidateAttempts = selectedCandidateAttemptHistory?.candidateAttempts ?? [];
+  const selectedAnswerPlanCandidateAttempts = submittedCandidatePreview
+    ? []
+    : selectedCandidateAttempts;
   const selectedRevisionDraft = revisionDraftFromSelectedContext(
     normalizedState,
     candidatePreview,
@@ -2570,25 +3026,16 @@ export function QueryWorkflowShell({
         });
         return;
       }
+      setSubmittedRunContext(null);
 
       if (isClarificationRequiredPreviewState(result)) {
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
         setSubmittedState("review_denied");
         setRevisionDraft(result.revisionContext ?? revisionDraft);
-        setSubmittedCandidatePreview({
-          auditEvents: [],
-          candidateId: result.candidateId,
-          candidateSql: result.candidateSql,
-          candidateState: result.candidateState,
-          executedEvidence: [],
-          guardStatus: result.guardStatus,
-          requestId: result.requestId,
-          reviewEvidence: result.reviewEvidence,
-          retrievedCitations: [],
-          sourceId: result.sourceId,
-          sourceLabel: selectedSource.displayLabel
-        });
+        setSubmittedCandidatePreview(
+          buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
+        );
         setPreviewSubmission({
           candidateState: result.candidateState,
           requestState: result.requestState,
@@ -2603,19 +3050,9 @@ export function QueryWorkflowShell({
         setSubmittedSourceId(result.sourceId);
         setSubmittedState("review_denied");
         setRevisionDraft(result.revisionContext ?? revisionDraft);
-        setSubmittedCandidatePreview({
-          auditEvents: [],
-          candidateId: result.candidateId,
-          candidateSql: result.candidateSql,
-          candidateState: result.candidateState,
-          executedEvidence: [],
-          guardStatus: result.guardStatus,
-          requestId: result.requestId,
-          reviewEvidence: result.reviewEvidence,
-          retrievedCitations: [],
-          sourceId: result.sourceId,
-          sourceLabel: selectedSource.displayLabel
-        });
+        setSubmittedCandidatePreview(
+          buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
+        );
         setPreviewSubmission({
           candidateState: result.candidateState,
           requestState: result.requestState,
@@ -2629,19 +3066,9 @@ export function QueryWorkflowShell({
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
         setRevisionDraft(result.revisionContext ?? revisionDraft);
-        setSubmittedCandidatePreview({
-          auditEvents: [],
-          candidateId: result.candidateId,
-          candidateSql: result.candidateSql,
-          candidateState: result.candidateState,
-          executedEvidence: [],
-          guardStatus: result.guardStatus,
-          requestId: result.requestId,
-          reviewEvidence: result.reviewEvidence,
-          retrievedCitations: [],
-          sourceId: result.sourceId,
-          sourceLabel: selectedSource.displayLabel
-        });
+        setSubmittedCandidatePreview(
+          buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
+        );
         setPreviewSubmission({
           candidateState: result.candidateState,
           requestState: result.requestState,
@@ -2664,19 +3091,9 @@ export function QueryWorkflowShell({
       setSubmittedSourceId(result.sourceId);
       setSubmittedState("preview");
       setRevisionDraft(result.revisionContext ?? revisionDraft);
-      setSubmittedCandidatePreview({
-        auditEvents: [],
-        candidateId: result.candidateId,
-        candidateSql: result.candidateSql,
-        candidateState: result.candidateState,
-        executedEvidence: [],
-        guardStatus: result.guardStatus,
-        requestId: result.requestId,
-        reviewEvidence: result.reviewEvidence,
-        retrievedCitations: [],
-        sourceId: result.sourceId,
-        sourceLabel: selectedSource.displayLabel
-      });
+      setSubmittedCandidatePreview(
+        buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
+      );
       setPreviewSubmission({
         candidateState: result.candidateState,
         requestState: result.requestState,
@@ -2837,7 +3254,7 @@ export function QueryWorkflowShell({
             <h1>Query workflow</h1>
           </div>
           <p className="frame-copy">
-            Operator shell for governed question review, SQL preview, and execution posture.
+            Operator shell for governed question review, answer planning, and execution posture.
             Analyst-style extensions stay optional and outside the core shell.
           </p>
         </div>
@@ -2930,6 +3347,18 @@ export function QueryWorkflowShell({
               selectedRevisionDraft ? startRevision : undefined
             )}
           </section>
+
+          {normalizedState === "preview" || normalizedState === "review_denied"
+            ? renderBusinessAnswerPlan(
+                candidatePreview,
+                submittedQuestion,
+                workflowContext.sourceIdentity,
+                selectedRetrievedCitations,
+                selectedReviewEvidence,
+                selectedAnswerPlanCandidateAttempts,
+                executeEnabled
+              )
+            : null}
 
           <section className="surface surface-primary">
             <div className="section-header">
@@ -3066,7 +3495,7 @@ export function QueryWorkflowShell({
                   <p className="state-callout-title">Preview denied</p>
                   <p>
                     Request state {previewSubmission.requestState}; candidate state{" "}
-                    {previewSubmission.candidateState}. No successful SQL preview is displayed.
+                    {previewSubmission.candidateState}. No successful answer plan is displayed.
                   </p>
                 </div>
               ) : null}
@@ -3171,7 +3600,7 @@ export function QueryWorkflowShell({
             <div className="section-header">
               <div>
                 <p className="eyebrow">Generated SQL</p>
-                <h2 className="panel-title">Authoritative SQL preview</h2>
+                <h2 className="panel-title">Technical SQL review</h2>
               </div>
               <span className="surface-badge surface-badge-code">Preview</span>
             </div>
