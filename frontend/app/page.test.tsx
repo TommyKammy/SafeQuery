@@ -329,6 +329,108 @@ describe("HomePage", () => {
     expect(historyLink).not.toHaveAttribute("href", expect.stringContaining("state=query"));
   });
 
+  it("preserves request revision context from clarification-required history", async () => {
+    appendCsrfToken();
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              history: [
+                {
+                  itemType: "request",
+                  label: "Ambiguous quarter spend",
+                  lifecycleState: "clarification_required",
+                  occurredAt: "2026-04-21T14:25:00Z",
+                  recordId: "request-clarification-only",
+                  sourceId: "sap-approved-spend",
+                  sourceLabel: "SAP spend cube / approved_vendor_spend"
+                }
+              ],
+              sources: workflowPayload().sources
+            })
+        });
+      }
+
+      if (url.endsWith("/requests/preview")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              audit: {
+                events: [],
+                source_id: "sap-approved-spend",
+                state: "recorded"
+              },
+              candidate: {
+                candidate_id: "candidate-clarified-preview",
+                candidate_sql: "select vendor_name from approved_vendor_spend;",
+                dataset_contract_version: 1,
+                guard_status: "passed",
+                review_evidence: [],
+                schema_snapshot_version: 1,
+                semantic_contract_version: "approved_vendor_spend.v1",
+                source_family: "postgresql",
+                source_flavor: "warehouse",
+                source_id: "sap-approved-spend",
+                state: "preview_ready"
+              },
+              request: {
+                question: "Show approved vendor spend for Q1 fiscal quarter",
+                request_id: "request-clarified-preview",
+                source_id: "sap-approved-spend",
+                state: "submitted"
+              }
+            })
+        });
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "request",
+          history_record_id: "request-clarification-only",
+          question: "Ambiguous quarter spend",
+          source_id: "sap-approved-spend",
+          state: "clarification_required"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /revise attempt/i }));
+    fireEvent.change(await screen.findByRole("combobox", { name: /source/i }), {
+      target: { value: "sap-approved-spend" }
+    });
+    fireEvent.change(screen.getByLabelText(/natural-language question/i), {
+      target: { value: "Show approved vendor spend for Q1 fiscal quarter" }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /submit for preview/i }).closest("form")!);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8000/requests/preview",
+        expect.objectContaining({
+          body: JSON.stringify({
+            question: "Show approved vendor spend for Q1 fiscal quarter",
+            source_id: "sap-approved-spend",
+            revise_from: {
+              item_type: "request",
+              request_id: "request-clarification-only"
+            }
+          })
+        })
+      );
+    });
+  });
+
   it("reopens denied candidates and terminal runs into their lifecycle states", async () => {
     vi.stubGlobal(
       "fetch",

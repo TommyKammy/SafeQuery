@@ -1703,7 +1703,7 @@ function revisionDraftFromSelectedContext(
   }
 
   if (
-    state === "review_denied" &&
+    (state === "review_denied" || state === "clarification_required") &&
     selectedHistoryItem?.itemType === "request" &&
     selectedHistoryItem.sourceId === sourceId &&
     isRevisableRequestLifecycleState(selectedHistoryItem.lifecycleState)
