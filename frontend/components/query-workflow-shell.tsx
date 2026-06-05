@@ -21,6 +21,7 @@ type WorkflowState =
   | "signin"
   | "query"
   | "preview"
+  | "clarification_required"
   | "review_denied"
   | "completed"
   | "empty"
@@ -35,6 +36,7 @@ type CanonicalWorkflowState =
   | "signin"
   | "query"
   | "preview"
+  | "clarification_required"
   | "review_denied"
   | "completed"
   | "empty"
@@ -271,6 +273,11 @@ const workflowStates: Record<CanonicalWorkflowState, StateDefinition> = {
     description: "The operator request has been staged as a business-readable answer plan.",
     label: "Answer plan"
   },
+  clarification_required: {
+    description:
+      "SafeQuery needs the operator to clarify business intent before SQL generation or execution can continue.",
+    label: "Clarification required"
+  },
   query: {
     description: "Compose a governed question and move into review without leaving the product shell.",
     label: "Query input"
@@ -294,6 +301,7 @@ const workflowStateOrder: CanonicalWorkflowState[] = [
   "signin",
   "query",
   "preview",
+  "clarification_required",
   "review_denied",
   "completed",
   "empty",
@@ -412,6 +420,15 @@ function getOperatorRecoveryGuidance(
       anchor:
         "Use the authoritative SafeQuery request and candidate record; do not treat advisory context as approval.",
       title: "Recovery: review denied"
+    };
+  }
+
+  if (state === "clarification_required") {
+    return {
+      action: "Revise the request or choose one explicit business meaning before retrying preview.",
+      anchor:
+        "Use the clarifying questions attached to the SafeQuery review record; do not treat an ambiguous candidate as executable.",
+      title: "Recovery: clarification required"
     };
   }
 
@@ -1411,9 +1428,16 @@ function historyItemToState(item: OperatorHistoryItem): CanonicalWorkflowState {
 
   if (item.itemType === "request" || item.itemType === "candidate") {
     if (
+      lifecycleState === "clarification_required" ||
+      lifecycleState === "needs_clarification" ||
+      guardStatus === "needs_clarification"
+    ) {
+      return "clarification_required";
+    }
+
+    if (
       lifecycleState === "review_denied" ||
       lifecycleState === "blocked" ||
-      lifecycleState === "clarification_required" ||
       lifecycleState === "preview_denied" ||
       lifecycleState === "preview_generation_failed" ||
       lifecycleState === "preview_malformed" ||
@@ -1648,7 +1672,7 @@ function revisionDraftFromSelectedContext(
   selectedHistoryItem?: OperatorHistoryItem,
   sourceId?: string
 ): RevisionDraftContext | null {
-  if (state === "review_denied" && candidatePreview) {
+  if ((state === "review_denied" || state === "clarification_required") && candidatePreview) {
     return {
       candidateId: candidatePreview.candidateId,
       itemType: "candidate",
@@ -1699,6 +1723,7 @@ function isRevisableRequestLifecycleState(lifecycleState: string): boolean {
   return (
     normalizedLifecycleState === "blocked" ||
     normalizedLifecycleState === "clarification_required" ||
+    normalizedLifecycleState === "needs_clarification" ||
     normalizedLifecycleState === "preview_denied" ||
     normalizedLifecycleState === "preview_generation_failed" ||
     normalizedLifecycleState === "preview_malformed" ||
@@ -1950,7 +1975,12 @@ function getWorkflowContext(
     source?.displayLabel ??
     "No source selected yet";
 
-  if (candidatePreview && (state === "preview" || state === "review_denied")) {
+  if (
+    candidatePreview &&
+    (state === "preview" ||
+      state === "review_denied" ||
+      state === "clarification_required")
+  ) {
     return {
       candidateIdentity: candidatePreview.candidateId,
       candidateState: candidatePreview.candidateState,
@@ -1960,7 +1990,7 @@ function getWorkflowContext(
     };
   }
 
-  if (state === "preview" || state === "review_denied") {
+  if (state === "preview" || state === "review_denied" || state === "clarification_required") {
     return {
       sourceIdentity
     };
@@ -1995,8 +2025,16 @@ function getWorkflowContext(
 }
 
 function getGuardTone(state: CanonicalWorkflowState): string {
-  if (state === "review_denied" || state === "execution_denied" || state === "failed") {
+  if (
+    state === "review_denied" ||
+    state === "execution_denied" ||
+    state === "failed"
+  ) {
     return "danger";
+  }
+
+  if (state === "clarification_required") {
+    return "warning";
   }
 
   if (state === "completed" || state === "empty") {
@@ -2017,6 +2055,10 @@ function getGuardTone(state: CanonicalWorkflowState): string {
 function getGuardHeadline(state: CanonicalWorkflowState): string {
   if (state === "review_denied") {
     return "Review denied before execution";
+  }
+
+  if (state === "clarification_required") {
+    return "Clarification required before execution";
   }
 
   if (state === "completed") {
@@ -2049,6 +2091,10 @@ function getGuardHeadline(state: CanonicalWorkflowState): string {
 function getGuardCopy(state: CanonicalWorkflowState): string {
   if (state === "review_denied") {
     return "The request never crossed into execution. Guard denial stays anchored to the candidate review record instead of being restyled as a run failure.";
+  }
+
+  if (state === "clarification_required") {
+    return "SafeQuery cannot safely infer the business meaning yet. Execution stays unavailable until the operator revises the question or chooses one explicit meaning.";
   }
 
   if (state === "completed") {
@@ -2699,6 +2745,29 @@ function renderStatePanel(
     );
   }
 
+  if (state === "clarification_required") {
+    return (
+      <div className="state-hero">
+        <p className="eyebrow">Intent clarification</p>
+        <h2>Clarification required state</h2>
+        <p className="section-copy">
+          SafeQuery found business intent it cannot safely resolve. Answer the clarifying
+          questions or choose one explicit meaning before requesting a new preview.
+        </p>
+        <div className="action-row">
+          {onStartRevision ? (
+            <button className="action-button" onClick={onStartRevision} type="button">
+              Revise attempt
+            </button>
+          ) : null}
+          <a className="ghost-link" href={buildStateHref("query", question, sourceId)}>
+            Choose meaning
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   if (state === "execution_denied") {
     return (
       <div className="state-hero">
@@ -2863,14 +2932,19 @@ export function QueryWorkflowShell({
     historySourceMismatch
   );
   const historyHrefContext =
-    normalizedState === "preview" && historyRecordId && historyCandidatePreview
+    (normalizedState === "preview" ||
+      normalizedState === "clarification_required") &&
+    historyRecordId &&
+    historyCandidatePreview
       ? {
           historyItemType: "candidate" as const,
           historyRecordId
         }
       : undefined;
   const selectedEvidenceContext =
-    normalizedState === "preview" || normalizedState === "review_denied"
+    normalizedState === "preview" ||
+    normalizedState === "review_denied" ||
+    normalizedState === "clarification_required"
       ? candidatePreview
       : submittedRunContext ?? selectedHistoryRunContext ?? candidatePreview;
   const selectedAuditEvents = selectedEvidenceContext?.auditEvents ?? [];
@@ -3035,7 +3109,7 @@ export function QueryWorkflowShell({
       if (isClarificationRequiredPreviewState(result)) {
         setSubmittedQuestion(submittedQuestionText);
         setSubmittedSourceId(result.sourceId);
-        setSubmittedState("review_denied");
+        setSubmittedState("clarification_required");
         setRevisionDraft(result.revisionContext ?? revisionDraft);
         setSubmittedCandidatePreview(
           buildSubmittedCandidatePreview(result, selectedSource.displayLabel)
@@ -3353,7 +3427,9 @@ export function QueryWorkflowShell({
             )}
           </section>
 
-          {normalizedState === "preview" || normalizedState === "review_denied"
+          {normalizedState === "preview" ||
+          normalizedState === "review_denied" ||
+          normalizedState === "clarification_required"
             ? renderBusinessAnswerPlan(
                 candidatePreview,
                 submittedQuestion,
@@ -3565,7 +3641,7 @@ export function QueryWorkflowShell({
                     ? "Submitting preview"
                     : "Submit for preview"}
                 </button>
-                {candidatePreview ? (
+                {candidatePreview && normalizedState !== "clarification_required" ? (
                   <button
                     disabled={!executeEnabled || executeSubmission.status === "executing"}
                     onClick={executeCandidate}

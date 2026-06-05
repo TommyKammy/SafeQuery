@@ -419,7 +419,7 @@ describe("HomePage", () => {
     );
     expect(ambiguousCandidateLink).toHaveAttribute(
       "href",
-      expect.stringContaining("state=review_denied")
+      expect.stringContaining("state=clarification_required")
     );
     expect(ambiguousCandidateLink).toHaveAttribute(
       "href",
@@ -1852,6 +1852,9 @@ describe("HomePage", () => {
       expect(screen.queryByText(/preview request accepted/i)).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: /sql preview state/i })).not.toBeInTheDocument();
       if (stateCase.candidateState === "clarification_required") {
+        expect(
+          screen.getByRole("heading", { name: /clarification required state/i })
+        ).toBeInTheDocument();
         const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
         expect(answerPlan).toHaveTextContent("Should inactive vendors be included?");
         expect(answerPlan).toHaveTextContent(/answer the clarifying questions/i);
@@ -1861,6 +1864,9 @@ describe("HomePage", () => {
         expect(screen.getByLabelText(/review evidence/i)).toHaveTextContent(
           "needs_clarification"
         );
+        expect(
+          screen.queryByRole("button", { name: /execute reviewed candidate/i })
+        ).not.toBeInTheDocument();
       }
     }
   });
@@ -1932,6 +1938,9 @@ describe("HomePage", () => {
     expect(answerPlan).toHaveTextContent("Which fiscal quarter should SafeQuery use?");
     expect(answerPlan).toHaveTextContent("Should inactive vendors be included?");
     expect(answerPlan).toHaveTextContent(/answer the clarifying questions/i);
+    expect(
+      screen.queryByRole("button", { name: /execute reviewed candidate/i })
+    ).not.toBeInTheDocument();
   });
 
   it("executes only preview-ready candidates and maps stale-ui backend denials or cancellations to recovery states", async () => {
