@@ -329,7 +329,7 @@ describe("HomePage", () => {
     expect(historyLink).not.toHaveAttribute("href", expect.stringContaining("state=query"));
   });
 
-  it("preserves request revision context from clarification-required history", async () => {
+  it("preserves request revision context from the clarification choose-meaning CTA", async () => {
     appendCsrfToken();
 
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
@@ -405,7 +405,7 @@ describe("HomePage", () => {
       })
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /revise attempt/i }));
+    fireEvent.click(screen.getByRole("button", { name: /choose meaning/i }));
     fireEvent.change(await screen.findByRole("combobox", { name: /source/i }), {
       target: { value: "sap-approved-spend" }
     });
@@ -429,6 +429,107 @@ describe("HomePage", () => {
         })
       );
     });
+  });
+
+  it("populates clarification details for request history rows from the linked candidate", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    itemType: "request",
+                    label: "Ambiguous quarter spend",
+                    lifecycleState: "clarification_required",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "request-clarification-details",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  },
+                  {
+                    candidateSql: "select 'wrong request' as preview;",
+                    guardStatus: "pending",
+                    itemType: "candidate",
+                    label: "Different ambiguous request",
+                    lifecycleState: "clarification_required",
+                    occurredAt: "2026-04-21T14:25:00Z",
+                    recordId: "candidate-unrelated-clarification",
+                    requestId: "request-unrelated-clarification",
+                    reviewEvidence: [
+                      {
+                        auditEventId: "audit-unrelated-clarification",
+                        assumptions: [],
+                        clarifyingQuestions: ["Wrong request question should not render."],
+                        reviewContractVersion: "review_llm_adapter_output.v1",
+                        reviewDecisionId: "review-unrelated-clarification",
+                        reviewStatus: "needs_clarification",
+                        riskFlags: []
+                      }
+                    ],
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  },
+                  {
+                    candidateSql: null,
+                    guardStatus: "pending",
+                    itemType: "candidate",
+                    label: "Ambiguous quarter spend candidate",
+                    lifecycleState: "clarification_required",
+                    occurredAt: "2026-04-21T14:26:00Z",
+                    recordId: "candidate-clarification-details",
+                    requestId: "request-clarification-details",
+                    reviewEvidence: [
+                      {
+                        auditEventId: "audit-clarification-details",
+                        assumptions: ["Quarter could mean fiscal or calendar quarter."],
+                        clarifyingQuestions: ["Which fiscal quarter should SafeQuery use?"],
+                        reviewContractVersion: "review_llm_adapter_output.v1",
+                        reviewDecisionId: "review-clarification-details",
+                        reviewStatus: "needs_clarification",
+                        riskFlags: ["Business intent is ambiguous."]
+                      }
+                    ],
+                    semanticContractVersion: "approved_vendor_spend.v1",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "request",
+          history_record_id: "request-clarification-details",
+          question: "Ambiguous quarter spend",
+          source_id: "sap-approved-spend",
+          state: "clarification_required"
+        }
+      })
+    );
+
+    const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+    expect(answerPlan).toHaveTextContent("Which fiscal quarter should SafeQuery use?");
+    expect(answerPlan).toHaveTextContent("Quarter could mean fiscal or calendar quarter.");
+    expect(answerPlan).toHaveTextContent("Candidate clarification_required; guard pending");
+    expect(answerPlan).not.toHaveTextContent("Wrong request question should not render.");
+    expect(answerPlan).not.toHaveTextContent("No candidate selected");
+    expect(
+      screen.queryByRole("button", { name: /execute reviewed candidate/i })
+    ).not.toBeInTheDocument();
   });
 
   it("reopens denied candidates and terminal runs into their lifecycle states", async () => {

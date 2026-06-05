@@ -1542,17 +1542,7 @@ function findAuthoritativeCandidatePreview(
   sourceId?: string,
   historyRecordId?: string
 ): AuthoritativeCandidatePreview | null {
-  const candidate = history.find((item) => {
-    if (item.itemType !== "candidate") {
-      return false;
-    }
-
-    if (historyRecordId) {
-      return item.recordId === historyRecordId;
-    }
-
-    return !sourceId || item.sourceId === sourceId;
-  });
+  const candidate = findAuthoritativeCandidateHistoryItem(history, sourceId, historyRecordId);
   if (!candidate) {
     return null;
   }
@@ -1571,6 +1561,49 @@ function findAuthoritativeCandidatePreview(
     sourceId: candidate.sourceId,
     sourceLabel: candidate.sourceLabel
   };
+}
+
+function findAuthoritativeCandidateHistoryItem(
+  history: OperatorHistoryItem[],
+  sourceId?: string,
+  historyRecordId?: string
+): OperatorHistoryItem | null {
+  const candidates = history.filter((item) => item.itemType === "candidate");
+
+  if (!historyRecordId) {
+    return candidates.find((item) => !sourceId || item.sourceId === sourceId) ?? null;
+  }
+
+  const directCandidate = candidates.find((item) => item.recordId === historyRecordId);
+  if (directCandidate) {
+    return directCandidate;
+  }
+
+  if (!sourceId) {
+    return null;
+  }
+
+  const requestCandidates = candidates.filter(
+    (item) => item.sourceId === sourceId && item.requestId === historyRecordId
+  );
+  if (requestCandidates.length === 0) {
+    return null;
+  }
+
+  return requestCandidates.sort(compareHistoryCandidateRecency)[0] ?? null;
+}
+
+function compareHistoryCandidateRecency(
+  left: OperatorHistoryItem,
+  right: OperatorHistoryItem
+): number {
+  const leftTime = Date.parse(left.occurredAt);
+  const rightTime = Date.parse(right.occurredAt);
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+    return rightTime - leftTime;
+  }
+
+  return right.recordId.localeCompare(left.recordId);
 }
 
 function findAuthoritativeRunContext(
@@ -2760,9 +2793,15 @@ function renderStatePanel(
               Revise attempt
             </button>
           ) : null}
-          <a className="ghost-link" href={buildStateHref("query", question, sourceId)}>
-            Choose meaning
-          </a>
+          {onStartRevision ? (
+            <button className="ghost-button" onClick={onStartRevision} type="button">
+              Choose meaning
+            </button>
+          ) : (
+            <a className="ghost-link" href={buildStateHref("query", question, sourceId)}>
+              Choose meaning
+            </a>
+          )}
         </div>
       </div>
     );
@@ -2938,7 +2977,7 @@ export function QueryWorkflowShell({
     historyCandidatePreview
       ? {
           historyItemType: "candidate" as const,
-          historyRecordId
+          historyRecordId: historyCandidatePreview.candidateId
         }
       : undefined;
   const selectedEvidenceContext =
