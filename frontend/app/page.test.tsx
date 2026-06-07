@@ -557,7 +557,9 @@ describe("HomePage", () => {
     const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
     expect(answerPlan).toHaveTextContent("Which fiscal quarter should SafeQuery use?");
     expect(answerPlan).toHaveTextContent("Quarter could mean fiscal or calendar quarter.");
-    expect(answerPlan).toHaveTextContent("Candidate clarification_required; guard pending");
+    expect(answerPlan).toHaveTextContent(/candidate state: clarification required/i);
+    expect(answerPlan).toHaveTextContent(/SQL Guard: Not validated/i);
+    expect(answerPlan).toHaveTextContent(/Candidate lifecycle: Needs clarification/i);
     expect(answerPlan).not.toHaveTextContent("Wrong request question should not render.");
     expect(answerPlan).not.toHaveTextContent("No candidate selected");
     expect(
@@ -1296,7 +1298,11 @@ describe("HomePage", () => {
     expect(answerPlan).toHaveTextContent(/dataset contract v3/i);
     expect(answerPlan).toHaveTextContent(/schema snapshot v5/i);
     expect(answerPlan).toHaveTextContent("Vendor means normalized vendor_id.");
-    expect(answerPlan).toHaveTextContent(/review ready/i);
+    expect(answerPlan).toHaveTextContent(/review critique ready/i);
+    expect(answerPlan).toHaveTextContent(/SQL Guard: Technical safety passed/i);
+    expect(answerPlan).toHaveTextContent(/Fixture coverage: Evidence-bound for this fixture/i);
+    expect(answerPlan).toHaveTextContent(/No correctness claim/i);
+    expect(answerPlan).not.toHaveTextContent(/guard passed/i);
     expect(answerPlan).toHaveTextContent(/review the answer plan, then execute the reviewed candidate/i);
 
     expect(
