@@ -1343,7 +1343,7 @@ function canExecuteCandidate(
 
 function hasClarifyingQuestions(candidatePreview: AuthoritativeCandidatePreview): boolean {
   return (
-    candidatePreview.clarifyingQuestions?.length > 0 ||
+    (candidatePreview.clarifyingQuestions?.length ?? 0) > 0 ||
     candidatePreview.reviewEvidence.some((evidence) => evidence.clarifyingQuestions.length > 0)
   );
 }
