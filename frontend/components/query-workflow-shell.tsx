@@ -2124,6 +2124,67 @@ function formatStatusLabel(value: string): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function formatCandidateAssuranceLabel(candidateState?: string | null): string {
+  if (!candidateState) {
+    return "Not validated";
+  }
+
+  const normalizedState = candidateState.toLowerCase();
+  if (normalizedState === "preview_ready" || normalizedState === "approved_for_execution") {
+    return "Evidence-bound for this fixture";
+  }
+
+  if (normalizedState === "clarification_required" || normalizedState === "needs_clarification") {
+    return "Needs clarification";
+  }
+
+  return "Not validated";
+}
+
+function formatGuardAssuranceLabel(guardStatus?: string | null): string {
+  if (!guardStatus) {
+    return "Not validated";
+  }
+
+  const normalizedStatus = guardStatus.toLowerCase();
+  if (normalizedStatus === "allow" || normalizedStatus === "passed") {
+    return "Technical safety passed";
+  }
+
+  if (normalizedStatus === "blocked" || normalizedStatus === "denied") {
+    return "Technical safety blocked";
+  }
+
+  if (normalizedStatus === "needs_clarification") {
+    return "Needs clarification";
+  }
+
+  return "Not validated";
+}
+
+function formatReviewAssuranceLabel(
+  reviewEvidence: OperatorWorkflowReviewEvidence[] | undefined
+): string {
+  const reviewStatus = reviewEvidence?.[0]?.reviewStatus.toLowerCase();
+  if (!reviewStatus) {
+    return "Not validated";
+  }
+
+  if (reviewStatus === "ready") {
+    return "Review critique ready";
+  }
+
+  if (reviewStatus === "blocked" || reviewStatus === "denied") {
+    return "Review critique blocked";
+  }
+
+  if (reviewStatus === "needs_clarification" || reviewStatus === "clarification_required") {
+    return "Needs clarification";
+  }
+
+  return "Not validated";
+}
+
 function renderListOrPlaceholder(items: string[], placeholder: string) {
   if (items.length === 0) {
     return <p className="section-copy">{placeholder}</p>;
@@ -2181,11 +2242,23 @@ function renderBusinessAnswerPlan(
     clarifyingQuestions.length > 0 ||
     preview?.candidateState.toLowerCase() === "clarification_required" ||
     preview?.candidateState.toLowerCase() === "needs_clarification";
-  const reviewStatus = latestReview
-    ? `Review ${latestReview.reviewStatus.replace(/_/g, " ")}`
-    : "Review evidence not provided";
+  const reviewAssuranceLabel = formatReviewAssuranceLabel(reviewEvidence);
+  const guardAssuranceLabel = formatGuardAssuranceLabel(preview?.guardStatus);
+  const candidateAssuranceLabel = formatCandidateAssuranceLabel(preview?.candidateState);
+  const fixtureAssuranceLabel =
+    preview && (retrievedCitations.length > 0 || reviewEvidence.length > 0)
+      ? "Evidence-bound for this fixture"
+      : "Not validated";
+  const assuranceLabels = [
+    `Candidate lifecycle: ${candidateAssuranceLabel}`,
+    `SQL Guard: ${guardAssuranceLabel}`,
+    `Review LLM critique: ${reviewAssuranceLabel}`,
+    `Fixture coverage: ${fixtureAssuranceLabel}`
+  ];
   const safetyStatus = preview
-    ? `Candidate ${preview.candidateState}; guard ${preview.guardStatus}`
+    ? `Candidate state: ${formatStatusLabel(
+        preview.candidateState
+      )}. SQL Guard: ${guardAssuranceLabel}.`
     : "No candidate selected";
   const nextAction =
     clarificationRequired
@@ -2205,7 +2278,7 @@ function renderBusinessAnswerPlan(
           <h2 className="panel-title">Business-readable answer plan</h2>
         </div>
         <span className={`surface-badge surface-badge-${executeEnabled ? "success" : "warning"}`}>
-          {executeEnabled ? "Ready" : "Review"}
+          {executeEnabled ? "Evidence-bound" : "Review"}
         </span>
       </div>
       <div className="answer-plan-grid">
@@ -2252,11 +2325,16 @@ function renderBusinessAnswerPlan(
         </div>
         <div className="answer-plan-item">
           <span className="meta-label">Safety and review status</span>
-          <strong>{formatStatusLabel(reviewStatus)}</strong>
+          <strong>{reviewAssuranceLabel}</strong>
           <p>{safetyStatus}</p>
           {latestReview?.riskFlags.length
             ? renderListOrPlaceholder(latestReview.riskFlags, "")
             : null}
+        </div>
+        <div className="answer-plan-item">
+          <span className="meta-label">Assurance label policy</span>
+          <strong>No correctness claim</strong>
+          {renderListOrPlaceholder(assuranceLabels, "Not validated")}
         </div>
         <div className="answer-plan-item answer-plan-item-wide">
           <span className="meta-label">Next action</span>
@@ -2908,7 +2986,7 @@ function renderCandidateAttemptComparison(attempts: OperatorWorkflowCandidateAtt
             </div>
             <span>Request {attempt.requestId}</span>
             <span>
-              Guard {attempt.guardStatus}
+              SQL Guard: {formatGuardAssuranceLabel(attempt.guardStatus)}
               {attempt.guardDecision ? ` / ${attempt.guardDecision}` : ""}
             </span>
             {attempt.primaryDenyCode ? <span>Deny code: {attempt.primaryDenyCode}</span> : null}
@@ -4096,8 +4174,8 @@ export function QueryWorkflowShell({
               </div>
               {workflowContext.guardStatus ? (
                 <div className="guard-item">
-                  <span className="meta-label">Guard status</span>
-                  <strong>{workflowContext.guardStatus}</strong>
+                  <span className="meta-label">SQL Guard assurance</span>
+                  <strong>{formatGuardAssuranceLabel(workflowContext.guardStatus)}</strong>
                 </div>
               ) : null}
               {workflowContext.runIdentity ? (
@@ -4137,7 +4215,7 @@ export function QueryWorkflowShell({
               </div>
               <div className="guard-item">
                 <span className="meta-label">Candidate guard</span>
-                <strong>{candidatePreview?.guardStatus ?? "No candidate record"}</strong>
+                <strong>{formatGuardAssuranceLabel(candidatePreview?.guardStatus)}</strong>
               </div>
               <div className="guard-item">
                 <span className="meta-label">Execution path</span>
