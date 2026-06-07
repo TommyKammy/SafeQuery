@@ -1355,6 +1355,7 @@ function hasBlockingReviewEvidence(reviewEvidence: OperatorWorkflowReviewEvidenc
 function resolveExecuteAvailabilityGuidance(
   state: CanonicalWorkflowState,
   candidatePreview: AuthoritativeCandidatePreview | null,
+  runContext: AuthoritativeRunContext | null,
   hasSourceMismatch: boolean,
   executeInProgress: boolean
 ): ExecuteAvailabilityGuidance {
@@ -1368,7 +1369,7 @@ function resolveExecuteAvailabilityGuidance(
     };
   }
 
-  if (state === "completed" || state === "empty") {
+  if ((state === "completed" || state === "empty") && runContext !== null) {
     return {
       nextAction:
         "Inspect the run record, result evidence, and audit events before starting a revised request.",
@@ -1435,16 +1436,16 @@ function resolveExecuteAvailabilityGuidance(
     };
   }
 
-  if (state === "review_denied") {
-    return {
-      nextAction: "Revise the request or source binding and submit a new preview.",
-      reason: "The candidate stopped during review and never became executable.",
-      title: "Review blocked execution",
-      tone: "danger"
-    };
-  }
-
   if (candidatePreview === null) {
+    if (state === "review_denied") {
+      return {
+        nextAction: "Revise the request or source binding and submit a new preview.",
+        reason: "The request stopped during review and never became executable.",
+        title: "Review blocked execution",
+        tone: "danger"
+      };
+    }
+
     return {
       nextAction: "Submit the question for preview or reopen a candidate history row.",
       reason: "No server-owned candidate record is selected for this preview.",
@@ -1465,6 +1466,34 @@ function resolveExecuteAvailabilityGuidance(
 
   const candidateState = candidatePreview.candidateState.toLowerCase();
   const guardStatus = candidatePreview.guardStatus.toLowerCase();
+
+  if (guardStatus === "blocked" || guardStatus === "denied") {
+    return {
+      nextAction: "Resolve the guard finding and submit a revised preview.",
+      reason: "The deterministic guard denied this candidate before execution.",
+      title: "Guard denied execution",
+      tone: "danger"
+    };
+  }
+
+  if (state === "review_denied") {
+    return {
+      nextAction: "Revise the request or source binding and submit a new preview.",
+      reason: "The candidate stopped during review and never became executable.",
+      title: "Review blocked execution",
+      tone: "danger"
+    };
+  }
+
+  if ((state === "completed" || state === "empty") && runContext === null) {
+    return {
+      nextAction: "Open the authoritative run from history or execute the reviewed candidate first.",
+      reason:
+        "This page is showing a completed-state route, but no server-owned run record is selected.",
+      title: "No execution run selected",
+      tone: "warning"
+    };
+  }
 
   if (candidateState === "clarification_required" || candidateState === "needs_clarification") {
     return {
@@ -1509,14 +1538,9 @@ function resolveExecuteAvailabilityGuidance(
     return {
       nextAction: "Resolve the guard finding and submit a revised preview.",
       reason:
-        guardStatus === "blocked" || guardStatus === "denied"
-          ? "The deterministic guard denied this candidate before execution."
-          : "The deterministic guard has not allowed this candidate yet.",
-      title:
-        guardStatus === "blocked" || guardStatus === "denied"
-          ? "Guard denied execution"
-          : "Guard review incomplete",
-      tone: guardStatus === "blocked" || guardStatus === "denied" ? "danger" : "warning"
+        "The deterministic guard has not allowed this candidate yet.",
+      title: "Guard review incomplete",
+      tone: "warning"
     };
   }
 
@@ -3216,6 +3240,7 @@ export function QueryWorkflowShell({
   const executeGuidance = resolveExecuteAvailabilityGuidance(
     normalizedState,
     candidatePreview,
+    historyRunContext,
     historySourceMismatch,
     executeSubmission.status === "executing"
   );

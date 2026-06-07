@@ -2883,6 +2883,7 @@ describe("HomePage", () => {
         expectedTitle: /guard denied execution/i,
         guardStatus: "blocked",
         label: "Guard blocked candidate",
+        lifecycleState: "blocked",
         recordId: "candidate-guard-blocked",
         reviewEvidence: []
       },
@@ -2893,6 +2894,7 @@ describe("HomePage", () => {
         expectedTitle: /review blocked execution/i,
         guardStatus: "passed",
         label: "Review blocked candidate",
+        lifecycleState: "preview_ready",
         recordId: "candidate-review-blocked",
         reviewEvidence: [
           {
@@ -2926,7 +2928,7 @@ describe("HomePage", () => {
                       guardStatus: disabledCase.guardStatus,
                       itemType: "candidate",
                       label: disabledCase.label,
-                      lifecycleState: "preview_ready",
+                      lifecycleState: disabledCase.lifecycleState,
                       occurredAt: "2026-04-21T14:24:00Z",
                       recordId: disabledCase.recordId,
                       requestId: `request-${disabledCase.recordId}`,
@@ -3059,6 +3061,120 @@ describe("HomePage", () => {
     );
     expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
       /follow the validation next action or revise the request/i
+    );
+  });
+
+  it("reports guard-denied candidates as guard denials on the review-denied route", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "blocked",
+                    itemType: "candidate",
+                    label: "Guard denied candidate",
+                    lifecycleState: "blocked",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-guard-denied-route",
+                    requestId: "request-guard-denied-route",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-guard-denied-route",
+          question: "Guard denied candidate",
+          source_id: "sap-approved-spend",
+          state: "review_denied"
+        }
+      })
+    );
+
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /guard denied execution/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /deterministic guard denied this candidate/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).not.toHaveTextContent(
+      /review blocked execution/i
+    );
+  });
+
+  it("does not claim execution was recorded when completed route has only a preview candidate", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Preview-only candidate",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-preview-only",
+                    requestId: "request-preview-only",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-preview-only",
+          question: "Preview-only candidate",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /no execution run selected/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /no server-owned run record is selected/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).not.toHaveTextContent(
+      /execution already recorded/i
     );
   });
 
