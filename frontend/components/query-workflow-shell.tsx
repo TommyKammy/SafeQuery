@@ -1336,7 +1336,15 @@ function canExecuteCandidate(
     (guardStatus === "allow" || guardStatus === "passed") &&
     candidatePreview.candidateSql !== null &&
     candidatePreview.candidateSql.trim().length > 0 &&
+    !hasClarifyingQuestions(candidatePreview) &&
     !hasBlockingReviewEvidence(candidatePreview.reviewEvidence)
+  );
+}
+
+function hasClarifyingQuestions(candidatePreview: AuthoritativeCandidatePreview): boolean {
+  return (
+    candidatePreview.clarifyingQuestions?.length > 0 ||
+    candidatePreview.reviewEvidence.some((evidence) => evidence.clarifyingQuestions.length > 0)
   );
 }
 
@@ -1369,7 +1377,25 @@ function resolveExecuteAvailabilityGuidance(
     };
   }
 
-  if ((state === "completed" || state === "empty") && runContext !== null) {
+  if (
+    (state === "completed" ||
+      state === "empty" ||
+      state === "insufficient_evidence" ||
+      state === "execution_denied" ||
+      state === "failed" ||
+      state === "canceled") &&
+    runContext === null
+  ) {
+    return {
+      nextAction: "Open the authoritative run from history or execute the reviewed candidate first.",
+      reason:
+        "This page is showing an execution-state route, but no server-owned run record is selected.",
+      title: "No execution run selected",
+      tone: "warning"
+    };
+  }
+
+  if (state === "completed" || state === "empty") {
     return {
       nextAction:
         "Inspect the run record, result evidence, and audit events before starting a revised request.",
@@ -1485,20 +1511,19 @@ function resolveExecuteAvailabilityGuidance(
     };
   }
 
-  if ((state === "completed" || state === "empty") && runContext === null) {
-    return {
-      nextAction: "Open the authoritative run from history or execute the reviewed candidate first.",
-      reason:
-        "This page is showing a completed-state route, but no server-owned run record is selected.",
-      title: "No execution run selected",
-      tone: "warning"
-    };
-  }
-
   if (candidateState === "clarification_required" || candidateState === "needs_clarification") {
     return {
       nextAction: "Answer the clarifying questions, then submit a revised preview.",
       reason: "The candidate needs clarification before SafeQuery can continue.",
+      title: "Clarification required before execution",
+      tone: "warning"
+    };
+  }
+
+  if (hasClarifyingQuestions(candidatePreview)) {
+    return {
+      nextAction: "Answer the clarifying questions, then submit a revised preview.",
+      reason: "The answer plan still contains business clarification questions.",
       title: "Clarification required before execution",
       tone: "warning"
     };
@@ -2159,7 +2184,9 @@ function renderBusinessAnswerPlan(
     ? `Candidate ${preview.candidateState}; guard ${preview.guardStatus}`
     : "No candidate selected";
   const nextAction =
-    executeEnabled
+    clarificationRequired
+      ? "Answer the clarifying questions, then submit a revised preview."
+      : executeEnabled
       ? "Review the answer plan, then execute the reviewed candidate when the business intent and safety status match the request."
       : executeGuidance.nextAction;
 

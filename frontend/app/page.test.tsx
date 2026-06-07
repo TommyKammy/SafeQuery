@@ -3054,13 +3054,83 @@ describe("HomePage", () => {
     );
 
     expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
-      /evidence-bound answer unavailable/i
+      /no execution run selected/i
     );
     expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
-      /result validation could not support an evidence-bound answer/i
+      /no server-owned run record is selected/i
     );
     expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
-      /follow the validation next action or revise the request/i
+      /open the authoritative run from history or execute the reviewed candidate first/i
+    );
+  });
+
+  it("keeps clarification guidance ahead of execute-ready copy when review supplied questions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Ready candidate with questions",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-ready-with-questions",
+                    requestId: "request-ready-with-questions",
+                    reviewEvidence: [
+                      {
+                        auditEventId: "audit-ready-with-questions",
+                        assumptions: [],
+                        clarifyingQuestions: ["Should inactive vendors be included?"],
+                        reviewContractVersion: "review_llm_adapter_output.v1",
+                        reviewDecisionId: "review-ready-with-questions",
+                        reviewStatus: "ready",
+                        riskFlags: []
+                      }
+                    ],
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-ready-with-questions",
+          question: "Ready candidate with questions",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+    expect(answerPlan).toHaveTextContent("Should inactive vendors be included?");
+    expect(answerPlan).toHaveTextContent(/answer the clarifying questions/i);
+    expect(answerPlan).not.toHaveTextContent(/execute the reviewed candidate/i);
+    expect(screen.getByRole("button", { name: /execute reviewed candidate/i })).toBeDisabled();
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /clarification required before execution/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /answer plan still contains business clarification questions/i
     );
   });
 
