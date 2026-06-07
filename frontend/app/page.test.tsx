@@ -2350,10 +2350,83 @@ describe("HomePage", () => {
       expect(
         screen.getByRole("heading", { name: executeResponse.expectedHeading })
       ).toBeInTheDocument();
+      if (executeResponse.status === 403) {
+        expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+          /execution denied/i
+        );
+        expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+          /execute-time controls denied the run/i
+        );
+      }
       expect(screen.queryByText(/execution completed/i)).not.toBeInTheDocument();
       expect(screen.queryByRole("table", { name: /execute response result rows/i })).not.toBeInTheDocument();
       expect(screen.queryByText("driver-secret-should-not-render")).not.toBeInTheDocument();
     }
+  });
+
+  it("preserves failed-execution guidance when execute transport fails before a run exists", async () => {
+    appendCsrfToken();
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              history: [
+                {
+                  candidateSql: "select vendor_name from approved_vendor_spend;",
+                  guardStatus: "passed",
+                  itemType: "candidate",
+                  label: "Selected candidate",
+                  lifecycleState: "preview_ready",
+                  occurredAt: "2026-04-21T14:24:00Z",
+                  recordId: "candidate-selected",
+                  requestId: "request-selected",
+                  sourceId: "sap-approved-spend",
+                  sourceLabel: "SAP spend cube / approved_vendor_spend"
+                }
+              ],
+              sources: workflowPayload().sources
+            })
+        });
+      }
+
+      if (url.endsWith("/candidates/candidate-selected/execute")) {
+        return Promise.reject(new Error("transport unavailable"));
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-selected",
+          question: "Selected candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /execute reviewed candidate/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /failed state/i })).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(/execution failed/i);
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /previous run did not produce a trusted successful result payload/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).not.toHaveTextContent(
+      /no execution run selected/i
+    );
   });
 
   it("renders successful execute response rows and audit context without sensitive extras", async () => {
@@ -2863,7 +2936,112 @@ describe("HomePage", () => {
     );
 
     expect(screen.getByRole("button", { name: /execute reviewed candidate/i })).toBeDisabled();
-    expect(screen.getByText(/no executable candidate/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /no sql candidate available/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /wait for sql generation to finish or submit a revised preview/i
+    );
+    expect(screen.getByRole("button", { name: /execute reviewed candidate/i })).toHaveAccessibleDescription(
+      /no canonical sql candidate is available/i
+    );
+  });
+
+  it("explains guard-denied and review-blocked execute states without treating advisory review as authority", async () => {
+    const disabledCases = [
+      {
+        candidateSql: "select vendor_name from approved_vendor_spend;",
+        expectedNextAction: /resolve the guard finding and submit a revised preview/i,
+        expectedReason: /deterministic guard denied this candidate/i,
+        expectedTitle: /guard denied execution/i,
+        guardStatus: "blocked",
+        label: "Guard blocked candidate",
+        lifecycleState: "blocked",
+        recordId: "candidate-guard-blocked",
+        reviewEvidence: []
+      },
+      {
+        candidateSql: "select vendor_name from approved_vendor_spend;",
+        expectedNextAction: /resolve the review finding and submit a revised preview/i,
+        expectedReason: /advisory review output cannot authorize execution/i,
+        expectedTitle: /review blocked execution/i,
+        guardStatus: "passed",
+        label: "Review blocked candidate",
+        lifecycleState: "preview_ready",
+        recordId: "candidate-review-blocked",
+        reviewEvidence: [
+          {
+            auditEventId: "audit-review-blocked",
+            assumptions: [],
+            clarifyingQuestions: [],
+            reviewContractVersion: "review_llm_adapter_output.v1",
+            reviewDecisionId: "review-review-blocked",
+            reviewStatus: "blocked",
+            riskFlags: ["Business scope is unresolved."]
+          }
+        ]
+      }
+    ];
+
+    for (const disabledCase of disabledCases) {
+      cleanup();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) => {
+          const url = input.toString();
+
+          if (url.endsWith("/operator/workflow")) {
+            return Promise.resolve({
+              ok: true,
+              json: () =>
+                Promise.resolve({
+                  history: [
+                    {
+                      candidateSql: disabledCase.candidateSql,
+                      guardStatus: disabledCase.guardStatus,
+                      itemType: "candidate",
+                      label: disabledCase.label,
+                      lifecycleState: disabledCase.lifecycleState,
+                      occurredAt: "2026-04-21T14:24:00Z",
+                      recordId: disabledCase.recordId,
+                      requestId: `request-${disabledCase.recordId}`,
+                      reviewEvidence: disabledCase.reviewEvidence,
+                      sourceId: "sap-approved-spend",
+                      sourceLabel: "SAP spend cube / approved_vendor_spend"
+                    }
+                  ],
+                  sources: workflowPayload().sources
+                })
+            });
+          }
+
+          return new Promise(() => {});
+        })
+      );
+
+      render(
+        await HomePage({
+          searchParams: {
+            history_item_type: "candidate",
+            history_record_id: disabledCase.recordId,
+            question: disabledCase.label,
+            source_id: "sap-approved-spend",
+            state: "preview"
+          }
+        })
+      );
+
+      expect(screen.getByRole("button", { name: /execute reviewed candidate/i })).toBeDisabled();
+      expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+        disabledCase.expectedTitle
+      );
+      expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+        disabledCase.expectedReason
+      );
+      expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+        disabledCase.expectedNextAction
+      );
+    }
   });
 
   it("hides execute for clarification candidates opened through a generic preview URL", async () => {
@@ -2926,9 +3104,221 @@ describe("HomePage", () => {
     const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
     expect(answerPlan).toHaveTextContent("Should SafeQuery use committed or invoiced spend?");
     expect(answerPlan).toHaveTextContent(/answer the clarifying questions/i);
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /clarification required before execution/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /answer the clarifying questions, then submit a revised preview/i
+    );
     expect(
       screen.queryByRole("button", { name: /execute reviewed candidate/i })
     ).not.toBeInTheDocument();
+  });
+
+  it("explains validation-unavailable result states as blocked from another execute attempt", async () => {
+    render(
+      await HomePage({
+        searchParams: {
+          question: "Top approved vendors by quarterly spend",
+          source_id: "sap-approved-spend",
+          state: "insufficient_evidence"
+        }
+      })
+    );
+
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /no execution run selected/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /no server-owned run record is selected/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /open the authoritative run from history or execute the reviewed candidate first/i
+    );
+  });
+
+  it("keeps clarification guidance ahead of execute-ready copy when review supplied questions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Ready candidate with questions",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-ready-with-questions",
+                    requestId: "request-ready-with-questions",
+                    reviewEvidence: [
+                      {
+                        auditEventId: "audit-ready-with-questions",
+                        assumptions: [],
+                        clarifyingQuestions: ["Should inactive vendors be included?"],
+                        reviewContractVersion: "review_llm_adapter_output.v1",
+                        reviewDecisionId: "review-ready-with-questions",
+                        reviewStatus: "ready",
+                        riskFlags: []
+                      }
+                    ],
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-ready-with-questions",
+          question: "Ready candidate with questions",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    const answerPlan = screen.getByRole("region", { name: /business-readable answer plan/i });
+    expect(answerPlan).toHaveTextContent("Should inactive vendors be included?");
+    expect(answerPlan).toHaveTextContent(/answer the clarifying questions/i);
+    expect(answerPlan).not.toHaveTextContent(/execute the reviewed candidate/i);
+    expect(screen.getByRole("button", { name: /execute reviewed candidate/i })).toBeDisabled();
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /clarification required before execution/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /answer plan still contains business clarification questions/i
+    );
+  });
+
+  it("reports guard-denied candidates as guard denials on the review-denied route", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "blocked",
+                    itemType: "candidate",
+                    label: "Guard denied candidate",
+                    lifecycleState: "blocked",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-guard-denied-route",
+                    requestId: "request-guard-denied-route",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-guard-denied-route",
+          question: "Guard denied candidate",
+          source_id: "sap-approved-spend",
+          state: "review_denied"
+        }
+      })
+    );
+
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /guard denied execution/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /deterministic guard denied this candidate/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).not.toHaveTextContent(
+      /review blocked execution/i
+    );
+  });
+
+  it("does not claim execution was recorded when completed route has only a preview candidate", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/operator/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                history: [
+                  {
+                    candidateSql: "select vendor_name from approved_vendor_spend;",
+                    guardStatus: "passed",
+                    itemType: "candidate",
+                    label: "Preview-only candidate",
+                    lifecycleState: "preview_ready",
+                    occurredAt: "2026-04-21T14:24:00Z",
+                    recordId: "candidate-preview-only",
+                    requestId: "request-preview-only",
+                    sourceId: "sap-approved-spend",
+                    sourceLabel: "SAP spend cube / approved_vendor_spend"
+                  }
+                ],
+                sources: workflowPayload().sources
+              })
+          });
+        }
+
+        return new Promise(() => {});
+      })
+    );
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-preview-only",
+          question: "Preview-only candidate",
+          source_id: "sap-approved-spend",
+          state: "completed"
+        }
+      })
+    );
+
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /no execution run selected/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /no server-owned run record is selected/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).not.toHaveTextContent(
+      /execution already recorded/i
+    );
   });
 
   it("maps malformed and unavailable preview submission failures distinctly", async () => {

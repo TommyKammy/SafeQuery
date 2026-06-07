@@ -101,6 +101,13 @@ type OperatorRecoveryGuidance = {
   title: string;
 };
 
+type ExecuteAvailabilityGuidance = {
+  nextAction: string;
+  reason: string;
+  title: string;
+  tone: "danger" | "muted" | "success" | "warning";
+};
+
 type PreviewSubmissionStatus =
   | {
       status: "idle";
@@ -1326,8 +1333,254 @@ function canExecuteCandidate(
   const guardStatus = candidatePreview.guardStatus.toLowerCase();
   return (
     candidateState === "preview_ready" &&
-    (guardStatus === "allow" || guardStatus === "passed")
+    (guardStatus === "allow" || guardStatus === "passed") &&
+    candidatePreview.candidateSql !== null &&
+    candidatePreview.candidateSql.trim().length > 0 &&
+    !hasClarifyingQuestions(candidatePreview) &&
+    !hasBlockingReviewEvidence(candidatePreview.reviewEvidence)
   );
+}
+
+function hasClarifyingQuestions(candidatePreview: AuthoritativeCandidatePreview): boolean {
+  return (
+    (candidatePreview.clarifyingQuestions?.length ?? 0) > 0 ||
+    candidatePreview.reviewEvidence.some((evidence) => evidence.clarifyingQuestions.length > 0)
+  );
+}
+
+function hasBlockingReviewEvidence(reviewEvidence: OperatorWorkflowReviewEvidence[]): boolean {
+  return reviewEvidence.some((evidence) => {
+    const reviewStatus = evidence.reviewStatus.toLowerCase();
+    return (
+      reviewStatus === "blocked" ||
+      reviewStatus === "denied" ||
+      reviewStatus === "needs_clarification" ||
+      reviewStatus === "clarification_required"
+    );
+  });
+}
+
+function resolveExecuteAvailabilityGuidance(
+  state: CanonicalWorkflowState,
+  candidatePreview: AuthoritativeCandidatePreview | null,
+  runContext: AuthoritativeRunContext | null,
+  hasSourceMismatch: boolean,
+  executeInProgress: boolean,
+  hasRecentExecuteDenial: boolean,
+  hasRecentExecuteFailure: boolean
+): ExecuteAvailabilityGuidance {
+  if (executeInProgress) {
+    return {
+      nextAction:
+        "Wait for execute-time ownership, approval freshness, and replay checks to finish.",
+      reason: "SafeQuery has locked this candidate while execute-time controls run.",
+      title: "Execution in progress",
+      tone: "warning"
+    };
+  }
+
+  if (
+    (state === "completed" ||
+      state === "empty" ||
+      state === "insufficient_evidence" ||
+      state === "execution_denied" ||
+      state === "failed" ||
+      state === "canceled") &&
+    runContext === null &&
+    !(state === "execution_denied" && hasRecentExecuteDenial) &&
+    !(state === "failed" && hasRecentExecuteFailure)
+  ) {
+    return {
+      nextAction: "Open the authoritative run from history or execute the reviewed candidate first.",
+      reason:
+        "This page is showing an execution-state route, but no server-owned run record is selected.",
+      title: "No execution run selected",
+      tone: "warning"
+    };
+  }
+
+  if (state === "completed" || state === "empty") {
+    return {
+      nextAction:
+        "Inspect the run record, result evidence, and audit events before starting a revised request.",
+      reason: "A reviewed execution result is already tied to this candidate and source.",
+      title: "Execution already recorded",
+      tone: "success"
+    };
+  }
+
+  if (state === "insufficient_evidence") {
+    return {
+      nextAction:
+        "Follow the validation next action or revise the request before trying another execution.",
+      reason:
+        "SafeQuery reached a run record, but result validation could not support an evidence-bound answer.",
+      title: "Evidence-bound answer unavailable",
+      tone: "warning"
+    };
+  }
+
+  if (state === "execution_denied") {
+    return {
+      nextAction: "Resolve the execute-time denial on the server-owned run path, then preview again.",
+      reason:
+        "Execute-time controls denied the run after rechecking ownership, approval freshness, or replay posture.",
+      title: "Execution denied",
+      tone: "danger"
+    };
+  }
+
+  if (state === "failed" || state === "canceled") {
+    return {
+      nextAction: "Review the run lifecycle and submit a revised preview before retrying execution.",
+      reason: "The previous run did not produce a trusted successful result payload.",
+      title: state === "failed" ? "Execution failed" : "Execution canceled",
+      tone: "danger"
+    };
+  }
+
+  if (state === "signin") {
+    return {
+      nextAction: "Sign in through the application authority before preview or execution.",
+      reason: "Execution cannot be offered before an authenticated operator context exists.",
+      title: "Operator authority required",
+      tone: "muted"
+    };
+  }
+
+  if (state === "query") {
+    return {
+      nextAction: "Select a source and submit the question for preview.",
+      reason: "SafeQuery needs an authoritative preview candidate before any execution decision.",
+      title: "No reviewed candidate",
+      tone: "warning"
+    };
+  }
+
+  if (state === "clarification_required") {
+    return {
+      nextAction: "Answer the clarifying questions, then submit a revised preview.",
+      reason: "SafeQuery cannot safely infer one business meaning for the request yet.",
+      title: "Clarification required before execution",
+      tone: "warning"
+    };
+  }
+
+  if (candidatePreview === null) {
+    if (state === "review_denied") {
+      return {
+        nextAction: "Revise the request or source binding and submit a new preview.",
+        reason: "The request stopped during review and never became executable.",
+        title: "Review blocked execution",
+        tone: "danger"
+      };
+    }
+
+    return {
+      nextAction: "Submit the question for preview or reopen a candidate history row.",
+      reason: "No server-owned candidate record is selected for this preview.",
+      title: "No reviewed candidate",
+      tone: "warning"
+    };
+  }
+
+  if (hasSourceMismatch) {
+    return {
+      nextAction:
+        "Return to the candidate's bound source or start a new preview for the selected source.",
+      reason: "The draft source differs from the reopened candidate's bound source.",
+      title: "Source mismatch blocks execution",
+      tone: "danger"
+    };
+  }
+
+  const candidateState = candidatePreview.candidateState.toLowerCase();
+  const guardStatus = candidatePreview.guardStatus.toLowerCase();
+
+  if (guardStatus === "blocked" || guardStatus === "denied") {
+    return {
+      nextAction: "Resolve the guard finding and submit a revised preview.",
+      reason: "The deterministic guard denied this candidate before execution.",
+      title: "Guard denied execution",
+      tone: "danger"
+    };
+  }
+
+  if (state === "review_denied") {
+    return {
+      nextAction: "Revise the request or source binding and submit a new preview.",
+      reason: "The candidate stopped during review and never became executable.",
+      title: "Review blocked execution",
+      tone: "danger"
+    };
+  }
+
+  if (candidateState === "clarification_required" || candidateState === "needs_clarification") {
+    return {
+      nextAction: "Answer the clarifying questions, then submit a revised preview.",
+      reason: "The candidate needs clarification before SafeQuery can continue.",
+      title: "Clarification required before execution",
+      tone: "warning"
+    };
+  }
+
+  if (hasClarifyingQuestions(candidatePreview)) {
+    return {
+      nextAction: "Answer the clarifying questions, then submit a revised preview.",
+      reason: "The answer plan still contains business clarification questions.",
+      title: "Clarification required before execution",
+      tone: "warning"
+    };
+  }
+
+  if (hasBlockingReviewEvidence(candidatePreview.reviewEvidence)) {
+    return {
+      nextAction: "Resolve the review finding and submit a revised preview.",
+      reason:
+        "Review evidence flagged unresolved business risk, and advisory review output cannot authorize execution.",
+      title: "Review blocked execution",
+      tone: "danger"
+    };
+  }
+
+  if (candidatePreview.candidateSql === null || candidatePreview.candidateSql.trim().length === 0) {
+    return {
+      nextAction: "Wait for SQL generation to finish or submit a revised preview.",
+      reason: "No canonical SQL candidate is available on the server-owned preview record.",
+      title: "No SQL candidate available",
+      tone: "warning"
+    };
+  }
+
+  if (candidateState !== "preview_ready") {
+    return {
+      nextAction: "Wait for the preview to reach review-ready state or submit a revised request.",
+      reason: `Candidate state is ${formatStatusLabel(
+        candidatePreview.candidateState
+      )}, so execution remains unavailable.`,
+      title: "Candidate not ready",
+      tone: candidateState === "blocked" || candidateState === "denied" ? "danger" : "warning"
+    };
+  }
+
+  if (guardStatus !== "allow" && guardStatus !== "passed") {
+    return {
+      nextAction: "Resolve the guard finding and submit a revised preview.",
+      reason:
+        "The deterministic guard has not allowed this candidate yet.",
+      title: "Guard review incomplete",
+      tone: "warning"
+    };
+  }
+
+  return {
+    nextAction:
+      "Execute only if the business-readable answer plan, source identity, and guard posture match the request.",
+    reason:
+      "A server-owned candidate is review-ready and the deterministic guard allowed it. Advisory answer or semantic mapping output still cannot authorize execution by itself.",
+    title: "Execute reviewed candidate available",
+    tone: "success"
+  };
 }
 
 function candidateRequiresClarification(
@@ -1892,7 +2145,8 @@ function renderBusinessAnswerPlan(
   retrievedCitations: OperatorWorkflowRetrievedCitation[],
   reviewEvidence: OperatorWorkflowReviewEvidence[],
   candidateAttempts: OperatorWorkflowCandidateAttempt[],
-  executeEnabled: boolean
+  executeEnabled: boolean,
+  executeGuidance: ExecuteAvailabilityGuidance
 ) {
   const latestReview = reviewEvidence[0];
   const latestAttempt =
@@ -1934,13 +2188,11 @@ function renderBusinessAnswerPlan(
     ? `Candidate ${preview.candidateState}; guard ${preview.guardStatus}`
     : "No candidate selected";
   const nextAction =
-    preview === null
-      ? "Submit the question for preview, then review the answer plan returned by SafeQuery."
-      : clarificationRequired
-        ? "Answer the clarifying questions, then submit a revised preview before execution."
+    clarificationRequired
+      ? "Answer the clarifying questions, then submit a revised preview."
       : executeEnabled
-        ? "Review the answer plan, then execute the reviewed candidate when the business intent and safety status match the request."
-        : "Review the answer plan and resolve the guard or candidate status before execution.";
+      ? "Review the answer plan, then execute the reviewed candidate when the business intent and safety status match the request."
+      : executeGuidance.nextAction;
 
   return (
     <section
@@ -2012,6 +2264,33 @@ function renderBusinessAnswerPlan(
         </div>
       </div>
     </section>
+  );
+}
+
+function renderExecuteAvailabilityCallout(
+  guidance: ExecuteAvailabilityGuidance,
+  id: string
+) {
+  const toneClass =
+    guidance.tone === "danger"
+      ? " state-callout-danger"
+      : guidance.tone === "success"
+        ? " state-callout-success"
+        : guidance.tone === "warning"
+          ? " state-callout-warning"
+          : "";
+
+  return (
+    <div
+      aria-label="Execute availability"
+      className={`state-callout${toneClass}`}
+      id={id}
+      role={guidance.tone === "danger" ? "alert" : "status"}
+    >
+      <p className="state-callout-title">{guidance.title}</p>
+      <p>{guidance.reason}</p>
+      <p>{guidance.nextAction}</p>
+    </div>
   );
 }
 
@@ -2989,6 +3268,16 @@ export function QueryWorkflowShell({
     candidatePreview,
     historySourceMismatch
   );
+  const executeGuidance = resolveExecuteAvailabilityGuidance(
+    normalizedState,
+    candidatePreview,
+    historyRunContext,
+    historySourceMismatch,
+    executeSubmission.status === "executing",
+    executeSubmission.status === "denied",
+    executeSubmission.status === "failed"
+  );
+  const executeGuidanceId = "execute-availability-guidance";
   const executeControlVisible =
     candidatePreview !== null &&
     normalizedState !== "clarification_required" &&
@@ -3499,7 +3788,8 @@ export function QueryWorkflowShell({
                 selectedRetrievedCitations,
                 selectedReviewEvidence,
                 selectedAnswerPlanCandidateAttempts,
-                executeEnabled
+                executeEnabled,
+                executeGuidance
               )
             : null}
 
@@ -3697,6 +3987,9 @@ export function QueryWorkflowShell({
                   <p>{executeSubmission.message}</p>
                 </div>
               ) : null}
+              {executeEnabled
+                ? null
+                : renderExecuteAvailabilityCallout(executeGuidance, executeGuidanceId)}
               <div className="form-actions">
                 <button disabled={queryLocked} type="submit">
                   {previewSubmission.status === "submitting"
@@ -3705,6 +3998,7 @@ export function QueryWorkflowShell({
                 </button>
                 {executeControlVisible ? (
                   <button
+                    aria-describedby={!executeEnabled ? executeGuidanceId : undefined}
                     disabled={!executeEnabled || executeSubmission.status === "executing"}
                     onClick={executeCandidate}
                     type="button"
@@ -3847,9 +4141,8 @@ export function QueryWorkflowShell({
               </div>
               <div className="guard-item">
                 <span className="meta-label">Execution path</span>
-                <strong>
-                  {executeEnabled ? "Candidate execute available" : "No executable candidate"}
-                </strong>
+                <strong>{executeGuidance.title}</strong>
+                <p>{executeGuidance.reason}</p>
               </div>
             </div>
           </section>
