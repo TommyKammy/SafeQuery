@@ -214,6 +214,22 @@ describe("pilot safety UI smoke", () => {
     expect(screen.getByLabelText(/authorized operator sql review/i)).toHaveTextContent(
       /Support bundles and handoff exports stay redacted/i
     );
+    const technicalDetails = screen.getByLabelText(/authorized technical sql details/i);
+    expect(technicalDetails).not.toHaveAttribute("open");
+    expect(
+      within(technicalDetails).getByText(
+        /select vendor_name from finance\.approved_vendor_spend limit 10/i
+      )
+    ).not.toBeVisible();
+    fireEvent.click(
+      within(technicalDetails).getByText(/inspect raw sql for authorized technical review/i)
+    );
+    expect(technicalDetails).toHaveAttribute("open");
+    expect(
+      within(technicalDetails).getByText(
+        /select vendor_name from finance\.approved_vendor_spend limit 10/i
+      )
+    ).toBeVisible();
     expect(screen.getByText("candidate-pilot-001")).toBeInTheDocument();
     expect(screen.getByLabelText(/audit lifecycle events/i)).toHaveTextContent("guard_evaluated");
     expect(screen.getByLabelText(/retrieved citation context/i)).toHaveTextContent(
