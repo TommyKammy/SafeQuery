@@ -2364,6 +2364,71 @@ describe("HomePage", () => {
     }
   });
 
+  it("preserves failed-execution guidance when execute transport fails before a run exists", async () => {
+    appendCsrfToken();
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = input.toString();
+
+      if (url.endsWith("/operator/workflow")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              history: [
+                {
+                  candidateSql: "select vendor_name from approved_vendor_spend;",
+                  guardStatus: "passed",
+                  itemType: "candidate",
+                  label: "Selected candidate",
+                  lifecycleState: "preview_ready",
+                  occurredAt: "2026-04-21T14:24:00Z",
+                  recordId: "candidate-selected",
+                  requestId: "request-selected",
+                  sourceId: "sap-approved-spend",
+                  sourceLabel: "SAP spend cube / approved_vendor_spend"
+                }
+              ],
+              sources: workflowPayload().sources
+            })
+        });
+      }
+
+      if (url.endsWith("/candidates/candidate-selected/execute")) {
+        return Promise.reject(new Error("transport unavailable"));
+      }
+
+      return new Promise(() => {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      await HomePage({
+        searchParams: {
+          history_item_type: "candidate",
+          history_record_id: "candidate-selected",
+          question: "Selected candidate",
+          source_id: "sap-approved-spend",
+          state: "preview"
+        }
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /execute reviewed candidate/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /failed state/i })).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(/execution failed/i);
+    expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+      /previous run did not produce a trusted successful result payload/i
+    );
+    expect(screen.getByLabelText(/execute availability/i)).not.toHaveTextContent(
+      /no execution run selected/i
+    );
+  });
+
   it("renders successful execute response rows and audit context without sensitive extras", async () => {
     const csrfToken = document.createElement("meta");
     csrfToken.name = "safequery-csrf-token";

@@ -1366,7 +1366,8 @@ function resolveExecuteAvailabilityGuidance(
   runContext: AuthoritativeRunContext | null,
   hasSourceMismatch: boolean,
   executeInProgress: boolean,
-  hasRecentExecuteDenial: boolean
+  hasRecentExecuteDenial: boolean,
+  hasRecentExecuteFailure: boolean
 ): ExecuteAvailabilityGuidance {
   if (executeInProgress) {
     return {
@@ -1386,7 +1387,8 @@ function resolveExecuteAvailabilityGuidance(
       state === "failed" ||
       state === "canceled") &&
     runContext === null &&
-    !(state === "execution_denied" && hasRecentExecuteDenial)
+    !(state === "execution_denied" && hasRecentExecuteDenial) &&
+    !(state === "failed" && hasRecentExecuteFailure)
   ) {
     return {
       nextAction: "Open the authoritative run from history or execute the reviewed candidate first.",
@@ -3272,7 +3274,8 @@ export function QueryWorkflowShell({
     historyRunContext,
     historySourceMismatch,
     executeSubmission.status === "executing",
-    executeSubmission.status === "denied"
+    executeSubmission.status === "denied",
+    executeSubmission.status === "failed"
   );
   const executeGuidanceId = "execute-availability-guidance";
   const executeControlVisible =
