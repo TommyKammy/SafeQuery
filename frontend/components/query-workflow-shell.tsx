@@ -1847,9 +1847,21 @@ function renderCandidateSqlPreview(preview: AuthoritativeCandidatePreview | null
   }
 
   return (
-    <pre className="sql-preview">
-      <code>{preview.candidateSql}</code>
-    </pre>
+    <details className="technical-sql-details" aria-label="Authorized technical SQL details">
+      <summary>
+        <span>Inspect raw SQL for authorized technical review</span>
+        <span className="technical-sql-details-hint">Collapsed by default</span>
+      </summary>
+      <div className="technical-sql-details-body">
+        <p>
+          Raw SQL is available here for operator and reviewer inspection only. Business approval
+          should use the answer plan, guard posture, source identity, and evidence above.
+        </p>
+        <pre className="sql-preview">
+          <code>{preview.candidateSql}</code>
+        </pre>
+      </div>
+    </details>
   );
 }
 

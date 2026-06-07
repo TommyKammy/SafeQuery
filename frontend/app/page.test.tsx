@@ -1302,6 +1302,21 @@ describe("HomePage", () => {
     expect(
       screen.getByRole("heading", { name: /technical sql review/i })
     ).toBeInTheDocument();
+    const technicalDetails = screen.getByLabelText(/authorized technical sql details/i);
+    expect(technicalDetails).not.toHaveAttribute("open");
+    expect(
+      within(technicalDetails).getByText(/select vendor_name from approved_vendor_spend/i)
+    ).not.toBeVisible();
+    fireEvent.click(
+      within(technicalDetails).getByText(/inspect raw sql for authorized technical review/i)
+    );
+    expect(technicalDetails).toHaveAttribute("open");
+    expect(
+      within(technicalDetails).getByText(/select vendor_name from approved_vendor_spend/i)
+    ).toBeVisible();
+    expect(technicalDetails).toHaveTextContent(
+      /business approval should use the answer plan, guard posture, source identity, and evidence/i
+    );
     expect(screen.queryByRole("heading", { name: /sql preview state/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /authoritative sql preview/i })).not.toBeInTheDocument();
   });
