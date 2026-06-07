@@ -2350,6 +2350,14 @@ describe("HomePage", () => {
       expect(
         screen.getByRole("heading", { name: executeResponse.expectedHeading })
       ).toBeInTheDocument();
+      if (executeResponse.status === 403) {
+        expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+          /execution denied/i
+        );
+        expect(screen.getByLabelText(/execute availability/i)).toHaveTextContent(
+          /execute-time controls denied the run/i
+        );
+      }
       expect(screen.queryByText(/execution completed/i)).not.toBeInTheDocument();
       expect(screen.queryByRole("table", { name: /execute response result rows/i })).not.toBeInTheDocument();
       expect(screen.queryByText("driver-secret-should-not-render")).not.toBeInTheDocument();
